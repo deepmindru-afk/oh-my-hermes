@@ -195,6 +195,8 @@ from .background import BackgroundProcess, askable, finished_line, report_prompt
 from .bot_board import BoardReader, BotBoard
 from .clipboard import COPY_OSC52, COPY_PBCOPY, copy_route, pbcopy, tmux_client_over_ssh
 from .prompts import CLOSED_CHOICES, Answer, ImmediateAnswer, PromptSlot, TypeIt, open_request
+from .edge_glow import EDGE_MARGIN, Edge, edge, edge_fits
+from .edge_glow import TICK_SECONDS as EDGE_TICK_SECONDS
 from .screen import (
     CARRIAGE_RETURN,
     CLEAR_SCREEN_AND_SCROLLBACK,
@@ -667,6 +669,10 @@ BELL = "\a"
 QUESTION_ALERT_CHARS = 80  # the most of what Hermes asks that a question's notification says
 BELL_ENV = "OMH_TUI_BELL"
 BELL_OFF = "0"
+# The working glow round the screen (`edge_glow`) is on wherever it can move; OMH_TUI_GLOW=0 turns it off, and with it
+# the margin and the blank last row it keeps.
+GLOW_ENV = "OMH_TUI_GLOW"
+GLOW_OFF = "0"
 # A turn that ran this long ends with the terminal's attention signal (`attention_sequence`).
 TURN_ALERT_SECONDS = 10.0
 TURN_ALERT_TEXT = "Hermes finished a turn ({elapsed})"
@@ -1489,9 +1495,9 @@ class App(ModesMixin, AgentViewMixin):
         self.export_said = False  # EXPORT_NOTE has been said: the next /export runs
         self.interrupt_armed: str | None = None  # the agent a first `x` in the list asked about
         self.agent_steer: str | None = None  # the agent `s` picked: the next line sent is its steer
-        self.region = LiveRegion(terminal.write)
         self.decoder = KeyDecoder(clock)
-        self.size = terminal.size()
+        self._take_size()
+        self.region = self._new_region()
         self.sid = ""
         self.stored_id = ""
         # Whether the session runs on Hermes' shared gateway (its answer named this connection's view), not the stdio
@@ -1955,12 +1961,12 @@ class App(ModesMixin, AgentViewMixin):
         native mode, `display.tui_native`, writes only a line feed). A
         terminal that ignores ED 3 keeps them one scroll up.
         """
-        rows = self.size[1]
+        rows = self.screen[1]
         if rows < 2 or self.region.height:
             return
         push = "" if row == 1 else "\n" * (rows - 1) + cursor_up(rows - 1) + CARRIAGE_RETURN
         self.terminal.write(push + ERASE_SCROLLBACK)
-        self.region = LiveRegion(self.terminal.write, at_top=True)
+        self.region = self._new_region(at_top=True)
 
     def adopt_cursor_row(self, row: int | None) -> None:
         """The 1-based row the terminal reported its cursor on after a stop: the region knows its place from the next frame.
@@ -1968,8 +1974,8 @@ class App(ModesMixin, AgentViewMixin):
         None (no report) or a row outside the screen leaves the place unknown,
         as without the report, until output has pushed it to certainty.
         """
-        if row is not None and 1 <= row <= self.size[1] and not self.region.height:
-            self.region = LiveRegion(self.terminal.write, start_row=row - 1)
+        if row is not None and 1 <= row <= self.screen[1] and not self.region.height:
+            self.region = self._new_region(start_row=row - 1)
 
     @property
     def model(self) -> str:
@@ -3006,7 +3012,7 @@ class App(ModesMixin, AgentViewMixin):
             self.pager.clear_selection()  # it is of the page on the screen, which a key may move
             if self.log_agent and isinstance(event, Key) and event.name in (LEFT, RIGHT):
                 self._step_agent_log(-1 if event.name == LEFT else 1)
-            elif not self.pager.handle_key(event, self.size[1]):
+            elif not self.pager.handle_key(event, self.screen[1]):
                 self._leave_pager()
             return
         if self._display_key(event):
@@ -3215,9 +3221,9 @@ class App(ModesMixin, AgentViewMixin):
             self.terminal.write(TITLE_POP)
             self.title_pushed, self.shown_title, self.title_words = False, None, ""
         self.terminal.suspend()
-        self.size = self.terminal.size()
+        self._take_size()
         typed, row = self.terminal.query_cursor_row()
-        self.region = LiveRegion(self.terminal.write)
+        self.region = self._new_region()
         self.adopt_cursor_row(row)
         self.dirty = True
         if typed:
@@ -4673,7 +4679,7 @@ class App(ModesMixin, AgentViewMixin):
 
     def _keys(self, arg: str) -> None:
         """The key list on the alternate screen; q or Esc leaves, as in every pager."""
-        self._open_pager("keys", shortcut_lines(self.size[0], self.theme))
+        self._open_pager("keys", shortcut_lines(self.screen[0], self.theme))
 
     def _quit(self, arg: str) -> None:
         """Close the session first, so Hermes ends its runtime before the gateway reads end of input."""
@@ -4975,7 +4981,7 @@ class App(ModesMixin, AgentViewMixin):
         pager = HistoryPager("history", count=len(blocks), render=rows)
         # Stops at the first block with rows, the first one but for a reply that was only a line break, and
         # keeps what it rendered for the first frame.
-        if pager.shows_nothing(self.size[0], self.theme):
+        if pager.shows_nothing(self.screen[0], self.theme):
             transcript.add_notice("Nothing in this session's transcript yet.")
             return
         self._show_pager(pager)
@@ -4984,13 +4990,13 @@ class App(ModesMixin, AgentViewMixin):
         """The whole transcript with every detail (thinking, tool output, whole diffs) in the pager, at its end."""
         self._history("")
         if isinstance(self.pager, HistoryPager):
-            self.pager.handle_key(Key(END), self.size[1])
+            self.pager.handle_key(Key(END), self.screen[1])
 
     def _question_view(self) -> None:
         """The open question in the pager, every row of it (a long command whole); q or Esc goes back to it as it
         was, with nothing answered, and the pager closes with the question (`_close_slot`)."""
         if self.slot is not None:
-            lines = self.slot.whole_lines(self.size[0], self.theme, len(self.waiting_requests))
+            lines = self.slot.whole_lines(self.screen[0], self.theme, len(self.waiting_requests))
             self._show_pager(Pager(QUESTION_VIEW_TITLE, lines))
             self.question_view = self.pager
 
@@ -5016,7 +5022,7 @@ class App(ModesMixin, AgentViewMixin):
     def _dag(self, arg: str) -> None:
         """The session's delegation graph as boxes in the pager (`DagPager`), drawn from the HUD's newest read at
         every frame; it sends nothing anywhere."""
-        if dag_page_lines(self.hud.payload if self.hud is not None else None, self.size[0], self.theme) is None:
+        if dag_page_lines(self.hud.payload if self.hud is not None else None, self.screen[0], self.theme) is None:
             # /dag has no echo: during a turn this waits under what runs
             self.transcript.add_aside(NoticeBlock("No delegation graph: this session has no recent delegated work."))
             return
@@ -5067,7 +5073,7 @@ class App(ModesMixin, AgentViewMixin):
         pager = self.pager
         if pager is None:
             return
-        text = pager.handle_mouse(event, self.size[1], self.clock())
+        text = pager.handle_mouse(event, self.screen[1], self.clock())
         self.dirty = True
         if text:
             pager.note = self._copy_selection(text)
@@ -5258,7 +5264,7 @@ class App(ModesMixin, AgentViewMixin):
         last = self.region.last_row(self.size[1])
         if picker is None or not plain or last is None or self.redraw_at is not None:
             return
-        above, column = last - (event.y - 1), event.x - 1  # a report counts rows and columns from 1
+        above, column = last - (event.y - 1), event.x - 1 - self._margin()  # a report counts from 1
         target = next((hit.subagent_id for hit in self.clickable.get(above, ()) if hit.start <= column < hit.end), "")
         if target.startswith("launch:") and picker.move_to(int(target.split(":", 1)[1])) == LAUNCH_MOVE:
             self._preview_launch()
@@ -5296,12 +5302,12 @@ class App(ModesMixin, AgentViewMixin):
                 read_key=self._picker_reader(),
                 # Raw mode writes "\n" as a bare line feed; the picker's lines need a carriage return too.
                 write=lambda text: self.terminal.write(text.replace("\n", "\r\n")),
-                width=self.size[0],
+                width=self.screen[0],
             )
         finally:
             self.terminal.write(ALT_SCREEN_OFF + self._caret_visibility())
             closed_for_question, self.chains_open, self.chains_closing = self.chains_closing, False, False
-        self.size = self.terminal.size()
+        self._take_size()
         if self.size != before:
             self._full_redraw()
         self.dirty = True
@@ -5385,7 +5391,7 @@ class App(ModesMixin, AgentViewMixin):
         on if it still has an agent to click.
         """
         self._set_mouse(False)
-        self.size = self.terminal.size()
+        self._take_size()
         self.dirty = True
         if self.pager is not None:
             self.redraw_after_pager = True
@@ -5418,7 +5424,7 @@ class App(ModesMixin, AgentViewMixin):
             return
         # The clear homes the cursor, so the next first frame starts on the screen's top row; it goes out in that
         # frame's synchronized update, so the blank screen never shows.
-        self.region = LiveRegion(self.terminal.write, at_top=True, lead=CLEAR_SCREEN_AND_SCROLLBACK)
+        self.region = self._new_region(at_top=True, lead=CLEAR_SCREEN_AND_SCROLLBACK)
         self.transcript.retake_tail(self.size[0], self.theme, REDRAW_TAIL_ROWS)
         if self.banner_record is not None:
             self.banner_facts = dict(self.banner_record)
@@ -5575,6 +5581,39 @@ class App(ModesMixin, AgentViewMixin):
             and bool(aura_ranges(composer.text))
         )
 
+    def _take_size(self) -> None:
+        """The terminal's size now (`screen`), and the size the session is laid out for (`size`): the screen less
+        the working glow's margin and footer where it has them (`_edged`)."""
+        self.screen = self.terminal.size()
+        cols, rows = self.screen
+        self.size = (cols - 2 * EDGE_MARGIN, rows - 1) if self._edged() else self.screen
+
+    def _edged(self) -> bool:
+        """Whether the screen keeps its edge for the working glow's frame (`edge_glow`): at the truecolor depth with
+        motion on, on a screen big enough (`edge_fits`). The rows are then drawn `EDGE_MARGIN` columns in from each
+        side, over a blank last row of the region's own, whether a turn runs or not, so nothing moves as the frame
+        comes and goes. OMH_TUI_GLOW=0 turns it off."""
+        return (self.motion and self.color_depth == TRUECOLOR and edge_fits(*self.screen)
+                and self.environ.get(GLOW_ENV) != GLOW_OFF)
+
+    def _margin(self) -> int:
+        """Columns the rows are drawn in from the screen's left edge."""
+        return EDGE_MARGIN if self._edged() else 0
+
+    def _new_region(self, **place: Any) -> LiveRegion:
+        """A live region for the screen as it is now: with the working glow's margin and footer where it has them."""
+        edged = self._edged()
+        return LiveRegion(self.terminal.write, margin=EDGE_MARGIN if edged else 0, footer=edged, **place)
+
+    def _edge_live(self) -> bool:
+        """Whether the working glow's light goes round the screen now (`edge_glow`): while a turn runs, where the
+        screen keeps its edge for it (`_edged`)."""
+        return self._busy() and self._edged() and bool(self.theme.glow_ring)
+
+    def _edge(self) -> Edge | None:
+        """The working glow's light for this frame (owner request 2026-10-28), at the clock's time, or None."""
+        return edge(*self.screen, self.theme, self.clock()) if self._edge_live() else None
+
     def _aura_moves(self) -> bool:
         """Whether the dag-ulw aura moves on this terminal now: the truecolor depth, motion on, and a background its
         band shows on (`theme.aura_moves`). Where it does not, nothing draws it but the composer's still look."""
@@ -5608,7 +5647,7 @@ class App(ModesMixin, AgentViewMixin):
             self.clickable = {}
             self._set_mouse(True, drag=True)  # the alternate screen has no scrollback to take: the pager scrolls itself
             self._refresh_agent_log()
-            self.terminal.write(self.pager.frame(cols, rows, self.theme))
+            self.terminal.write(self.pager.frame(*self.screen, self.theme))
             return
         stable = self.transcript.take_stable_lines(cols, self.theme)
         prompt_row = self.transcript.prompt_row
@@ -5732,7 +5771,7 @@ class App(ModesMixin, AgentViewMixin):
         # Flushed before the frame, the lines cover the region's top rows, where the lines leaving
         # the tail were drawn (a settled tool group is those same rows, moved above the region), and
         # the frame is drawn under them. Flush and frame are one write, so no screen between them shows.
-        self.region.render(frame.lines, frame.cursor, cols, flush=stable, screen_rows=rows)
+        self.region.render(frame.lines, frame.cursor, cols, flush=stable, screen_rows=rows, edge=self._edge())
         self.frame_budget = frame.budget
         self.frame_busy = busy
         if busy:
@@ -5913,6 +5952,10 @@ class App(ModesMixin, AgentViewMixin):
         return int(self.clock() / TICK_SECONDS) if self.motion else 0
 
     def _tick_seconds(self) -> float:
+        """How often the loop paints while something moves: faster while the working glow's light goes round, so it
+        glides (`edge_glow.TICK_SECONDS`); the spinners still step by `TICK_SECONDS`."""
+        if self._edge_live():
+            return EDGE_TICK_SECONDS
         return TICK_SECONDS if self.motion else REDUCED_TICK_SECONDS
 
     @property
