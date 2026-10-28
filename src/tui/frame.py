@@ -47,9 +47,6 @@ and `LiveRegion` hides the cursor) unless `slot_caret` puts one in the slot (a
 picker's filter row or the history search's query row, where typing goes). The slot stands in the
 composer's place, right above the info line, with the rows `layout.choice_cap`
 gives it. The rows under the composer are the same either way.
-
-The attachment row (the images queued for the next message) is the composer's
-first row under the top rule while there is one: it counts against the composer's cap.
 """
 
 from __future__ import annotations
@@ -100,7 +97,6 @@ def build_frame(
     slot: Sequence[Line] = (),
     theme: Theme = DEFAULT_THEME,
     prompt: str = PROMPT,
-    attachments: Line | None = None,
     mode: str = MODE_NORMAL,
     placeholder: str = "",
     slot_caret: tuple[int, int] | None = None,
@@ -119,11 +115,9 @@ def build_frame(
 ) -> Frame:
     """The region for one repaint; `min_height` rows at least, pad rows under the live block making up the rest.
 
-    `attachments` is drawn as the composer's first row when the composer may
-    have two rows; a terminal too short for that shows the input alone.
     `mode` MODE_SHELL draws the prompt mark in the shell family's hue; `info` is the
     region's last row. `composer` None draws no
-    composer (nor the attachment row): the slot takes its place, and the caret
+    composer: the slot takes its place, and the caret
     is `slot_caret`, a (row, col) within `slot`, or none where that is None or
     its row is cut.
     `text_question` says the slot holds a question answered with text, whose
@@ -153,20 +147,18 @@ def build_frame(
     glint: tuple[Style, ...] = ()
     caret_line = caret_col = 0
     if composer is not None:
-        chips = [truncate_line(attachments, cols)] if attachments is not None and cap >= 2 else []
         mark = theme.kinds[KIND_FAMILIES.index("shell")] if mode == MODE_SHELL else theme.prompt
         marks = slash_token_ranges(composer.text, known_slash) if known_slash and not composer.pastes else []
         glow = aura_ranges(composer.text) if theme.aura and not composer.pastes and not composer.masked else []
         base, glint = (tuple(replace(style, depth=aura_depth) for style in styles) if aura_depth != TRUECOLOR
                        else styles for styles in (theme.aura, theme.aura_glint))
         input_lines, (caret_line, caret_col) = composer.render(
-            cols, cap - len(chips), prompt, mark, theme.muted, marks, theme.slash,
+            cols, cap, prompt, mark, theme.muted, marks, theme.slash,
             glow, lambda offset, length: aura_style(base, glint, offset, length, aura),
         )
         if placeholder and not composer.text and input_lines:
             input_lines[0] = truncate_line((*input_lines[0], Span(placeholder, theme.hint)), cols)
-        composer_lines = chips + input_lines
-        caret_line += len(chips)
+        composer_lines = input_lines
     def fit(tail: Sequence[Line]) -> Budget:
         return allocate(
             rows,
@@ -222,11 +214,11 @@ def build_frame(
 
 
 def badge_forms(theme: Theme, accent: Style, native: Line) -> tuple[Line, ...]:
-    """`[ ⚚ OMH Native ]` and its shorter forms, longest first, for the left end of the info line: `[ ⚚ OMH ]`, then
+    """`[⚚ OMH Native]` and its shorter forms, longest first, for the left end of the info line: `[⚚ OMH]`, then
     the caduceus alone. `accent` paints the caduceus and `native` is `Native` in the launch look's colours."""
     return (
-        (Span("[ ", theme.dim), Span("⚚", accent), Span(" OMH ", theme.faint), *native, Span(" ]", theme.dim)),
-        (Span("[ ", theme.dim), Span("⚚", accent), Span(" OMH ]", theme.faint)),
+        (Span("[", theme.dim), Span("⚚", accent), Span(" OMH ", theme.faint), *native, Span("]", theme.dim)),
+        (Span("[", theme.dim), Span("⚚", accent), Span(" OMH]", theme.faint)),
         (Span("⚚", accent),),
     )
 

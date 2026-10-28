@@ -32,7 +32,7 @@ def _active(alias: str, provider: str, family: str) -> dict[str, object]:
 _KIMI = _active("kimi-k3.1-pro", "apitopia", "kimi")
 _OPUS = _active("claude-opus-5-5", "ccapi", "claude")
 _GROK = _active("grok-build-0.1", "xai", "grok")
-_GEMINI = _active("gemini-3.1-pro", "google", "gemini")
+_GEMINI = _active("gemini-4-argon", "google", "gemini")
 # Shipped chain members (the superseded GLM 5.2 Ultrafast and Fable 5
 # entries left the chains on 2026-09-11): the quick head, and the entries
 # right behind Opus 5.5 in writing and visual-engineering. Opus 5.5 heads
@@ -249,7 +249,7 @@ class HermesRecommendationRoutingTests(unittest.TestCase):
             [
                 "xai/grok-build-0.1",
                 "apitopia/kimi-k3.1-pro",
-                "google/gemini-3.1-pro",
+                "google/gemini-4-argon",
                 "ccapi/claude-opus-5-5",
             ],
         )
@@ -271,7 +271,7 @@ class HermesRecommendationRoutingTests(unittest.TestCase):
         self.assertEqual(route["selected_model"], "apitopia/kimi-k3.1-pro")
         self.assertEqual(
             [entry["model_id"] for entry in route["chain"]],
-            ["apitopia/kimi-k3.1-pro", "google/gemini-3.1-pro"],
+            ["apitopia/kimi-k3.1-pro", "google/gemini-4-argon"],
         )
 
     def test_explicit_active_model_wins_over_domain_and_explicit_missing_freezes(self) -> None:
@@ -279,11 +279,11 @@ class HermesRecommendationRoutingTests(unittest.TestCase):
             "hermes",
             role="implementation",
             requested_domain="x_platform_data",
-            requested_model="gemini-3.1-pro",
+            requested_model="gemini-4-argon",
             active_models=[_GROK, _KIMI, _GEMINI],
         )
         self.assertEqual(active["provenance"], "request_named_model")
-        self.assertEqual(active["selected_model"], "google/gemini-3.1-pro")
+        self.assertEqual(active["selected_model"], "google/gemini-4-argon")
 
         missing = resolve_model_route(
             "hermes",
@@ -382,7 +382,7 @@ class HermesRecommendationRoutingTests(unittest.TestCase):
                     {
                         "source": RUNTIME_CONFIG_SOURCE,
                         "provider": "google",
-                        "model_id": "gemini-3.1-pro",
+                        "model_id": "gemini-4-argon",
                         "variant": "",
                         "timestamp": "",
                         "status": "confirmed_active",

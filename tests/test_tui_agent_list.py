@@ -1261,7 +1261,7 @@ class AgentReplayTests(AppTestCase):
         self.assertTrue(rows[status + 2].startswith("❯ ") and "find usages of old_api" in rows[status + 2], rows)
         # The list's keys, whole: at 80 columns the right side (the effort) gives way to them and to the badge.
         self.assertEqual(info_left(rows[status]), AGENT_LIST_HINT)
-        self.assertTrue(rows[status].startswith(INFO_INSET + "[ ⚚ OMH Native ]  "), rows[status])
+        self.assertTrue(rows[status].startswith(INFO_INSET + "[⚚ OMH Native]  "), rows[status])
         # While the list has the keys the composer's rules stay and its row says how to browse: no prompt to type in.
         self.assertEqual([row for row in rows if row.startswith("❯ ") and "old_api" not in row], [], rows)
         self.assertEqual([row.strip() for row in rows if BROWSING_HINT in row], [BROWSING_HINT])

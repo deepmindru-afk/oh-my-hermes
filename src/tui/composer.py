@@ -63,6 +63,18 @@ chip expanded where it stands and reports the compact text beside it
 (`ComposerAction.shown`), which is what the transcript shows; history keeps
 the expanded text. Masked input takes a paste as typed.
 
+An image the app attaches is a token at the caret, `[Image #1]` and a space
+(`insert_image`; the app numbers them). In the text a token is one character
+of the last private-use plane, which only the composer writes (`_clean` drops
+one from anything inserted), so typing `[Image #1]` by hand makes no token: it
+is one cluster, so the caret never lands inside it, the arrows step over it,
+any deletion that reaches it takes it whole, and a row never splits it. Its
+image goes with it (`images`), undo puts both back, and the app reads which
+images the draft holds from `images` alone. A submit sends and shows each
+token as its label and reports the images in order (`ComposerAction.images`);
+history keeps the labels, so a recalled prompt is plain text and holds no
+image. Masked input takes no token.
+
 History is held oldest first, at most `HISTORY_CAP` entries; a submit
 appends unless the text is blank or repeats the newest entry, or
 `records_history` is off (the app turns it off while the composer answers a
@@ -75,7 +87,7 @@ shown as bullets by `repr` too.
 from __future__ import annotations
 
 from bisect import bisect_right
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 import unicodedata
 
@@ -96,7 +108,7 @@ from .keys import (
     Paste,
 )
 from .style import DEFAULT_STYLE, Line, Span, Style
-from .width import TAB_CELLS, cell_width, cluster_width, clusters, is_control
+from .width import TAB_CELLS, cell_width, cluster_width, clusters, is_control, truncate
 
 PROMPT = "❯ "
 MASK = "•"
@@ -113,6 +125,9 @@ PASTE_CHIP_CHARS = 800
 PASTE_CHIP = "[Pasted text #{number} +{lines} lines]"
 PASTE_CHIP_ONE_LINE = "[Pasted text #{number} · {chars:,} chars]"
 UNDO_CAP = 100
+IMAGE_LABEL = "[Image #{number}]"
+# The characters that stand for image tokens in the text: the last private-use plane, which nothing typed uses.
+_TOKEN_FIRST, _TOKEN_LAST = 0x100000, 0x10FFFD
 UNDO_CHARS = frozenset("_-")  # with Ctrl
 REDO_CHAR = "y"  # with Ctrl
 
@@ -130,6 +145,7 @@ class ComposerAction:
     text: str = ""  # the submitted text, for SUBMIT only, every paste chip expanded
     shown: str = ""  # the submitted text as the composer showed it, when chips made it differ from `text`
     chips: tuple[tuple[str, str], ...] = ()  # each chip in `shown`, its label and its text (`Composer.restore`)
+    images: tuple[tuple[str, object], ...] = ()  # each image token in the text, in order: its label and its image
 
 
 NOTHING = ComposerAction(NONE)
@@ -144,6 +160,23 @@ class _Row:
     start: int  # cluster index of the row's first cluster
     end: int  # cluster index after the row's last cluster (a newline is never inside a row)
     hard: bool  # the row ends its logical line, so the position at `end` belongs to it
+
+
+def _is_token(ch: str) -> bool:
+    return _TOKEN_FIRST <= ord(ch) <= _TOKEN_LAST
+
+
+def _fit_tokens(shape: _Shape, avail: int, images: Mapping[str, tuple[str, object]]) -> _Shape:
+    """`shape` as drawn at `avail` cells: a token whose label is wider than that is cut to it, so no row overflows."""
+    wide = [index for index, unit in enumerate(shape.units)
+            if unit[0] in images and (shape.widths[index] or 0) > avail]
+    if not wide:
+        return shape
+    shown, widths = list(shape.shown), list(shape.widths)
+    for index in wide:
+        shown[index] = truncate(shown[index], avail)
+        widths[index] = cell_width(shown[index])
+    return _Shape(shape.text, shape.masked, shape.units, shape.bounds, shown, widths)
 
 
 def _nfc(text: str) -> str:
@@ -162,7 +195,7 @@ class _Shape:
     widths: list[int | None]  # `None` for a newline
 
 
-def _shape(text: str, masked: bool) -> _Shape:
+def _shape(text: str, masked: bool, labels: Mapping[str, str]) -> _Shape:
     units = clusters(text)
     bounds = [0]
     shown: list[str] = []
@@ -172,6 +205,9 @@ def _shape(text: str, masked: bool) -> _Shape:
         if unit == NEWLINE:
             shown.append("")
             widths.append(None)
+        elif unit[0] in labels:  # an image token, drawn as its label
+            shown.append(labels[unit[0]])
+            widths.append(cell_width(labels[unit[0]]))
         elif masked:
             shown.append(MASK)
             widths.append(1)
@@ -195,7 +231,7 @@ def _clean(text: str, masked: bool) -> str:
         if ch == NEWLINE:
             if not masked:
                 kept.append(ch)
-        elif ch == TAB_CHAR or not is_control(ch):
+        elif (ch == TAB_CHAR or not is_control(ch)) and not _is_token(ch):
             kept.append(ch)
     return "".join(kept)
 
@@ -271,6 +307,9 @@ def _word_end(units: Sequence[str], index: int) -> int:
     return index
 
 
+_Snapshot = tuple[str, int, dict[str, str], dict[str, tuple[str, object]]]
+
+
 @dataclass
 class Composer:
     text: str = ""
@@ -281,16 +320,21 @@ class Composer:
     records_history: bool = True
     on_record: Callable[[str], None] | None = field(default=None, repr=False, compare=False)
     pastes: dict[str, str] = field(default_factory=dict, repr=False, compare=False)  # chip label -> its text
+    # image token (its character in the text) -> its label and the image the app gave it
+    images: dict[str, tuple[str, object]] = field(default_factory=dict, repr=False, compare=False)
     _paste_count: int = field(default=0, init=False, repr=False, compare=False)
+    _token_count: int = field(default=0, init=False, repr=False, compare=False)
     _draft: str = field(default="", init=False, repr=False, compare=False)
+    _draft_images: dict[str, tuple[str, object]] = field(default_factory=dict, init=False, repr=False, compare=False)
     _avail: int | None = field(default=None, init=False, repr=False, compare=False)
     _scroll: int = field(default=0, init=False, repr=False, compare=False)
     # The text measured, and its rows at one width: a caret move or a redraw reuses them until the text changes.
     _shaped: _Shape | None = field(default=None, init=False, repr=False, compare=False)
-    _laid: tuple[_Shape, int, list[_Row]] | None = field(default=None, init=False, repr=False, compare=False)
-    # Undo and redo: (text, caret, paste chips) before each step, newest last.
-    _undo: list[tuple[str, int, dict[str, str]]] = field(default_factory=list, init=False, repr=False, compare=False)
-    _redo: list[tuple[str, int, dict[str, str]]] = field(default_factory=list, init=False, repr=False, compare=False)
+    # (measured, cells, rows, the measured text as drawn at that width: a token wider than a row cut to it)
+    _laid: tuple[_Shape, int, list[_Row], _Shape] | None = field(default=None, init=False, repr=False, compare=False)
+    # Undo and redo: (text, caret, paste chips, image tokens) before each step, newest last.
+    _undo: list[_Snapshot] = field(default_factory=list, init=False, repr=False, compare=False)
+    _redo: list[_Snapshot] = field(default_factory=list, init=False, repr=False, compare=False)
     _typing_at: int | None = field(default=None, init=False, repr=False, compare=False)  # where the typed run's caret is
 
     def __post_init__(self) -> None:
@@ -306,7 +350,8 @@ class Composer:
         """The text's `_Shape`, worked out again only when the text or the mask changed."""
         shape = self._shaped
         if shape is None or shape.masked != self.masked or shape.text != self.text:
-            shape = self._shaped = _shape(self.text, self.masked)
+            labels = {token: label for token, (label, _image) in self.images.items()}
+            shape = self._shaped = _shape(self.text, self.masked, labels)
         return shape
 
     def _rows(self, avail: int) -> tuple[_Shape, list[_Row]]:
@@ -314,9 +359,10 @@ class Composer:
         shape = self._measured()
         laid = self._laid
         if laid is None or laid[0] is not shape or laid[1] != avail:
+            fitted = _fit_tokens(shape, avail, self.images)
             breaks = [] if shape.masked else [unit in WORD_BREAKS for unit in shape.units]
-            laid = self._laid = (shape, avail, _layout(shape.widths, avail, breaks))
-        return shape, laid[2]
+            laid = self._laid = (shape, avail, _layout(fitted.widths, avail, breaks), fitted)
+        return laid[3], laid[2]
 
     def _set(self, text: str, caret: int) -> None:
         """Store `text` as NFC with the caret moved to the matching cluster boundary."""
@@ -334,6 +380,19 @@ class Composer:
         if self.pastes:
             self.pastes = {label: text for label, text in self.pastes.items() if label in self.text}
             self._caret_off_chip(forward=True)
+        if self.images:
+            self.images = {token: image for token, image in self.images.items() if token in self.text}
+            self._unjoin_tokens()
+
+    def _unjoin_tokens(self) -> None:
+        """Drop what joined a token's cluster (a combining mark typed after it), which would be neither drawn nor
+        fit to send: the token stays one cluster that is only its label."""
+        shape = self._measured()
+        if not any(len(unit) > 1 and unit[0] in self.images for unit in shape.units):
+            return
+        before = _cluster_index(shape.bounds, self.caret)
+        units = [unit[0] if unit[0] in self.images else unit for unit in shape.units]
+        self._set("".join(units), len("".join(units[:before])))
 
     def _chip_spans(self) -> list[tuple[int, int]]:
         """Every chip's (start, end) in the text, in order."""
@@ -353,18 +412,56 @@ class Composer:
                 return
 
     def expanded(self, text: str | None = None) -> str:
-        """`text` (the composer's own by default) with every chip replaced by the text it holds."""
+        """`text` (the composer's own by default) with every chip replaced by the text it holds, every image token by
+        its label."""
         text = self.text if text is None else text
-        if not self.pastes:
-            return text
-        parts: list[str] = []
-        done = 0
-        for start, end in self._chip_spans() if text == self.text else []:
-            parts.append(text[done:start])
-            parts.append(self.pastes[text[start:end]])
-            done = end
-        parts.append(text[done:])
-        return "".join(parts)
+        if self.pastes:
+            parts: list[str] = []
+            done = 0
+            for start, end in self._chip_spans() if text == self.text else []:
+                parts.append(text[done:start])
+                parts.append(self.pastes[text[start:end]])
+                done = end
+            parts.append(text[done:])
+            text = "".join(parts)
+        return self._labelled(text)
+
+    def _labelled(self, text: str) -> str:
+        """`text` with every image token replaced by its label, and a token character no image is mapped to dropped:
+        none leaves the composer."""
+        return "".join(self.images[ch][0] if ch in self.images else "" if _is_token(ch) else ch for ch in text)
+
+    def _new_token(self) -> str:
+        """A token character neither the text nor `images` holds."""
+        while True:
+            token = chr(_TOKEN_FIRST + self._token_count % (_TOKEN_LAST - _TOKEN_FIRST + 1))
+            self._token_count += 1
+            if token not in self.text and token not in self.images:
+                return token
+
+    def _tokens_for(self, text: str, images: Sequence[tuple[str, object]]) -> str:
+        """`text` with the first `label` of each of `images` (label, image) made that image's token again."""
+        for label, image in images:
+            at = text.find(label)
+            if at >= 0:
+                token = self._new_token()
+                self.images[token] = (label, image)
+                text = text[:at] + token + text[at + len(label) :]
+        return text
+
+    def insert_image(self, label: str, image: object) -> bool:
+        """An image token drawn as `label` at the caret, a space on each side of it unless the text has one there (or
+        it starts the text); one undo step. False, and nothing inserted, when the input is masked."""
+        if self.masked:
+            return False
+        before = self._state()
+        token = self._new_token()
+        self.images[token] = (label, image)
+        lead = "" if self.caret == 0 or self.text[self.caret - 1].isspace() else " "
+        trail = "" if self.text[self.caret : self.caret + 1].isspace() else " "
+        self._replace(self.caret, self.caret, lead + token + trail)
+        self._step(before, typed=False)
+        return True
 
     def _insert_paste(self, text: str) -> None:
         """A paste: a long one (and not masked) as a chip, anything else as typed.
@@ -392,23 +489,26 @@ class Composer:
         if cleaned:
             self._replace(self.caret, self.caret, cleaned)
 
-    def replace(self, start: int, end: int, text: str) -> None:
-        """Put `text` (cleaned as a paste is) in place of `self.text[start:end]`; the caret lands after it. One undo step."""
+    def replace(self, start: int, end: int, text: str, images: Sequence[tuple[str, object]] = ()) -> None:
+        """Put `text` (cleaned as a paste is) in place of `self.text[start:end]`; the caret lands after it. One undo step.
+
+        `images` (label, image) are tokens again where their labels stand in `text`."""
         before = self._state()
-        self._replace(start, end, _clean(text, self.masked))
+        self._replace(start, end, self._tokens_for(_clean(text, self.masked), images))
         self._step(before, typed=False)
 
-    def restore(self, shown: str, chips: Sequence[tuple[str, str]]) -> None:
-        """Put back, at the caret, a text a submit showed as `shown`: its `chips` (label, text) are chips again."""
+    def restore(self, shown: str, chips: Sequence[tuple[str, str]], images: Sequence[tuple[str, object]] = ()) -> None:
+        """Put back, at the caret, a text a submit showed as `shown`: its `chips` (label, text) are chips again, and
+        its `images` (label, image) tokens."""
         before = self._state()
         self.pastes.update(chips)
-        self._replace(self.caret, self.caret, _clean(shown, self.masked))
+        self._replace(self.caret, self.caret, self._tokens_for(_clean(shown, self.masked), images))
         self._step(before, typed=False)
 
-    def _state(self) -> tuple[str, int, dict[str, str]]:
-        return self.text, self.caret, dict(self.pastes)
+    def _state(self) -> _Snapshot:
+        return self.text, self.caret, dict(self.pastes), dict(self.images)
 
-    def _step(self, before: tuple[str, int, dict[str, str]], typed: bool) -> None:
+    def _step(self, before: _Snapshot, typed: bool) -> None:
         """Keep `before` as an undo step when the text changed since, unless it continues a typed run."""
         if before[0] == self.text:
             if before[1] != self.caret:
@@ -420,17 +520,18 @@ class Composer:
         self._redo.clear()
         self._typing_at = self.caret if typed else None
 
-    def _take_step(self, source: list[tuple[str, int, dict[str, str]]], target: list[tuple[str, int, dict[str, str]]]) -> None:
+    def _take_step(self, source: list[_Snapshot], target: list[_Snapshot]) -> None:
         """Undo (from `_undo`) or redo (from `_redo`) one step; the state left goes on the other list."""
         if not source:
             return
         target.append(self._state())
-        text, caret, pastes = source.pop()
+        text, caret, pastes, images = source.pop()
         self.pastes = dict(pastes)
+        self.images = dict(images)
         self._set(text, caret)
         self._typing_at = None
         self.history_index = None  # the text is no history entry any more
-        self._draft = ""
+        self._draft, self._draft_images = "", {}
 
     def _units(self) -> tuple[list[str], list[int], int]:
         """Clusters, their boundaries, and the caret's cluster index."""
@@ -444,8 +545,9 @@ class Composer:
     def _clear(self) -> None:
         self._load("")
         self.history_index = None
-        self._draft = ""
+        self._draft, self._draft_images = "", {}
         self.pastes = {}
+        self.images = {}
         self._paste_count = 0
 
     # -- key handling ---------------------------------------------------------
@@ -567,12 +669,13 @@ class Composer:
                 self.on_record(entry)
 
     def _submit(self) -> ComposerAction:
-        shown = self.text
+        shown = self._labelled(self.text)
         text = self.expanded()
         chips = tuple((label, pasted) for label, pasted in self.pastes.items() if label in shown)
+        images = tuple(self.images[ch] for ch in self.text if ch in self.images)
         self.record(text)
         self._clear()
-        return ComposerAction(SUBMIT, text, shown if shown != text else "", chips)
+        return ComposerAction(SUBMIT, text, shown if shown != text else "", chips, images)
 
     # -- rows and history -----------------------------------------------------
 
@@ -597,7 +700,7 @@ class Composer:
         if self.masked or not self.history or self.history_index == 0:
             return
         if self.history_index is None:
-            self._draft = self.text
+            self._draft, self._draft_images = self.text, dict(self.images)  # its tokens come back with it
             self.history_index = len(self.history) - 1
         else:
             self.history_index -= 1
@@ -611,8 +714,9 @@ class Composer:
             self._load(self.history[self.history_index])
             return
         self.history_index = None
+        self.images = {**self.images, **self._draft_images}
         self._load(self._draft)
-        self._draft = ""
+        self._draft, self._draft_images = "", {}
 
     # -- drawing --------------------------------------------------------------
 
@@ -628,10 +732,10 @@ class Composer:
         glow: Sequence[tuple[int, int]] = (),
         glow_style: Callable[[int, int], Style] | None = None,
     ) -> tuple[list[Line], tuple[int, int]]:
-        """The visible rows at `width` cells, and the caret as (row, col) within them; paste chips in `chip_style`,
-        the `marks` (str index ranges of the text, such as a `/name` that resolves) in `mark_style`, and the `glow`
-        ranges (`aura`) a style a character, `glow_style(offset, length)` with `offset` from the range's start in a range
-        `length` long, over a mark."""
+        """The visible rows at `width` cells, and the caret as (row, col) within them; paste chips and image tokens in
+        `chip_style`, the `marks` (str index ranges of the text, such as a `/name` that resolves) in `mark_style`, and
+        the `glow` ranges (`aura`) a style a character, `glow_style(offset, length)` with `offset` from the range's
+        start in a range `length` long, over a mark."""
         prompt_cells = cell_width(prompt)
         avail = max(width - prompt_cells, 1)
         self._avail = avail
@@ -644,6 +748,8 @@ class Composer:
         self._scroll = scroll
         indent = Span(" " * prompt_cells)
         chips = self._chip_spans() if self.pastes and not self.masked else []
+        if self.images:
+            chips = sorted([*chips, *((at, at + 1) for at, ch in enumerate(self.text) if ch in self.images)])
         lines: list[Line] = []
         for number in range(scroll, min(len(rows), scroll + visible)):
             lead = Span(prompt, prompt_style) if number == 0 else indent

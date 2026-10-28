@@ -23,7 +23,7 @@ from test_tui_panels import agent_row, hud_payload, with_agents
 from test_tui_prompts import CLARIFY, slot
 from test_tui_subagents import feed
 from omh.skin_pack import SKIN_THEMES
-from omh.tui.app import ATTACH_ICON, STATE_WAITING, WAITING_GLYPH, App, Attachment, attachment_line
+from omh.tui.app import STATE_WAITING, WAITING_GLYPH, App
 from omh.tui.composer import Composer
 from omh.tui.diff_view import diff_rows, parse_inline_diff
 from omh.tui.frame import build_frame, sticky_line
@@ -510,6 +510,8 @@ class RunningBlueTests(unittest.TestCase):
         search.handle_key(Key(CHAR, "g"))
         chip = "[Pasted text #1 +60 lines]"
         composer = Composer(text=chip, pastes={chip: "x\n" * 60})
+        token = Composer()
+        token.insert_image("[Image #1]", "/x/shot.png")
         steers = [SteerBlock("look at b"), SteerBlock("look at c", STEER_QUEUED)]
         sites = {  # each site, and what it draws that the running blue once coloured
             "markdown": (rows, "• a bullet"),
@@ -517,8 +519,7 @@ class RunningBlueTests(unittest.TestCase):
             "keys": (shortcut_lines(100, THEME), "Ctrl+R"),
             "question": (question, "?"),
             "waiting": (app._tail(80), WAITING_GLYPH + STATE_WAITING),
-            "attachment": ([attachment_line([Attachment("/x/shot.png", "shot.png", "1280×720")], 60, THEME)],
-                           f"{ATTACH_ICON} shot.png"),
+            "image token": (build_frame(cols=60, rows=24, composer=token, info=(Span("info"),)).lines, "[Image #1]"),
             "history search": (search.lines(60, THEME, 4), SEARCH_LABEL),
             "paste chip": (build_frame(cols=60, rows=24, composer=composer, info=(Span("info"),)).lines, chip),
             "steer": ([row for steer in steers for row in block_rows(steer, 60, THEME)], STEER_MARK),

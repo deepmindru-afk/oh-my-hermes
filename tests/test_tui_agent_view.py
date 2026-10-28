@@ -282,7 +282,7 @@ class ViewTests(unittest.TestCase):
 
     def test_a_narrow_row_drops_the_right_side_and_keeps_the_count_whole(self) -> None:
         app, _client = agent_app()
-        self.assertEqual(info_text(app).rstrip(), CHIP + " " * 28 + "ctrl+t effort")
+        self.assertEqual(info_text(app).rstrip(), CHIP + " " * 30 + "ctrl+t effort")
         narrow, _client = agent_app(cols=30)
         self.assertEqual(info_text(narrow), CHIP)
 
@@ -953,7 +953,7 @@ class RoomTests(unittest.TestCase):
         emptied = drawn(app)
         self.assertEqual(app.frame_budget.agents, 0)
         self.assertEqual(app.region.last_row(12), 11)
-        self.assertIn("[ ⚚ OMH Native ]", emptied[11], "the info line is the screen's last row")
+        self.assertIn("[⚚ OMH Native]", emptied[11], "the info line is the screen's last row")
         # An agent of the new turn wants rows again, and gets them: no hold of an emptied view is kept.
         agent_event(app, "start", "sb-0", goal="task b0")
         self.assertEqual([row[:12] for row in view_text(app)], ["  ● main", "  ⠋ task b0 "])

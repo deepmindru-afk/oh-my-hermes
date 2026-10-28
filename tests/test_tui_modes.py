@@ -15,6 +15,7 @@ from __future__ import annotations
 import ast
 import base64
 from pathlib import Path
+import tempfile
 import time
 import unittest
 from unittest import mock
@@ -1426,7 +1427,8 @@ class LeftSessionStateTests(unittest.TestCase):
             with self.subTest(result=result):
                 app, client, pending = self.left_with_call(start)
                 app._on_response(Response(pending, result, None))
-                self.assertEqual(app.attachments, [])
+                self.assertEqual(app.composer.images, {})
+                self.assertIn(("image.detach", {"session_id": SID, "path": "/h/images/shot.png"}), client.calls)
                 self.assertEqual(notices(app, NOTICE_WARN)[-1], ATTACH_LEFT_NOTICE.format(name="shot.png"))
                 # The question typed after the path is the person's own words: it comes back to the composer.
                 self.assertEqual(app.composer.text, result.get("remainder", ""))
@@ -1434,13 +1436,18 @@ class LeftSessionStateTests(unittest.TestCase):
     def test_a_dropped_path_that_is_no_image_still_types_its_text_after_a_switch(self) -> None:
         app, client, pending = self.left_with_call(lambda app: app._on_input(Paste("/h/notes.txt")))
         app._on_response(Response(pending, {"matched": True, "is_image": False, "text": "[file: notes.txt]"}, None))
-        self.assertEqual((app.composer.text, app.attachments), ("[file: notes.txt]", []))
+        self.assertEqual((app.composer.text, app.composer.images), ("[file: notes.txt]", {}))
 
-    def test_in_the_same_session_the_image_is_a_chip_as_before(self) -> None:
-        app, client = make_app()
-        app._image("shot.png")
-        answer(app, client, self.SHOT)
-        self.assertEqual([item.name for item in app.attachments], ["shot.png"])
+    def test_in_the_same_session_the_image_is_a_token(self) -> None:
+        with tempfile.TemporaryDirectory() as home:
+            path = Path(home, "shot.png")
+            path.write_bytes(b"\x89PNG\r\n\x1a\n")
+            app, client = make_app()
+            app._image("shot.png")
+            answer(app, client, {**self.SHOT, "path": str(path)})
+        ((label, image),) = app.composer.images.values()
+        self.assertEqual((label, image.name, image.data), ("[Image #1]", "shot.png", b"\x89PNG\r\n\x1a\n"))
+        self.assertEqual(client.calls[-1], ("image.detach", {"session_id": SID, "path": str(path)}))
         self.assertEqual(notices(app), [])
 
 

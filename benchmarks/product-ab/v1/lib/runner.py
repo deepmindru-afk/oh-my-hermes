@@ -50,9 +50,21 @@ def approximate_cost_usd(model: str, usage: Mapping[str, Any]) -> float | None:
             return 0.0
         return float(value)
 
-    return _approximate_cost_usd(
-        model, number("input_tokens"), number("output_tokens"), number("cache_read_tokens")
-    )
+    # `_approximate_cost_usd` prices uncached input and cache reads as separate
+    # buckets. Hermes' `--usage-file` on the Codex route reports `input_tokens`
+    # INCLUSIVE of cache reads -- `total_tokens` there is exactly input plus
+    # output (5,736,985 + 18,408 = 5,755,393), and the session store holds the
+    # uncached remainder -- so passing both through priced every cached token
+    # twice and put one task at $35.77 instead of $4.98. `total_tokens` tells
+    # the two shapes apart: inclusive input sums with output to the total,
+    # uncached input falls short of it by the cache reads.
+    input_tokens = number("input_tokens")
+    output_tokens = number("output_tokens")
+    cache_read = number("cache_read_tokens")
+    total = number("total_tokens")
+    if cache_read and total and input_tokens + output_tokens == total and cache_read <= input_tokens:
+        input_tokens -= cache_read
+    return _approximate_cost_usd(model, input_tokens, output_tokens, cache_read)
 
 
 def _usage_total(attempts: Sequence[arms.Attempt], name: str) -> float | None:
@@ -552,6 +564,7 @@ def execute_one(
                     "input_tokens": _usage_total(attempts, "input_tokens"),
                     "output_tokens": _usage_total(attempts, "output_tokens"),
                     "cache_read_tokens": _usage_total(attempts, "cache_read_tokens"),
+                    "total_tokens": _usage_total(attempts, "total_tokens"),
                 },
             ),
         },

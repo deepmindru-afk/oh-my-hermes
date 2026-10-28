@@ -243,7 +243,14 @@ Hermes' own input history, `$HERMES_HOME/.hermes_history`, the file `hermes
 timestamp line). It only appends there (opened `O_APPEND` and `O_NOFOLLOW`,
 created mode 0600), reads at most the file's last 1 MiB and only when it is a
 regular file (no symlink or FIFO), and never writes an answer to a question
-Hermes asked or masked input there. The other files it writes are metadata: the
+Hermes asked or masked input there. An image the person attaches (Ctrl+V, a
+drop, `/image`) is a file Hermes stages and names; the TUI reads that file
+once, only when it is a regular file of at most 20 MB (opened `O_NOFOLLOW`
+and `O_NONBLOCK`), keeps its bytes in memory and nowhere else, and has
+Hermes let go of it (`image.detach`). A prompt that goes with the image
+stages those bytes again through Hermes' `image.attach_bytes`, the call
+Hermes' own remote clients use, and nothing else is staged until Hermes has
+taken them. The other files it writes are metadata: the
 launcher's active-session file (the session id); when `omh` launched it, the
 file `omh` named in `OMH_TUI_SESSION_FILE`, in `omh`'s private 0700 launch
 directory (opened `O_NOFOLLOW`, mode 0600), holding the open session's id, the

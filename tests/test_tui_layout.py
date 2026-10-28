@@ -23,7 +23,7 @@ from __future__ import annotations
 import itertools
 import unittest
 
-from _tui_lines import rule_edges, composer_text, composer_row, lines_text
+from _tui_lines import rule_edges, composer_row, lines_text
 from omh.tui.composer import Composer
 from omh.tui.frame import BROWSING_HINT, build_frame, rule_line, sticky_line
 from omh.tui.frame import MODE_ACCEPT, MODE_ACCEPT_PLAN, MODE_PLAN, MODE_SHELL
@@ -527,31 +527,6 @@ class FrameTests(unittest.TestCase):
         self.assertEqual(lines_text(list(frame.lines))[-5:],
                          [composer_row("  3", 40), composer_row("  4", 40), composer_row("  5", 40), rule_edges(40)[1], "info"])
         self.assertEqual(frame.cursor, (3, 3))
-
-    def test_the_attachment_row_tops_the_composer_within_its_cap(self) -> None:
-        chips = (Span("📎 shot.png 1280×720"),)
-        for text, grows in (("", 1), ("1\n2\n3\n4\n5", 0)):
-            with self.subTest(text=text):
-                composer = Composer(text=text, caret=len(text))
-                plain_frame = build_frame(cols=40, rows=12, composer=composer, info=self.info)
-                with_chips = build_frame(
-                    cols=40, rows=12, composer=composer, info=self.info, attachments=chips
-                )
-                self.assertEqual(with_chips.height, plain_frame.height + grows)  # a composer at its cap stays there
-                self.assertEqual(with_chips.cursor, (plain_frame.cursor[0] + grows, plain_frame.cursor[1]))
-                last_input = with_chips.budget.composer_top + with_chips.budget.composer - 1
-                plain_last = plain_frame.budget.composer_top + plain_frame.budget.composer - 1
-                self.assertEqual(lines_text([with_chips.lines[last_input]]), lines_text([plain_frame.lines[plain_last]]))
-                self.assertLessEqual(with_chips.budget.composer, composer_cap(12))
-                top = with_chips.budget.composer_top
-                self.assertEqual(composer_text(lines_text([with_chips.lines[top]])[0]), "📎 shot.png 1280×720")
-                self.assertEqual(lines_text([with_chips.lines[top - 1]]), [rule_edges(40)[0]])
-
-    def test_a_terminal_too_short_for_two_composer_rows_drops_the_attachment_row(self) -> None:
-        frame = build_frame(
-            cols=40, rows=7, composer=Composer(), info=self.info, attachments=(Span("📎 x"),)
-        )
-        self.assertNotIn("📎 x", " ".join(lines_text(list(frame.lines))))
 
     def test_a_tiny_terminal_frame_is_composer_and_info_line_without_a_box(self) -> None:
         frame = build_frame(

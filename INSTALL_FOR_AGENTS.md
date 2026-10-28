@@ -529,8 +529,8 @@ Agent/maintainer procedure:
 
    ```sh
    omh setup --model-setup \
-     --confirm-model google/gemini-3.1-pro \
-     --model-alias main=google/gemini-3.1-pro \
+     --confirm-model google/gemini-4-argon \
+     --model-alias main=google/gemini-4-argon \
      --no-interactive --json
    ```
 

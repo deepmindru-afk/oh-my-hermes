@@ -215,11 +215,17 @@ _GROK_47 = _candidate(
     ("xai", "openrouter"),
     reasoning="Editorial live-X-search recommendation; not a benchmark claim.",
 )
-# Gemini 3.1 Pro stays the Gemini entry: Google's model list names no newer
-# Pro tier (ai.google.dev models and changelog, read 2026-10-13; the served
-# id is still the `gemini-3.1-pro-preview` Preview).
+# Gemini 4 Argon took every Gemini 3.1 Pro slot at the effort each carried
+# (owner decision, 2026-10-28), and 3.1 Pro left the shipped chains under the
+# superseded-generation rule. Google made Argon generally available on
+# 2026-10-13 as the stable id `gemini-4-argon` (ai.google.dev model page and
+# changelog, read 2026-10-28). Its ladder is `low`/`medium`/`high`, so the
+# `medium` slots now run the rung they name: on Hermes, 3.1 Pro at `medium`
+# was sent as `low`, because Hermes allows only `low`/`high` for a Gemini 3
+# Pro id (reasoning_effort.py, observed in v0.22.5), while Argon's `medium`
+# goes on the wire as `medium`. Editorial and unmeasured.
 _GEMINI = _candidate(
-    "gemini-3.1-pro",
+    "gemini-4-argon",
     "gemini",
     ("google", "gemini", "openrouter"),
     reasoning="Editorial synthesis and visual-work alternative; not a benchmark claim.",
@@ -406,7 +412,7 @@ SHIPPED_MODEL_RECOMMENDATIONS: Final[dict[str, object]] = {
             _with_effort(_OPUS_55, "medium"),
         ],
         # x-search: live search on X. Grok 4.7 leads; Kimi K3.1 Pro and
-        # Gemini 3.1 Pro close it from two other ecosystems.
+        # Gemini 4 Argon close it from two other ecosystems.
         "x-search": [
             _with_effort(_GROK_47, "high"),
             _with_effort(_KIMI_K31_PRO, "high"),

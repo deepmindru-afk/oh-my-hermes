@@ -189,7 +189,10 @@ class AiJobSearchContextBudgetTests(unittest.TestCase):
         # Then dag-ulw's delegation-backend guidance; only dag-ulw moves.
         # Then model-setup's chain sentence names the six routing-recipe
         # categories (2026-10-28); only model-setup moves.
-        self.assertEqual(_digest(legacy_hashes), '48d98811b4a4c7ceea14d1b5995065c37420b6c46b1e16bb4b3081906cbc07d3')
+        # Then model-setup names Gemini 4 Argon where it named Gemini 3.1 Pro
+        # and lists 3.1 Pro as superseded (2026-10-28); reverting only that
+        # edit reproduces the previous pin 48d98811b4a4c7ceea14d1b5995065c37420b6c46b1e16bb4b3081906cbc07d3.
+        self.assertEqual(_digest(legacy_hashes), 'c68f1cca2df78a15c4822345f421b1aab01c43d8f4ae0944accb41065bef384c')
         legacy = _skill_context_cost_profile('full', legacy_templates, refs)
         current = _skill_context_cost_profile('full', templates, refs)
         # Main's search guidance adds 305; repro-audit's mandatory rails 1,943.

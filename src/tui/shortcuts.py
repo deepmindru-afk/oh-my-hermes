@@ -47,8 +47,8 @@ SHORTCUTS: tuple[tuple[str, str], ...] = (
           "as the agent list; in a DAG run, to its folding tree"),
     ("← / →", "Move by a character; with Ctrl or Alt, by a word (Alt+B and Alt+F too)"),
     ("Home / End, Ctrl+A / Ctrl+E", "Go to the start or the end of the line"),
-    ("Backspace / Delete", "Delete a character, or a paste chip whole; Backspace on an empty composer removes "
-                           "the last attached image"),
+    ("Backspace / Delete", "Delete a character, or a paste chip or an [Image #N] token whole; deleting a token "
+                           "removes its image"),
     ("Ctrl+W, Alt+Backspace, Ctrl+Backspace", "Deletes the word before the caret (Ctrl+Backspace where the terminal reports it apart from Backspace)"),
     ("Ctrl+U / Ctrl+K", "Delete to the start or the end of the line"),
     ("Ctrl+_ / Ctrl+Y", "Undo or redo an edit in the composer (Ctrl+_ is what Ctrl+- and Ctrl+/ send on most terminals); "
@@ -60,7 +60,7 @@ SHORTCUTS: tuple[tuple[str, str], ...] = (
             "sends nothing more and brings your draft back"),
     ("Esc Esc", "With text, clears it and keeps it in this session's history; on an empty composer between turns, "
                 "lists your prompts to rewind to (/rewind does too)"),
-    ("Ctrl+V", "Attaches the clipboard image"),
+    ("Ctrl+V", "Attaches the clipboard image as an [Image #N] token at the caret"),
     ("Ctrl+O", "Opens the whole transcript with every detail (thinking, tool output, whole diffs) at its end, or, "
                "while Hermes asks something, the whole question (it answers nothing); q leaves it"),
     ("Ctrl+L", "Redraws the screen"),

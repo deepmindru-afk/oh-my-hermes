@@ -70,18 +70,26 @@ person sends from the composer is appended to Hermes' own input history
 the TUI writes are metadata: that session file, what OMH's HUD reader (`panels.HudPoller`, its fan-out cache
 under `<omh_home>/runtime/`) and the model-chain picker (`/omh-model`'s saved
 chains) write under the OMH home, and an empty fallback marker at the path
-`omh` named, which `omh` removes. An attached image is a path the
-gateway resolves and queues itself (`image.attach`, `clipboard.paste`,
-`input.detect_drop`); the TUI keeps only its name for the chip row.
+`omh` named, which `omh` removes. An attached image is a file the
+gateway resolves and stages itself (`image.attach`, `clipboard.paste`,
+`input.detect_drop`); the TUI reads its bytes into memory once, has Hermes
+let go of it at once (`image.detach`), and the composer holds an
+`[Image #N]` token for it (`composer.py`). Hermes takes every image it holds
+when it admits a turn, so it holds an image only while the prompt that goes
+with it is sent: that prompt stages its own images from the TUI's bytes
+(`image.attach_bytes`) once Hermes has taken the last prompt's, and nothing
+else is staged until Hermes admits it (`_submit_prompt`, `_claimed`). A
+deletion that takes a token takes its image with it, since nothing else
+holds it.
 """
 
 from __future__ import annotations
 
 import base64
 from collections import deque
-from collections.abc import Callable, Iterator, Mapping, Sequence
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 import errno
 from functools import partial
 import json
@@ -90,6 +98,7 @@ import os
 from pathlib import Path
 import re
 import signal
+import stat
 import sys
 import time
 from types import FrameType
@@ -120,7 +129,7 @@ from ..skin_pack import (
     write_launch_choice,
 )
 from . import gateway_contract as contract
-from .composer import COMPLETE, EXIT, INTERRUPT, SUBMIT, Composer, ComposerAction
+from .composer import COMPLETE, EXIT, IMAGE_LABEL, INTERRUPT, SUBMIT, Composer, ComposerAction
 from .frame import INFO_INSET, MODE_NORMAL, MODE_SHELL, Frame, badge_forms, branch_forms, build_frame, sticky_line
 from .git_status import GitWatcher
 from .history import SEARCH_ACCEPT, SEARCH_CANCEL, SEARCH_HINTS, HistorySearch, append_entry, history_path, load_history
@@ -140,7 +149,6 @@ from .gateway import (
 from .herdr import HerdrReporter
 from .keys import (
     BUTTON_LEFT,
-    BACKSPACE,
     CHAR,
     DOWN,
     END,
@@ -722,10 +730,23 @@ TITLE_UNKNOWN_NOTICE = 'No session is titled "{title}": pick one, or change the 
 SESSION_ID_SHAPE = re.compile(r"\d{8}_\d{6}_[0-9a-f]+|local-[0-9a-f]{16,}")
 # `complete.path` goes out once the `@` token has held still this long.
 PATH_COMPLETE_DEBOUNCE_SECONDS = 0.12
-ATTACH_ICON = "📎"
-ATTACH_HINT = "Backspace removes"
 # An image Hermes queued for a session the TUI has since left: the gateway holds it there, so no chip shows here.
 ATTACH_LEFT_NOTICE = "Hermes queued {name} in the session you left, so it is not attached here."
+# The most bytes of one image the TUI keeps for its token: what the gateway child stages at most (`gateway_attach`).
+IMAGE_KEEP_BYTES = 20 * 1024 * 1024
+IMAGE_LABEL_NUMBERS = re.compile(r"\[Image #(\d+)\]")  # the numbers a resumed session's prompts already gave
+IMAGE_UNREADABLE_NOTICE = "{name} could not be read for its token (over 20 MB, or gone), so it is not attached."
+IMAGE_NOT_SENT_NOTICE = "{label} did not go with the prompt: Hermes did not take it ({reason})."
+IMAGES_KEPT_NOTICE = "{what} takes no image: {labels} stay in the composer for a prompt."
+DETACH_FAILED_NOTICE = "Hermes did not let go of an image ({reason}); it may go with the next prompt."
+# A prompt taken but not sent yet (its images were being staged) when the gateway or the session changed.
+UNSENT_BACK_NOTICE = "{why}, so the prompt you sent did not go: it is back in the composer with its images."
+UNSENT_BACK_RESPAWN = "Hermes' gateway restarted"
+UNSENT_BACK_SWITCH = "The session changed"
+# Where the prompt that stages images stands (`App.claim`).
+CLAIM_OPEN = "open"
+CLAIM_STAGING = "staging"
+CLAIM_SUBMITTED = "submitted"
 CONNECTION_NOTICE = (
     "Hermes is waiting for an app connection, which only Hermes' Desktop app or `hermes --tui` can complete. "
     "Esc interrupts the turn."
@@ -855,6 +876,7 @@ class QueuedLine(NamedTuple):
     shell: bool = False
     chips: tuple[tuple[str, str], ...] = ()  # the paste chips in `shown` (label, text), for Up to put back as chips
     notice: str = ""  # what the skill command that sent it said (Hermes' dispatch notice), shown under its row
+    images: tuple[Attachment, ...] = ()  # the images it goes with, for Up to put back as tokens
 
 
 @dataclass(frozen=True)
@@ -1025,11 +1047,23 @@ def side_answer_line(kind: str, payload: Mapping[str, Any], text: str) -> str:
 
 @dataclass(frozen=True)
 class Attachment:
-    """An image the gateway queued for the next message; the gateway holds the file, this is its label."""
+    """An image the person attached: the path Hermes first staged it at, its name, and the bytes the TUI keeps."""
 
     path: str
     name: str
     size: str  # "1280×720", or "" when the gateway could not read the dimensions
+    label: str = ""  # its composer token, `[Image #3]` (`composer.IMAGE_LABEL`)
+    data: bytes = field(default=b"", repr=False, compare=False)  # its bytes, which the TUI stages with each prompt
+
+
+@dataclass
+class UnsentPrompt:
+    """A prompt taken to send whose images are being staged, or that waits to stage them: what comes back to the
+    draft (`text`, with `images` as tokens) if it is given back before it goes, which `cancelled` then says."""
+
+    text: str
+    images: tuple[Attachment, ...]
+    cancelled: bool = False
 
 
 @dataclass(frozen=True)
@@ -1259,10 +1293,41 @@ def attachment_from(result: Mapping[str, Any]) -> Attachment | None:
     return Attachment(path, as_text(result.get("name")) or os.path.basename(path) or path, f"{width}×{height}" if sized else "")
 
 
-def attachment_line(attachments: Sequence[Attachment], width: int, theme: Theme) -> Line:
-    """`📎 shot.png 1280×720 · notes.png  Backspace removes`, cut to `width` (the hint goes first)."""
-    labels = " · ".join(f"{item.name} {item.size}".strip() for item in attachments)
-    return truncate_line((Span(f"{ATTACH_ICON} {labels}", theme.text), Span(f"  {ATTACH_HINT}", theme.hint)), width)
+def read_image(path: str) -> bytes | None:
+    """The bytes of the image file Hermes staged at `path`, read once so the TUI holds it; None when it cannot be read,
+    is no regular file (a link is not followed, a FIFO never blocks the loop), is empty, or is over
+    `IMAGE_KEEP_BYTES`, as `history.load_history` guards its read. Windows has no `O_NOFOLLOW`, so a link or other
+    reparse point is refused by its own entry first."""
+    try:
+        entry = os.lstat(path)
+    except OSError:
+        return None
+    if stat.S_ISLNK(entry.st_mode) or getattr(entry, "st_file_attributes", 0) & getattr(
+            stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0):
+        return None
+    try:
+        fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
+                     | getattr(os, "O_BINARY", 0))
+    except OSError:
+        return None
+    try:
+        info = os.fstat(fd)
+        if not stat.S_ISREG(info.st_mode) or not 0 < info.st_size <= IMAGE_KEEP_BYTES:
+            return None
+        with os.fdopen(fd, "rb") as handle:
+            fd = -1
+            data = handle.read(IMAGE_KEEP_BYTES + 1)
+    except OSError:
+        return None
+    finally:
+        if fd >= 0:
+            os.close(fd)
+    return data if 0 < len(data) <= IMAGE_KEEP_BYTES else None
+
+
+def _tokens(images: Iterable[Attachment]) -> list[tuple[str, Attachment]]:
+    """`images` as the composer takes them back as tokens (`Composer.replace`): each with its label."""
+    return [(image.label, image) for image in images]
 
 
 def path_items(result: Mapping[str, Any]) -> list[PathItem]:
@@ -1488,6 +1553,7 @@ class App(ModesMixin, AgentViewMixin):
         # A prompt sent while no turn runs, held until the default is checked (`_start_turn`): its text, its send,
         # and the session it was typed in, the only one it may go to.
         self.starting: tuple[str, Callable[[], None], str] | None = None
+        self.starting_images: tuple[Attachment, ...] = ()  # the images of the prompt `starting` holds
         self.local_questions: dict[str, Callable[[dict[str, Any]], None]] = {}  # asked in the slot, by request id
         self.local_serial = 0
         self.chains_open = False  # /omh-model's picker has the terminal (`_omh_model`)
@@ -1625,7 +1691,20 @@ class App(ModesMixin, AgentViewMixin):
         self.tip_index = -1  # moves on as the next turn's working row first shows a tip
         self.turn_waited = 0.0  # the part of that turn questions waited on the person, the waits that ended
         self.waiting_since: float | None = None  # when the open question (or the first of those back to back) opened
-        self.attachments: list[Attachment] = []  # images the gateway queued for the next prompt
+        self.image_count = 0  # the highest `[Image #N]` this run gave or a resumed session's history holds
+        # Hermes holds an image only from its staging for a prompt until it admits that prompt's turn: `staged` are
+        # the paths it named for the last prompt.submit. `claim` says where the prompt that stages images stands: none
+        # out (CLAIM_OPEN), its images being staged (CLAIM_STAGING), or sent and not yet taken (CLAIM_SUBMITTED); off
+        # CLAIM_OPEN, what would stage another image or send another prompt waits in `after_claim` (`_after_claim`),
+        # each with whether it sends a prompt, which also waits for the `intakes` (stagings a paste, a drop or
+        # `/image` made, until their answers have sent the detach). `unsent` are the prompts taken that have not
+        # gone as prompt.submit yet, which Esc, a session switch or a new gateway gives back (`_give_back_unsent`).
+        self.staged: list[str] = []
+        self.claim = CLAIM_OPEN
+        self.after_claim: deque[tuple[bool, Callable[[], None]]] = deque()
+        self.intakes = 0
+        self.unsent: list[UnsentPrompt] = []
+        self.image_epoch = 0  # moves on with each new gateway or session: a staging answered after it sends nothing
         self.picker: SessionPicker | None = None
         self.path_word = ""  # the `@` token `complete.path` was last scheduled for
         self.path_due: float | None = None  # when that call goes out (debounced)
@@ -1799,6 +1878,8 @@ class App(ModesMixin, AgentViewMixin):
                 tools = []
             if role == "user":
                 self.transcript.add_user(text, known=self.known_slash, recorded=True)
+                # Its `[Image #N]` labels are taken: the next image this run attaches is numbered past them.
+                self.image_count = max([self.image_count, *map(int, IMAGE_LABEL_NUMBERS.findall(text))])
             else:
                 self.transcript.add_assistant(text)
         if tools:
@@ -1878,8 +1959,8 @@ class App(ModesMixin, AgentViewMixin):
     def _adopt_session(self, result: Mapping[str, Any], fallback_stored: str = "") -> None:
         if self.starting is not None and self.starting[2] != as_text(result.get("session_id")):
             # A prompt held for the default check was typed in the session being left: back to the draft.
-            self._give_back(self.starting[0])
-            self.starting = None
+            self._give_back(self.starting[0], self.starting_images)
+            self.starting, self.starting_images = None, ()
         self.sid = as_text(result.get("session_id"))
         self.shared_gateway = bool(as_text(result.get("subscription_id")))
         info = result.get("info")
@@ -2370,9 +2451,12 @@ class App(ModesMixin, AgentViewMixin):
         first_id = max(self.pending, default=0) + 1
         self._settle_lost_calls()
         self.default_asked = False  # a read or switch for Hermes' default went with the old gateway: ask again
+        # The new gateway holds no image, and a staging the old one did not answer sends nothing; what waited for the
+        # old one's admission goes with it, as its running turn does. The next send stages from the TUI's bytes.
+        self._reset_staging(UNSENT_BACK_RESPAWN)
         if self.starting is not None:  # the prompt it held never went: back to the draft, never sent again
-            self._give_back(self.starting[0])
-            self.starting = None
+            self._give_back(self.starting[0], self.starting_images)
+            self.starting, self.starting_images = None, ()
         self._give_back_tell()
         old: GatewayClient | None = self.client
         while True:
@@ -2613,6 +2697,8 @@ class App(ModesMixin, AgentViewMixin):
             if event.type in ("tool.complete", "message.complete") and self.git is not None:
                 self.git.refresh()  # a tool or the turn may have changed the files or the branch
             if event.type == "message.start":
+                if self.claim == CLAIM_SUBMITTED:
+                    self._claimed()  # Hermes admitted the turn, so it took what was staged for it
                 self.bg_done = None  # the session is awake: the row's offer was for an idle one
                 if not self.turn_pending:  # a turn this TUI did not start (a resumed one, a server queue)
                     self.busy_since = self.clock()
@@ -2963,7 +3049,9 @@ class App(ModesMixin, AgentViewMixin):
         self.composer, self.tell_draft = self.tell_draft, None
         self.composer.record(typed, sent=False)
 
-    def _tell(self, text: str, shown: str = "", chips: tuple[tuple[str, str], ...] = ()) -> None:
+    def _tell(
+        self, text: str, shown: str = "", chips: tuple[tuple[str, str], ...] = (), images: Sequence[Attachment] = ()
+    ) -> None:
         """What the person sent after the tell row: the draft comes back and the text goes into the turn whose
         approval was denied as a steer, the way Ctrl+Enter sends it (`_steer_or_submit`). Once that turn has ended
         it is an ordinary prompt, held behind any turn that started since (a queued prompt's) whatever the busy
@@ -2972,9 +3060,9 @@ class App(ModesMixin, AgentViewMixin):
             return
         self._leave_tell()
         if self.tell_turn_runs:
-            self._steer_or_submit(text, shown, chips)
+            self._steer_or_submit(text, shown, chips, images)
         else:
-            self._submit(text, shown, chips, hold=True)
+            self._submit(text, shown, chips, hold=True, images=images)
 
     def _turn_wait(self) -> float:
         """Seconds questions have waited on the person in the running (or just ended) turn, the open wait included."""
@@ -3155,8 +3243,10 @@ class App(ModesMixin, AgentViewMixin):
         return (self.clock() if arrived_at is None else arrived_at) - self.slot_opened_at < self.slot_arm_seconds
 
     def _on_composer(self, action: ComposerAction, event: Key | Paste, steer: bool = False) -> None:
-        """Act on what the composer made of `event`; `steer` says the key was Ctrl+Enter."""
+        """Act on what the composer made of `event`; `steer` says the key was Ctrl+Enter. A submit's image tokens go
+        with it, to the prompt it sends."""
         if action.kind == SUBMIT:
+            images = tuple(image for _label, image in action.images if isinstance(image, Attachment))
             if self.slot is not None:
                 question = self.slot.question_index
                 answer = self.slot.submit_text(action.text)
@@ -3165,13 +3255,13 @@ class App(ModesMixin, AgentViewMixin):
                 else:
                     self._next_question(question)
             elif self.tell_draft is not None and self.agent_steer is None and self.rewind is None:
-                self._tell(action.text, action.shown, action.chips)
+                self._tell(action.text, action.shown, action.chips, images)
             elif steer:
-                self._steer_or_submit(action.text, action.shown, action.chips)
+                self._steer_or_submit(action.text, action.shown, action.chips, images)
             elif not action.text and self.bg_done is not None and self.agent_steer is None and self.rewind is None:
                 self._report_background()
             else:
-                self._submit(action.text, action.shown, action.chips)
+                self._submit(action.text, action.shown, action.chips, images=images)
         elif action.kind == INTERRUPT:
             self._interrupt_or_exit()
         elif action.kind == EXIT:
@@ -3231,24 +3321,20 @@ class App(ModesMixin, AgentViewMixin):
             self.held_input.extend(self.decoder.feed(typed))
 
     def _attachment_input(self, event: Key | Paste) -> bool:
-        """Ctrl+V, Backspace on an empty composer with images queued, and a one-line paste (a drop); True when handled."""
+        """Ctrl+V and a one-line paste (a drop); True when handled."""
         if isinstance(event, Paste):
             if "\n" in event.text or not event.text.strip() or not self.sid:
                 return False
-            sid = self.sid
-            self._request(
+            sid, text = self.sid, event.text
+            self._intake(  # an image drop stages: as `/image` waits, so does this
                 "input.detect_drop",
-                {"session_id": sid, "text": event.text},
-                lambda result: self._on_drop(sid, event.text, result),
-                lambda error: self._on_drop_refused(event.text),
+                {"session_id": sid, "text": text},
+                lambda result: self._on_drop(sid, text, result),
+                lambda error: self._on_drop_refused(text),
             )
             return True
         if event.name == CHAR and event.ctrl and not event.alt and event.char == "v":
             self._paste("")
-            return True
-        if event.name == BACKSPACE and not self.composer.text and self.attachments:
-            detached = self.attachments.pop()
-            self._request("image.detach", {"session_id": self.sid, "path": detached.path}, lambda result: None)
             return True
         return False
 
@@ -3495,15 +3581,18 @@ class App(ModesMixin, AgentViewMixin):
         Only into the session it was typed in: once another is open, it goes back to the draft instead.
         """
         start, self.starting = self.starting, None
+        images, self.starting_images = self.starting_images, ()
         if start is None:
             return
         text, send, sid = start
         if sid != self.sid:
-            self._give_back(text)
+            self._give_back(text, images)
         else:
             send()
 
-    def _start_turn(self, text: str, start: Callable[[], None], line: QueuedLine | None = None) -> None:
+    def _start_turn(
+        self, text: str, start: Callable[[], None], line: QueuedLine | None = None, images: Sequence[Attachment] = ()
+    ) -> None:
         """Start a turn with `start` once Hermes' default model is checked, so the turn runs on the default it has.
 
         A config edited while no turn ran (another terminal, an editor, a bot)
@@ -3513,22 +3602,25 @@ class App(ModesMixin, AgentViewMixin):
         the prompt until the person answers it, and the prompt then goes on
         the model they chose. Prompts sent meanwhile queue behind it
         (`_send_prompt`). Until the launch's read has answered there is nothing
-        to measure a move from, so the first prompt never waits on it.
+        to measure a move from, so the first prompt never waits on it. The
+        `images` it goes with come back with it if it never goes.
 
         A prompt already held there is never replaced: one asked to start
         meanwhile goes back to the head of the queue (`line`, the queue's
-        line it came from) or, with none, to the draft.
+        line it came from, its images with it) or, with none, to the draft,
+        its images tokens again.
         """
         if self.starting is not None:
             if line is not None:
                 self.queued.appendleft(line)
             else:
-                self._give_back(text)
+                self._give_back(text, images)
             return
         if self.default_route is None:
             start()
             return
         self.starting = (text, start, self.sid)
+        self.starting_images = tuple(images)
         if not self.default_asked:  # one that is out settles into this start
             self._check_default()
 
@@ -3687,7 +3779,9 @@ class App(ModesMixin, AgentViewMixin):
             return
         self._route_slash(SlashInvocation("export", arg, None), 0)
 
-    def _send_rewind(self, text: str, shown: str = "", typed: str = "", notice: str = "") -> None:
+    def _send_rewind(
+        self, text: str, shown: str = "", typed: str = "", notice: str = "", images: Sequence[Attachment] = ()
+    ) -> None:
         """Send `text` in place of the picked prompt: Hermes drops it and what came after, and the screen restarts there.
 
         The transcript is rebuilt from the history above the cut (as a resumed
@@ -3705,11 +3799,12 @@ class App(ModesMixin, AgentViewMixin):
             return
         if self._busy():  # a turn started meanwhile: the row it names may be gone by its end
             self.transcript.add_notice(REWIND_BUSY_NOTICE, NOTICE_WARN)
-            self._give_back(typed or text)
+            self._give_back(typed or text, images)
             return
         kept = self.transcript  # the screen before the cut, put back if Hermes refuses it
         self._restart_transcript(list(rewind.before))
-        self._submit_prompt(text, shown, truncate=rewind.row_id, before_cut=kept, notice=notice, typed=typed)
+        self._submit_prompt(text, shown, truncate=rewind.row_id, before_cut=kept, notice=notice, typed=typed,
+                            images=images)
         self._full_redraw()
 
     def _restart_transcript(self, messages: list[dict[str, Any]]) -> None:
@@ -3727,14 +3822,14 @@ class App(ModesMixin, AgentViewMixin):
         Then it is redrawn from the history Hermes sends; if that read fails,
         or is not answered, the screen from before the send stays, and the
         notices say which. A prompt queued behind the rewind goes only once
-        that is settled, so the redraw does not wipe its echo. The images
-        sent with it come back as chips: Hermes still holds them for the next
-        prompt. An error whose `data` says `rewound` (the shared-gateway
+        that is settled, so the redraw does not wipe its echo. Hermes still
+        holds the images staged for it: they are detached (`_release_staged`). An error whose `data` says `rewound` (the shared-gateway
         child cut the session, then Hermes refused the prompt) is not
         "Hermes kept its history": the notice says the cut happened, and what
         the person typed (`text`: for a skill, the command, not the message it
         expanded to) goes back to the draft as a refused steer's does
-        (`_give_back`), after a draft begun since rather than over it.
+        (`_give_back`), after a draft begun since rather than over it, its
+        images tokens again.
         """
         if sid != self.sid:
             self._on_submit_error(error)
@@ -3744,9 +3839,9 @@ class App(ModesMixin, AgentViewMixin):
         cut = isinstance(data, dict) and data.get("rewound") is True
         self.transcript = kept
         self._full_redraw()
-        self.attachments.extend(images)
+        self._release_staged()
         if cut:
-            self._give_back(text)  # what the person typed, after any draft begun since: never over it
+            self._give_back(text, images)  # what the person typed, after any draft begun since: never over it
         self.transcript.add_notice((REWIND_CUT_NOTICE if cut else REWIND_KEPT_NOTICE).format(reason=reason), NOTICE_WARN)
         self.turn_pending = False  # no turn starts; the queue waits for the history read
         after = (REWIND_CUT_NOTICE if cut else REWIND_REFUSED_NOTICE).format(reason=reason)
@@ -3785,7 +3880,16 @@ class App(ModesMixin, AgentViewMixin):
             self._drain_queue()
 
     def _interrupt(self) -> None:
-        """Ask Hermes to stop the running turn; the working row says `interrupting…` until the turn ends."""
+        """Ask Hermes to stop the running turn; the working row says `interrupting…` until the turn ends.
+
+        A prompt taken but not sent yet (its images still staging, or waiting
+        to) is not sent: it comes back to the draft with its tokens
+        (`_give_back_unsent`), and with no turn running or sent besides it,
+        nothing is asked of Hermes.
+        """
+        if self._give_back_unsent() and not (self.transcript.running or self.claim == CLAIM_SUBMITTED):
+            self.turn_pending = False
+            return
         if self.sid:
             self.interrupting = True
             self._request("session.interrupt", {"session_id": self.sid}, lambda result: None, self._on_interrupt_refused)
@@ -3918,12 +4022,14 @@ class App(ModesMixin, AgentViewMixin):
     # ── prompts ──
 
     def _submit(
-        self, text: str, shown: str = "", chips: tuple[tuple[str, str], ...] = (), hold: bool = False
+        self, text: str, shown: str = "", chips: tuple[tuple[str, str], ...] = (), hold: bool = False,
+        images: Sequence[Attachment] = (),
     ) -> None:
         """Send what the composer submitted; `shown` is its compact form (paste chips), which the transcript shows.
 
         `chips` are the chips in `shown` (label, text): a prompt queued behind the turn keeps them for Up. `hold`
-        keeps a prompt behind a running turn whatever the busy mode (`_send_prompt`).
+        keeps a prompt behind a running turn whatever the busy mode (`_send_prompt`). `images` go with the prompt
+        it sends; a line that sends none (a `!` line, a subagent's steer) gives their tokens back (`_keep_images`).
 
         Whether the line is a `!` shell line or a slash command is read from
         what the composer showed, never from a chip's text: a paste that
@@ -3935,6 +4041,7 @@ class App(ModesMixin, AgentViewMixin):
             return
         seen = shown or text
         if seen.startswith(SHELL_PREFIX):
+            self._keep_images(images, SHELL_PREFIX + " line")
             self._shell_line(text, seen)  # a chip holds no `!` of its own, so the sent text starts with it too
             return
         invocation = parse_slash(seen)
@@ -3943,48 +4050,64 @@ class App(ModesMixin, AgentViewMixin):
             if sent is None or sent.name != invocation.name:
                 sent = invocation
             # A picked rewind or agent stays picked under a command; a prompt the command sends replaces the rewind's.
-            self._run_slash(replace(sent, rewind=self.rewind), echo=f"/{invocation.text}")
+            self._run_slash(replace(sent, rewind=self.rewind, images=tuple(images)), echo=f"/{invocation.text}")
         elif self.agent_steer is not None:
+            self._keep_images(images, "A subagent's steer")
             self._steer_agent(text)
         elif self.rewind is not None:
-            self._send_rewind(text, shown)
+            self._send_rewind(text, shown, images=images)
         else:
-            self._send_typed(text, hold=hold, shown=shown, chips=chips)
+            self._send_typed(text, hold=hold, shown=shown, chips=chips, images=images)
 
-    def _send_typed(self, text: str, hold: bool = False, shown: str = "", chips: tuple[tuple[str, str], ...] = ()) -> None:
+    def _send_typed(
+        self, text: str, hold: bool = False, shown: str = "", chips: tuple[tuple[str, str], ...] = (),
+        images: Sequence[Attachment] = (),
+    ) -> None:
         """A prompt the person typed and sent: in plan mode as `/plan <text>`, the way a typed `/plan` goes.
 
         `hold` keeps it behind a running turn whatever the busy mode (`_send_prompt`).
         """
         if self.plan_mode:
-            self._run_slash(replace(plan_invocation(text), held=hold))
+            self._run_slash(replace(plan_invocation(text), held=hold, images=tuple(images)))
         else:
-            self._send_prompt(text, shown=shown, hold=hold, chips=chips)
+            self._send_prompt(text, shown=shown, hold=hold, chips=chips, images=images)
+
+    def _keep_images(self, images: Sequence[Attachment], what: str) -> None:
+        """`what` sends no prompt, so it takes no image: the tokens of `images` go back to the draft, and a notice
+        says so."""
+        if not images:
+            return
+        labels = " ".join(image.label for image in images)
+        self._give_back(labels + " ", images)  # a space after them, as a token goes in
+        self.transcript.add_notice(IMAGES_KEPT_NOTICE.format(what=what, labels=labels))
 
     def _send_prompt(
         self, text: str, shown: str = "", typed: str = "", hold: bool = False, chips: tuple[tuple[str, str], ...] = (),
-        notice: str = "",
+        notice: str = "", images: Sequence[Attachment] = (),
     ) -> None:
         """Send `text`, or queue it behind the running turn; `typed` is what Up puts back in the composer.
 
         `hold` queues it behind a running turn whatever the busy mode. `notice` goes under its row (`_submit_prompt`).
         One that starts a turn waits for Hermes' default model to be checked (`_start_turn`), and one sent while
-        that wait is on queues behind it.
+        that wait is on queues behind it. `images` go with it, queued too.
         """
+        images = tuple(images)
         if not self.sid:
             self.transcript.add_notice(NO_SESSION_NOTICE, NOTICE_WARN)
+            self._keep_images(images, "A prompt with no session")
             return
         if (self._busy() and (hold or self.busy_mode == BUSY_QUEUE)) or self.starting is not None:
-            self.queued.append(QueuedLine(text, shown, typed, chips=chips, notice=notice))
+            self.queued.append(QueuedLine(text, shown, typed, chips=chips, notice=notice, images=images))
             return
         if self._busy():  # the busy mode sends it into the running turn: no turn starts
-            self._submit_prompt(text, shown, notice=notice)
+            self._submit_prompt(text, shown, notice=notice, images=images)
         else:
-            self._start_turn(typed or text, lambda: self._submit_prompt(text, shown, notice=notice))
+            self._start_turn(typed or text, lambda: self._submit_prompt(text, shown, notice=notice, images=images),
+                             images=images)
 
     def _submit_prompt(
         self, text: str, shown: str = "", queued: bool = False, truncate: int | None = None,
-        before_cut: Transcript | None = None, notice: str = "", typed: str = "",
+        before_cut: Transcript | None = None, notice: str = "", typed: str = "", images: Sequence[Attachment] = (),
     ) -> None:
         """Send one prompt; `queued` says the queue sent it.
 
@@ -3993,8 +4116,35 @@ class App(ModesMixin, AgentViewMixin):
         `notice` is what the skill command that sent it said, under its row whenever it goes. `typed` is
         what the person typed for it (a skill command, not the skill message it expanded to), which a
         rewind refused after its cut gives back.
+
+        `images` are the ones it goes with. Hermes holds no image between
+        sends, and takes every image it holds when it admits a turn, which can
+        be well after `prompt.submit` (an agent still building) or at once (one
+        built). So the prompt waits until no other prompt's images are out and
+        no paste, drop or `/image` waits on its answer and detach
+        (`_after_claim`); then its images are staged (`image.attach_bytes`),
+        nothing else is staged or sent until Hermes has taken them, and it goes
+        once each staging is answered. Its echo lists, as `⎿ [Image #N]`, the
+        images whose staging Hermes answered. Until it goes it is `unsent`:
+        Esc, a session switch or a new gateway gives it back to the draft.
         """
-        self.transcript.add_user(shown or text, from_queue=queued, known=self.known_slash)
+        self._settle_claim()
+        self.turn_pending = True  # a prompt sent meanwhile goes behind this one
+        self.busy_since = self.clock()
+        unsent = UnsentPrompt(typed or text, tuple(images))
+        self.unsent.append(unsent)
+        self._after_claim(lambda: self._stage_images(
+            unsent, lambda taken, paths: self._send_submit(text, shown, queued, truncate, before_cut, notice, typed,
+                                                            taken, paths)), sends=True)
+
+    def _send_submit(
+        self, text: str, shown: str, queued: bool, truncate: int | None, before_cut: Transcript | None, notice: str,
+        typed: str, images: Sequence[Attachment], paths: Sequence[str],
+    ) -> None:
+        """`prompt.submit`, with `images` staged in Hermes under `paths`; nothing else is staged until Hermes has
+        taken them (`_claimed`)."""
+        self.transcript.add_user(shown or text, from_queue=queued, known=self.known_slash,
+                                 images=tuple(image.label for image in images))
         self.launch_layout = False
         if notice:
             self.transcript.add_aside(NoticeBlock(notice))
@@ -4009,8 +4159,7 @@ class App(ModesMixin, AgentViewMixin):
         self.busy_since = self.clock()
         self.turn_waited = 0.0
         self._count_from_here()
-        sent_images = list(self.attachments)
-        self.attachments.clear()  # the gateway sends its queued images with this turn
+        self.staged, self.claim = list(paths), CLAIM_SUBMITTED
         params: dict[str, Any] = {"session_id": self.sid, "text": text}
         if queued:
             params["queued"] = True  # the busy path holds a drained prompt; it never redirects or steers it
@@ -4018,14 +4167,164 @@ class App(ModesMixin, AgentViewMixin):
             params.update(truncate_before_row_id=truncate, confirm_truncate=True)  # the person picked this row
             sid, kept = self.sid, before_cut or self.transcript
             self._request(
-                "prompt.submit", params, lambda result: None,
-                lambda error: self._on_rewind_refused(sid, kept, error, typed or text, sent_images),
+                "prompt.submit", params, self._on_submitted,
+                lambda error: self._on_rewind_refused(sid, kept, error, typed or text, tuple(images)),
             )
             return
-        self._request("prompt.submit", params, lambda result: None, self._on_submit_error)
+        self._request("prompt.submit", params, self._on_submitted, self._on_submit_error)
+
+    def _after_claim(self, run: Callable[[], None], sends: bool = False) -> None:
+        """Run `run`, which stages an image (or, `sends`, stages a prompt's images and sends it), now or once nothing
+        it could mix with is out (`_pump_claims`), after whatever waits already."""
+        self._settle_claim()
+        self.after_claim.append((sends, run))
+        self._pump_claims()
+
+    def _pump_claims(self) -> None:
+        """What waits goes, in order, while no prompt's images are out; a prompt also waits for the `intakes`."""
+        while self.after_claim and self.claim == CLAIM_OPEN:
+            sends, run = self.after_claim[0]
+            if sends and self.intakes:
+                return
+            self.after_claim.popleft()
+            run()
+
+    def _intake(
+        self, method: str, params: dict[str, Any], on_result: Callable[[dict[str, Any]], None],
+        on_error: Callable[[dict[str, Any]], bool],
+    ) -> None:
+        """A call that has Hermes stage an image (`clipboard.paste`, `image.attach`, `input.detect_drop`): it goes once
+        no prompt's images are out, and no prompt goes until it is answered, its answer having sent the detach
+        (`_take_attachment`), or until it has none in its time."""
+
+        def run() -> None:
+            epoch = self.image_epoch
+            self.intakes += 1
+
+            def done() -> None:
+                if epoch == self.image_epoch:
+                    self.intakes = max(self.intakes - 1, 0)
+                    self._pump_claims()
+
+            def result(answer: dict[str, Any]) -> None:
+                on_result(answer)
+                done()
+
+            def error(refusal: dict[str, Any]) -> bool:
+                handled = on_error(refusal)
+                done()
+                return handled
+
+            self._request(method, params, result, error, lambda _seconds: done())
+
+        self._after_claim(run)
+
+    def _settle_claim(self) -> None:
+        """No turn is awaited any more (the person interrupted one Hermes never admitted, and nothing ended it): what
+        was staged for it is detached, so nothing waits on an admission that will not come."""
+        if self.claim == CLAIM_SUBMITTED and not self._busy():
+            self._release_staged()
+
+    def _claimed(self) -> None:
+        """Hermes holds no image any more: the last prompt.submit's turn was admitted (`message.start`), its answer
+        says it is queued with its images, it was refused (`_release_staged`), or a cancelled prompt's stagings were
+        detached. What waited goes, in order, until a prompt is out again."""
+        self.staged, self.claim = [], CLAIM_OPEN
+        self._pump_claims()
+
+    def _on_submitted(self, result: dict[str, Any]) -> None:
+        """A turn that streams takes its images when Hermes admits it (`message.start`); any other answer (queued
+        behind a turn, steered) took them already."""
+        if as_text(result.get("status")) != "streaming" and self.claim == CLAIM_SUBMITTED:
+            self._claimed()
+
+    def _release_staged(self) -> None:
+        """A prompt.submit that ended without Hermes admitting its turn: Hermes keeps what was staged for it, so it is
+        detached, by the paths Hermes named. Nothing to do while a prompt is still staging: it is not sent yet."""
+        if self.claim == CLAIM_STAGING:
+            return
+        self._detach(self.staged)
+        self._claimed()
+
+    def _detach(self, paths: Sequence[str]) -> None:
+        for path in paths:
+            self._request("image.detach", {"session_id": self.sid, "path": path}, lambda result: None,
+                          self._detach_failed)
+
+    def _stage_images(
+        self, unsent: UnsentPrompt, then: Callable[[list[Attachment], list[str]], None]
+    ) -> None:
+        """Stage each of the prompt's images in Hermes from the bytes the TUI keeps (`image.attach_bytes`);
+        `then(taken, paths)` once every one is answered, with the images Hermes took and the paths it named. A
+        refusal or no answer is a notice, and that image is not sent. A prompt given back meanwhile sends nothing,
+        and what Hermes took for it is detached."""
+        if unsent.cancelled:
+            return
+        self.claim = CLAIM_STAGING
+        sid, epoch, answers, images = self.sid, self.image_epoch, {}, unsent.images
+
+        def answered(image: Attachment, path: str) -> None:
+            answers[image.label] = path
+            if len(answers) < len(images) or epoch != self.image_epoch:
+                return  # a new gateway or session: it was given back, and the claim started again (`_reset_staging`)
+            taken = [image for image in images if answers[image.label]]
+            paths = [answers[image.label] for image in taken]
+            if unsent.cancelled or sid != self.sid:
+                self._detach(paths)
+                self._claimed()
+                return
+            self.unsent.remove(unsent)
+            then(taken, paths)
+
+        if not images:
+            self.unsent.remove(unsent)
+            then([], [])
+            return
+        for image in images:
+            self._request(
+                "image.attach_bytes",
+                {"session_id": sid, "filename": image.name,
+                 "content_base64": base64.b64encode(image.data).decode("ascii")},
+                lambda result, image=image: answered(image, as_text(result.get("path"))),
+                lambda error, image=image: self._stage_refused(image, error, answered),
+                lambda _seconds, image=image: self._stage_refused(image, {"message": "no answer"}, answered),
+            )
+
+    def _stage_refused(
+        self, image: Attachment, error: dict[str, Any], answered: Callable[[Attachment, str], None]
+    ) -> bool:
+        self.transcript.add_notice(IMAGE_NOT_SENT_NOTICE.format(
+            label=image.label, reason=(as_text(error.get("message")) or "refused").rstrip(".")), NOTICE_WARN)
+        answered(image, "")
+        return True
+
+    def _give_back_unsent(self) -> bool:
+        """Every prompt taken but not sent goes back to the draft, its images tokens again; True when one did. One
+        staging is detached once its answers come (`_stage_images`)."""
+        unsent, self.unsent = [prompt for prompt in self.unsent if not prompt.cancelled], []
+        for prompt in unsent:
+            prompt.cancelled = True
+            self._give_back(prompt.text, prompt.images)
+        return bool(unsent)
+
+    def _reset_staging(self, why: str) -> None:
+        """A new gateway or session holds no image: a staging answered after this sends nothing (`image_epoch`), what
+        waited goes nowhere, and a prompt not sent yet comes back to the draft with a notice."""
+        if self._give_back_unsent():
+            self.transcript.add_notice(UNSENT_BACK_NOTICE.format(why=why), NOTICE_WARN)
+        self.image_epoch += 1
+        self.after_claim.clear()
+        self.intakes = 0
+        self.staged, self.claim = [], CLAIM_OPEN
+
+    def _detach_failed(self, error: dict[str, Any]) -> bool:
+        self.transcript.add_notice(DETACH_FAILED_NOTICE.format(
+            reason=(as_text(error.get("message")) or "refused").rstrip(".")), NOTICE_WARN)
+        return True
 
     def _on_submit_error(self, error: dict[str, Any]) -> bool:
-        """A refused prompt.submit: no turn will start, so the next queued prompt goes now, in order."""
+        """A refused prompt.submit: no turn will start, so the next queued prompt goes now, in order. Hermes keeps
+        what was staged for it, which `_turn_ended` detaches."""
         self.turn_pending = False
         self._turn_ended()
         return False
@@ -4038,6 +4337,9 @@ class App(ModesMixin, AgentViewMixin):
         """
         self.tell_turn_runs = False  # an open tell field now says what to do after this turn, not in it
         self.turns_ended += 1
+        # A turn ended before Hermes admitted it (refused, cancelled while the agent built) left what was staged for
+        # it: detached. After `message.start` nothing is left (`_claimed` emptied `staged`).
+        self._release_staged()
         self.bg_after = self.poller.refresh()  # the background row stamps what still runs now (`_take_background`)
         if self.interrupting:
             self.interrupting = False
@@ -4083,8 +4385,8 @@ class App(ModesMixin, AgentViewMixin):
                 self._run_shell(line.text[len(SHELL_PREFIX) :].strip(), drain_after=True, echo=line.shown)
             else:
                 self._start_turn(line.typed or line.text,
-                                 lambda: self._submit_prompt(line.text, line.shown, queued=True, notice=line.notice),
-                                 line)
+                                 lambda: self._submit_prompt(line.text, line.shown, queued=True, notice=line.notice,
+                                                             images=line.images), line, line.images)
 
     # ── `!` shell lines ──
 
@@ -4185,13 +4487,14 @@ class App(ModesMixin, AgentViewMixin):
         if not first.shell and not first.typed and first.shown and first.text.startswith(SHELL_PREFIX):
             # Its chips again, never a `!` line the composer would run; without them, one chip holding its text.
             if first.chips:
-                composer.restore(first.shown, first.chips)
+                composer.restore(first.shown, first.chips, _tokens(first.images))
             else:
                 composer.handle(Paste(first.text))
             for line in taken[1:]:
-                composer.replace(composer.caret, composer.caret, "\n" + (line.typed or line.text))
+                composer.replace(composer.caret, composer.caret, "\n" + (line.typed or line.text), _tokens(line.images))
         else:
-            composer.replace(0, len(composer.text), "\n".join(line.typed or line.text for line in taken))
+            composer.replace(0, len(composer.text), "\n".join(line.typed or line.text for line in taken),
+                             _tokens(image for line in taken for image in line.images))
         if not self.queued:
             self.queue_held = False
 
@@ -4211,9 +4514,10 @@ class App(ModesMixin, AgentViewMixin):
         mode wrapped (a plan request must not land in a turn that can edit)
         wait for the turn's end, and the lines behind them too, so the queue
         keeps its order: each of those has a `typed` form or is a shell line.
+        So does a prompt with images: a steer is text alone.
         """
         head = self.queued[0] if self.queued else None
-        return head is not None and not head.shell and not head.typed
+        return head is not None and not head.shell and not head.typed and not head.images
 
     def _send_queued_now(self) -> None:
         """The send-now key: the oldest queued prompt leaves the queue and goes into the running turn as a steer.
@@ -4225,16 +4529,20 @@ class App(ModesMixin, AgentViewMixin):
         line = self.queued.popleft()
         self._steer(line.text, line)
 
-    def _steer_or_submit(self, text: str, shown: str = "", chips: tuple[tuple[str, str], ...] = ()) -> None:
-        """Ctrl+Enter: steer the running turn with the typed text. Idle, or on a slash command or a `!` line, it is Enter.
+    def _steer_or_submit(
+        self, text: str, shown: str = "", chips: tuple[tuple[str, str], ...] = (), images: Sequence[Attachment] = ()
+    ) -> None:
+        """Ctrl+Enter: steer the running turn with the typed text. Idle, or on a slash command, a `!` line or a line with
+        images, it is Enter.
 
         As for Enter, what the line is comes from what the composer showed (`shown`, paste chips unexpanded).
         """
         seen = shown or text
-        if self._busy() and seen.strip() and parse_slash(seen) is None and not seen.startswith(SHELL_PREFIX):
+        if (self._busy() and seen.strip() and parse_slash(seen) is None and not seen.startswith(SHELL_PREFIX)
+                and not images):  # a steer is text alone: one with images goes as a prompt
             self._steer(text)
         else:
-            self._submit(text, shown, chips)
+            self._submit(text, shown, chips, images=images)
 
     def _steer_command(self, arg: str) -> None:
         """`/steer <text>`: what Ctrl+Enter does, on any terminal. Idle, the text goes as a prompt: in place of the
@@ -4386,12 +4694,13 @@ class App(ModesMixin, AgentViewMixin):
             return self.tell_draft
         return self.slot_draft if self.slot_draft is not None else self.composer
 
-    def _give_back(self, text: str) -> None:
+    def _give_back(self, text: str, images: Sequence[Attachment] = ()) -> None:
         """A steer's text back to the person, never into an answer to Hermes: on a line of its own after the draft
-        (`_draft`). Its paste chips stay, and so does its caret while the draft is not drawn."""
+        (`_draft`), its `images` tokens again. Its paste chips stay, and so does its caret while the draft is not
+        drawn."""
         draft = self._draft()
         caret, end = draft.caret, len(draft.text)
-        draft.replace(end, end, f"\n{text}" if draft.text else text)
+        draft.replace(end, end, f"\n{text}" if draft.text else text, _tokens(images))
         if draft is self.slot_draft or draft is self.tell_draft or self._composer_hidden():
             draft.caret = caret  # a hidden draft comes back as the person left it, the text after its end
 
@@ -4426,16 +4735,20 @@ class App(ModesMixin, AgentViewMixin):
 
     def _route_slash(self, invocation: SlashInvocation, depth: int) -> None:
         command = invocation.command
-        if command is not None and command.route == LOCAL:
-            self._local_handlers()[command.name](invocation.arg)
-        elif command is not None and command.route == HERMES:
-            self.transcript.add_notice(hermes_notice(command))
-        elif command is not None and command.route == DROPPED:
-            self.transcript.add_notice(dropped_notice(command))
-        elif command is not None and command.route == RENAMED:
-            self._route_slash(SlashInvocation(command.target, invocation.arg, None, rewind=invocation.rewind), depth)
-        elif not self.sid:
-            self.transcript.add_notice(NO_SESSION_NOTICE, NOTICE_WARN)
+        if command is not None and command.route == RENAMED:
+            self._route_slash(SlashInvocation(command.target, invocation.arg, None, rewind=invocation.rewind,
+                                              images=invocation.images), depth)
+            return
+        if command is not None and command.route in (LOCAL, HERMES, DROPPED) or not self.sid:
+            if command is not None and command.route == LOCAL:
+                self._local_handlers()[command.name](invocation.arg)
+            elif command is not None and command.route == HERMES:
+                self.transcript.add_notice(hermes_notice(command))
+            elif command is not None and command.route == DROPPED:
+                self.transcript.add_notice(dropped_notice(command))
+            else:
+                self.transcript.add_notice(NO_SESSION_NOTICE, NOTICE_WARN)
+            self._keep_images(invocation.images, f"/{invocation.name}")  # none of these sends a prompt
         else:
             compressing = invocation.name.lower() in COMPRESS_COMMANDS
             preview = bool(COMPRESS_PREVIEW_FLAGS & {word.lower() for word in invocation.arg.split()})
@@ -4481,13 +4794,16 @@ class App(ModesMixin, AgentViewMixin):
         """
         if invocation.name.lower() == "model" and refusal_reason(error) == "unsupported_command":
             self.transcript.add_notice(MODEL_OPTIONS_REFUSED, NOTICE_ERROR)
+            self._keep_images(invocation.images, f"/{invocation.name}")
             return True
         data = error.get("data")
         field = data.get("field") if isinstance(data, Mapping) else None
         if refusal_reason(error) == "session_busy" and field == COMPRESSION_FIELD:
             self.transcript.add_notice(COMPRESSION_BUSY_NOTICE.format(name=invocation.name), NOTICE_WARN)
+            self._keep_images(invocation.images, f"/{invocation.name}")
             return True
         if error.get("code") != contract.NOT_MINE:
+            self._keep_images(invocation.images, f"/{invocation.name}")
             return False
         self._request(
             "command.dispatch",
@@ -4522,11 +4838,15 @@ class App(ModesMixin, AgentViewMixin):
         body = as_text(result.get("output")) or f"/{invocation.name}: no output"
         warning = as_text(result.get("warning"))
         self._show_output(f"/{invocation.text}", f"warning: {warning}\n{body}" if warning else body)
+        self._keep_images(invocation.images, f"/{invocation.name}")  # it printed: no prompt took them
 
     def _on_dispatch(self, invocation: SlashInvocation, result: dict[str, Any], depth: int) -> None:
+        """What `command.dispatch` (or `slash.exec`) made of a command: the prompt it sends takes the invocation's
+        images; any other outcome gives their tokens back (`_keep_images`)."""
         kind = as_text(result.get("type"))
         if kind in ("exec", "plugin"):
             self._show_output(f"/{invocation.text}", as_text(result.get("output")) or "(no output)")
+            self._keep_images(invocation.images, f"/{invocation.name}")
             task = as_text(result.get(contract.SIDE_ANSWER_TASK))
             if task and self.sid:
                 self.side_tasks[task] = self.sid
@@ -4538,9 +4858,10 @@ class App(ModesMixin, AgentViewMixin):
             target = as_text(result.get("target")).lstrip("/")
             aliased = parse_slash(f"/{target} {invocation.arg}") if target and depth == 0 else None
             if aliased is not None:
-                self._run_slash(replace(aliased, rewind=invocation.rewind), depth + 1)
+                self._run_slash(replace(aliased, rewind=invocation.rewind, images=invocation.images), depth + 1)
             else:
                 self.transcript.add_notice(f"/{invocation.name}: the alias did not resolve.", NOTICE_WARN)
+                self._keep_images(invocation.images, f"/{invocation.name}")
             return
         notice = as_text(result.get("notice")).strip()
         message = as_text(result.get("message"))
@@ -4564,18 +4885,19 @@ class App(ModesMixin, AgentViewMixin):
             with self._for_command(None):
                 shown = display or (echo.command if echo is not None else invocation.shown)
                 if rewinds:
-                    self._send_rewind(message, shown, typed=invocation.typed, notice=notice)
+                    self._send_rewind(message, shown, typed=invocation.typed, notice=notice, images=invocation.images)
                 else:
-                    self._send_prompt(message, shown, typed=invocation.typed, hold=invocation.held, notice=notice)
+                    self._send_prompt(message, shown, typed=invocation.typed, hold=invocation.held, notice=notice,
+                                      images=invocation.images)
             return
         if notice:
             self.transcript.add_notice(notice)
+        if sends:
+            shown = display or invocation.shown
+            self._send_prompt(message, shown, typed=invocation.typed, hold=invocation.held, images=invocation.images)
+            return
         if kind in ("send", "skill"):
-            if message.strip():
-                shown = display or invocation.shown
-                self._send_prompt(message, shown, typed=invocation.typed, hold=invocation.held)
-            else:
-                self.transcript.add_notice(f"/{invocation.name}: empty message", NOTICE_WARN)
+            self.transcript.add_notice(f"/{invocation.name}: empty message", NOTICE_WARN)
         elif kind == "prefill":
             if message:
                 draft = self._draft()
@@ -4584,6 +4906,7 @@ class App(ModesMixin, AgentViewMixin):
             other = as_text(result.get("output")) or as_text(result.get("display"))
             if other:
                 self._show_output(f"/{invocation.text}", other)
+        self._keep_images(invocation.images, f"/{invocation.name}")  # after a prefill, so it keeps them
 
     def _show_output(self, command: str, text: str, whole: bool = False) -> None:
         """A command's output, in the transcript under its echo (`command` repeats the echo once it has closed).
@@ -4735,7 +5058,8 @@ class App(ModesMixin, AgentViewMixin):
         self.queued.clear()
         self.sticky = ""
         self.flushed_since_prompt = 0  # rows printed above the region from the last prompt's first row on
-        self.attachments.clear()  # the gateway queued them for the session being left
+        # Hermes held nothing of a draft's or the queue's images; what it staged for a prompt went with that session.
+        self._reset_staging(UNSENT_BACK_SWITCH)
         self.hud = None
         self.goal = None
         self.retired_plan, self.plan_seen_open = "", False
@@ -4898,7 +5222,7 @@ class App(ModesMixin, AgentViewMixin):
             self.transcript.add_notice(NO_SESSION_NOTICE, NOTICE_WARN)
         else:
             sid = self.sid
-            self._request(
+            self._intake(
                 "image.attach",
                 {"session_id": sid, "path": arg},
                 lambda result: self._on_image_attached(sid, result),
@@ -4910,7 +5234,7 @@ class App(ModesMixin, AgentViewMixin):
             self.transcript.add_notice(NO_SESSION_NOTICE, NOTICE_WARN)
             return
         sid = self.sid
-        self._request(
+        self._intake(
             "clipboard.paste",
             {"session_id": sid},
             lambda result: self._on_clipboard_pasted(sid, result),
@@ -4918,11 +5242,21 @@ class App(ModesMixin, AgentViewMixin):
         )
 
     def _take_attachment(self, sid: str, attachment: Attachment) -> None:
-        """A chip for an image Hermes queued for `sid`; for a session since left, a notice instead."""
-        if sid == self.sid:
-            self.attachments.append(attachment)
-        else:
+        """An image Hermes staged for `sid` becomes the TUI's: its bytes are read from the path Hermes named, Hermes
+        is told to let go of it (`image.detach`, by that path), and an `[Image #N]` token for it goes at the draft's
+        caret; for a session since left, or bytes the TUI cannot read, a notice instead."""
+        data = read_image(attachment.path)
+        self._request("image.detach", {"session_id": sid, "path": attachment.path}, lambda result: None,
+                      self._detach_failed)
+        if sid != self.sid:
             self.transcript.add_notice(ATTACH_LEFT_NOTICE.format(name=attachment.name), NOTICE_WARN)
+            return
+        if data is None:
+            self.transcript.add_notice(IMAGE_UNREADABLE_NOTICE.format(name=attachment.name), NOTICE_WARN)
+            return
+        self.image_count += 1
+        attachment = replace(attachment, label=IMAGE_LABEL.format(number=self.image_count), data=data)
+        self._draft().insert_image(attachment.label, attachment)
 
     def _on_image_attached(self, sid: str, result: dict[str, Any]) -> None:
         attachment = attachment_from(result) if result.get("attached") is True else None
@@ -4947,7 +5281,7 @@ class App(ModesMixin, AgentViewMixin):
         return True
 
     def _on_drop(self, sid: str, text: str, result: dict[str, Any]) -> None:
-        """An image drop is already queued (a chip, nothing typed); a file drop types its reference; else the paste.
+        """An image drop is a token (`_take_attachment`), nothing typed; a file drop types its reference; else the paste.
 
         Text goes to the draft (`_draft`) whichever session is live: it is the
         person's paste, sent nowhere yet. An image Hermes queued for a session
@@ -5129,7 +5463,7 @@ class App(ModesMixin, AgentViewMixin):
         return self.launch_picker.highlighted if self.launch_picker is not None else self.launch_look
 
     def _badge_forms(self) -> tuple[Line, ...]:
-        """`[ ⚚ OMH Native ]` in the shown look and its shorter forms (`frame.badge_forms`), for the info line's left
+        """`[⚚ OMH Native]` in the shown look and its shorter forms (`frame.badge_forms`), for the info line's left
         end; none on a tiny terminal, which keeps its one line for what the keys do. Built again only when the look or
         the theme changed."""
         if is_tiny(self.size[1], self.size[0]):
@@ -5718,9 +6052,6 @@ class App(ModesMixin, AgentViewMixin):
             text_question=self.slot is not None and not self.slot.picking,
             slot_caret=self._slot_caret(),  # read after `_slot_lines` drew the picker it comes from
             theme=self.theme,
-            attachments=attachment_line(self.attachments, cols, self.theme)
-            if self.attachments and self.slot is None
-            else None,
             mode=self._display_mode(),
             placeholder=(TELL_PLACEHOLDER if self.tell_draft is not None else PLACEHOLDER)
             if self._composer_open()

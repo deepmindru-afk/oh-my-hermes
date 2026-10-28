@@ -19,6 +19,7 @@ from omh.tui.composer import (
     COMPLETE,
     EXIT,
     HISTORY_CAP,
+    IMAGE_LABEL,
     INTERRUPT,
     NONE,
     SUBMIT,
@@ -46,7 +47,7 @@ from omh.tui.keys import (
     Paste,
 )
 from omh.tui.style import Style
-from omh.tui.width import line_width
+from omh.tui.width import cell_width, line_width
 
 HANGUL = "한글"
 HANGUL_NFD = unicodedata.normalize("NFD", HANGUL)
@@ -592,6 +593,175 @@ class PasteChipAppTests(unittest.TestCase):
         self.assertEqual(client.calls, [("prompt.submit", {"session_id": SID, "text": sixty})])
         (user,) = [block for block in app.transcript.blocks if isinstance(block, UserBlock)]
         self.assertEqual(user.text, "[Pasted text #1 +60 lines]")
+
+
+class ImageTokenTests(unittest.TestCase):
+    """An attached image is an atomic `[Image #N]` token in the text, and its image lives exactly as long as it does."""
+
+    SHOT, NOTES = "/h/images/shot.png", "/h/images/notes.png"
+
+    def with_image(self, before: str = "", after: str = "", label: str = "[Image #41]", image: object = SHOT) -> Composer:
+        composer = Composer()
+        typed(composer, before + after)
+        composer.caret = len(before)
+        self.assertTrue(composer.insert_image(label, image))
+        return composer
+
+    def images(self, composer: Composer) -> list[object]:
+        return [image for _label, image in composer.images.values()]
+
+    def test_the_token_goes_in_at_the_caret_with_a_space_before_the_words_typed_after_it(self) -> None:
+        composer = self.with_image()
+        typed(composer, "이런느낌으로")
+        lines, caret = composer.render(40, 4)
+        self.assertEqual(lines_text(lines), ["❯ [Image #41] 이런느낌으로"])
+        self.assertEqual(caret, (0, 2 + 11 + 1 + 12))  # the label's 11 cells, the space, six Hangul syllables
+        middle = self.with_image("look at", " this")
+        self.assertEqual(composer_shown(middle), "look at [Image #41] this")  # spaced from the words on both sides
+        self.assertEqual(middle.caret, len("look at ") + 1)  # right after the token, before the space that was there
+        self.assertEqual(self.images(middle), [self.SHOT])
+
+    def test_typing_or_pasting_the_label_makes_no_token(self) -> None:
+        for arrive in (lambda composer: typed(composer, "[Image #3] x"), lambda composer: composer.handle(Paste("[Image #3] x"))):
+            composer = Composer()
+            arrive(composer)
+            self.assertEqual((composer.text, composer.images), ("[Image #3] x", {}))
+            action = press(composer, Key(ENTER))
+            self.assertEqual((action.text, action.images), ("[Image #3] x", ()))
+
+    def test_a_pasted_token_character_is_dropped_so_no_token_can_be_forged(self) -> None:
+        composer = self.with_image()
+        (token,) = composer.images
+        composer.handle(Paste(f"x{token}y"))
+        self.assertEqual(composer_shown(composer), "[Image #41] xy")
+        self.assertEqual(composer.text.count(token), 1)
+
+    def test_every_deletion_that_reaches_the_token_takes_it_and_its_image_whole(self) -> None:
+        cases = {  # (text before the caret, after it, keys)
+            "Backspace right after it": ("look ", " now", [Key(BACKSPACE)]),  # spaces both sides: none added
+            "Backspace through the space": ("", "", [Key(BACKSPACE), Key(BACKSPACE)]),
+            "Delete right before it": ("look ", "", [Key(LEFT), Key(LEFT), Key(DELETE)]),
+            "Ctrl+W": ("look ", "", [ctrl("w"), ctrl("w")]),
+            "Alt+Backspace": ("look ", "", [Key(BACKSPACE, alt=True)] * 2),
+            "Ctrl+Backspace": ("look ", "", [Key(BACKSPACE, ctrl=True)] * 2),
+            "Ctrl+U (what Cmd+Backspace sends)": ("look ", " now", [ctrl("u")]),
+            "Ctrl+K": ("look ", " now", [Key(LEFT), ctrl("k")]),
+            "Ctrl+C": ("look ", " now", [ctrl("c")]),
+        }
+        for name, (before, after, keys) in cases.items():
+            with self.subTest(name):
+                composer = self.with_image(before, after)
+                press(composer, *keys)
+                self.assertNotIn("[Image", composer_shown(composer))
+                self.assertEqual(composer.images, {})
+
+    def test_the_caret_steps_over_the_token_and_never_lands_inside_it(self) -> None:
+        composer = self.with_image("a", "b")  # `a [Image #41] b`, the caret after the space after the token
+        self.assertEqual(composer.caret, 4)
+        press(composer, Key(LEFT), Key(LEFT))  # over the space, then over the token in one step
+        self.assertEqual(composer.caret, 2)
+        self.assertEqual(composer.render(40, 2)[1], (0, 2 + len("a ")))
+        press(composer, Key(RIGHT))
+        self.assertEqual(composer.caret, 3)
+        self.assertEqual(composer.render(40, 2)[1], (0, 2 + len("a [Image #41]")))
+
+    def test_a_row_never_splits_the_token(self) -> None:
+        composer = self.with_image("한글 텍스트", "끝")
+        for width in range(14, 30):
+            with self.subTest(width=width):
+                rows = lines_text(composer.render(width, 10)[0])
+                self.assertEqual(sum(row.count("[Image #41]") for row in rows), 1, rows)
+                self.assertTrue(all(cell_width(row) <= width for row in rows), rows)
+
+    def test_undo_puts_the_token_and_its_image_back_and_redo_takes_them_again(self) -> None:
+        composer = self.with_image("look ", " now")
+        press(composer, ctrl("u"))
+        self.assertEqual(composer.images, {})
+        press(composer, ctrl("_"))
+        self.assertEqual((composer_shown(composer), self.images(composer)), ("look [Image #41] now", [self.SHOT]))
+        press(composer, ctrl("y"))
+        self.assertEqual(composer.images, {})
+
+    def test_a_submit_sends_the_labels_and_reports_the_images_in_order(self) -> None:
+        composer = self.with_image(label="[Image #1]", image=self.SHOT)
+        typed(composer, "and")
+        composer.insert_image("[Image #2]", self.NOTES)
+        typed(composer, "like this")
+        action = press(composer, Key(ENTER))
+        self.assertEqual(action.text, "[Image #1] and [Image #2] like this")
+        self.assertEqual(action.shown, "")  # what it showed is what it sent
+        self.assertEqual(action.images, (("[Image #1]", self.SHOT), ("[Image #2]", self.NOTES)))
+        self.assertEqual(composer.images, {})
+
+    def test_history_keeps_the_labels_so_a_recalled_prompt_is_plain_text(self) -> None:
+        composer = self.with_image(label="[Image #1]")
+        typed(composer, "x")
+        press(composer, Key(ENTER))
+        self.assertEqual(composer.history, ["[Image #1] x"])
+        press(composer, Key(UP))
+        self.assertEqual((composer.text, composer.images), ("[Image #1] x", {}))
+        self.assertEqual(press(composer, Key(ENTER)).images, ())
+
+    def test_restore_and_replace_make_the_named_labels_tokens_again(self) -> None:
+        composer = Composer()
+        composer.restore("[Image #1] and [Image #2]", (), [("[Image #2]", self.NOTES)])
+        self.assertEqual(composer_shown(composer), "[Image #1] and [Image #2]")
+        self.assertEqual([label for label, _image in composer.images.values()], ["[Image #2]"])
+        composer.replace(0, len(composer.text), "again [Image #1]", [("[Image #1]", self.SHOT)])
+        self.assertEqual(self.images(composer), [self.SHOT])
+        press(composer, Key(BACKSPACE))
+        self.assertEqual(composer_shown(composer), "again ")
+
+    def test_masked_input_takes_no_token(self) -> None:
+        composer = Composer(masked=True)
+        self.assertFalse(composer.insert_image(IMAGE_LABEL.format(number=1), self.SHOT))
+        self.assertEqual((composer.text, composer.images), ("", {}))
+
+    def test_a_row_narrower_than_the_label_cuts_it_and_never_overflows(self) -> None:
+        composer = self.with_image("a", "b", label="[Image #12]")
+        for width in range(4, 14):
+            with self.subTest(width=width):
+                lines, (_row, col) = composer.render(width, 10)
+                rows = lines_text(lines)
+                self.assertTrue(all(cell_width(row) <= width for row in rows), rows)
+                self.assertLessEqual(col, width)
+
+    def test_a_combining_mark_typed_after_a_token_is_neither_drawn_nor_sent(self) -> None:
+        composer = self.with_image()
+        press(composer, Key(LEFT))  # right after the token
+        typed(composer, "\u0301")
+        self.assertEqual(composer_shown(composer), "[Image #41] ")
+        self.assertEqual(press(composer, Key(ENTER)).text, "[Image #41] ")
+
+    def test_history_browsing_keeps_the_drafts_tokens_through_an_edit(self) -> None:
+        composer = Composer(history=["older"])
+        typed(composer, "look ")
+        composer.insert_image("[Image #1]", self.SHOT)
+        press(composer, Key(UP))
+        typed(composer, "!")
+        press(composer, Key(DOWN))
+        self.assertEqual((composer_shown(composer), self.images(composer)), ("look [Image #1] ", [self.SHOT]))
+        action = press(composer, Key(ENTER))
+        self.assertEqual((action.text, action.images), ("look [Image #1] ", (("[Image #1]", self.SHOT),)))
+
+    def test_a_token_character_no_image_is_mapped_to_never_leaves(self) -> None:
+        composer = self.with_image()
+        (token,) = composer.images
+        composer.images.clear()  # as a draft that lost its map would hold it
+        self.assertEqual(composer.expanded(), " ")
+        self.assertNotIn(token, press(composer, Key(ENTER)).text)
+        self.assertNotIn(token, "".join(composer.history))
+
+    def test_the_token_is_drawn_in_the_chip_style(self) -> None:
+        composer = self.with_image("a")
+        chip = Style(fg="#00FF00")
+        lines, _caret = composer.render(80, 3, chip_style=chip)
+        self.assertEqual([span.text for span in lines[0] if span.style == chip], ["[Image #41]"])
+
+
+def composer_shown(composer: Composer) -> str:
+    """The text as the composer draws it: each image token as its label."""
+    return composer.expanded()
 
 
 class MaskedTests(unittest.TestCase):

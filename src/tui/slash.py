@@ -176,7 +176,8 @@ class SlashInvocation:
     person had picked when they sent it (the app's `Rewind`), or None: a
     prompt it sends goes in place of the picked one while that very rewind is
     still picked. It is matched by identity, so it takes no part in `==` or
-    `hash()`.
+    `hash()`. `images` are the images typed with the command, which the
+    prompt it sends goes with; nor do they take part.
     """
 
     name: str
@@ -185,6 +186,7 @@ class SlashInvocation:
     for_plan_mode: bool = False
     held: bool = False
     rewind: object | None = field(default=None, compare=False)
+    images: tuple[object, ...] = field(default=(), compare=False)  # the app's images a prompt it sends goes with
 
     @property
     def text(self) -> str:

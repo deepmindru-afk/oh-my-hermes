@@ -57,8 +57,9 @@ the stdio entry's in a closed set of places. `Adapter` translates those, after
 * `image.attach`, an image `input.detect_drop` and `clipboard.paste` stage
   the image with Hermes' own `image.attach_bytes` (or Hermes' clipboard
   helper, into Hermes' image staging directory) and queue it for the
-  session's next prompt, as the stdio entry queued it; `image.detach` takes it
-  out of that queue. A drop that is not an image is answered as no drop, as
+  session's next prompt, as the stdio entry queued it; `image.attach_bytes`
+  stages the bytes the TUI sends the same way; `image.detach` takes one out
+  of that queue by the path it was answered with. A drop that is not an image is answered as no drop, as
   Ink answers it, so the TUI pastes the text.
 * `slash.exec` goes as sent; when the owner refuses a command in
   `SLASH_VERBS` with `unsupported_command` (`/compress`, `/branch`,
@@ -136,6 +137,9 @@ IMAGE_SIGNATURES = (
     (b"GIF89a", "image/gif"),
 )
 MAX_IMAGE_BYTES = 20 * 1024 * 1024
+# The type of a file the owner staged, by the suffix it named it with (`_sniff_image_ext`).
+IMAGE_SUFFIX_MIMES = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".gif": "image/gif",
+                      ".webp": "image/webp"}
 TICKET_TIMEOUT_SECONDS = 5
 # The `/model` flags the owner's model switch takes, as `canonicalSessionControls.ts` `modelPayload` reads them:
 # `--session` (and Ink's `--tui-session`) say what a switch here always is, `--provider <slug>` names the route
@@ -553,6 +557,7 @@ class Adapter:
             "shell.exec": self._shell,
             "session.list": self._list,
             "image.attach": self._attach,
+            "image.attach_bytes": self._attach_bytes,
             "image.detach": self._detach_image,
             "input.detect_drop": self._drop,
             "clipboard.paste": self._paste,
@@ -1134,6 +1139,16 @@ class Adapter:
             "attached": True, "remainder": image.remainder,
             "text": image.remainder or f"[User attached image: {image.path.name}]", **staged})]
 
+    def _attach_bytes(self, request_id: object, params: dict[str, Any]) -> list[Action]:
+        """The bytes the TUI keeps for an image, passed to the owner's `image.attach_bytes` as they came (the owner
+        decodes and checks them) and queued for the session's next prompt, as `image.attach` stages a file."""
+        content = str(params.get("content_base64") or "")
+        if not content:
+            return [_refuse(request_id, NOT_FOUND, "the image is empty")]
+        name = Path(str(params.get("filename") or "image")).name
+        stage = {"session_id": params.get("session_id"), "filename": name, "content_base64": content}
+        return [self._stage_bytes(request_id, stage, name, "", lambda staged: {"attached": True, **staged})]
+
     def _drop(self, request_id: object, params: dict[str, Any]) -> list[Action]:
         image = self.files.dropped_image(str(params.get("text") or ""), self._cwd(params))
         if image is None:
@@ -1161,6 +1176,13 @@ class Adapter:
         """Hand the image's bytes to the owner's staging (`image.attach_bytes`), then queue its staged path."""
         stage = {"session_id": session_id, "filename": image.path.name,
                  "content_base64": base64.b64encode(image.data).decode("ascii")}
+        return self._stage_bytes(request_id, stage, image.path.name, image.mime, answer)
+
+    def _stage_bytes(self, request_id: object, stage: dict[str, Any], name: str, mime: str,
+                     answer: Callable[[dict[str, Any]], dict[str, Any]]) -> Action:
+        """`image.attach_bytes` to the owner with `stage`; its staged path is queued, typed `mime`, or else the type its
+        file name says (the owner names the file by the type it found)."""
+        session_id = stage.get("session_id")
 
         def on_staged(reply: dict[str, Any]) -> list[Action]:
             result = reply.get("result")
@@ -1168,8 +1190,10 @@ class Adapter:
             if not isinstance(result, dict) or not isinstance(result.get("path"), str) or state is None:
                 error = reply.get("error") if isinstance(reply.get("error"), dict) else {}
                 return [_refuse(request_id, REFUSED, f"Hermes did not stage the image ({_reason(error)})")]
-            state.images.append({"path": result["path"], "mime": str(result.get("mime") or image.mime)})
-            staged = {"path": result["path"], "name": image.path.name, "count": len(state.images)}
+            path = result["path"]
+            kind = str(result.get("mime") or mime or IMAGE_SUFFIX_MIMES.get(Path(path).suffix.lower(), "image/png"))
+            state.images.append({"path": path, "mime": kind})
+            staged = {"path": path, "name": name, "count": len(state.images)}
             return [_reply(request_id, answer(staged))]
 
         return self._call("image.attach_bytes", stage, on_staged)

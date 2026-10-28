@@ -74,6 +74,7 @@ MODEL_DISPLAY_LABELS: Final[dict[str, str]] = {
     "claude-sonnet-5-5": "Claude Sonnet 5.5",
     "deepseek-flash": "DeepSeek V4.1 Flash",
     "gemini-3.1-pro": "Gemini 3.1 Pro",
+    "gemini-4-argon": "Gemini 4 Argon",
     "glm-5.3": "GLM 5.3",
     "glm-5.3-flash": "GLM 5.3 Flash",
     "gpt-5.6-luna": "GPT-5.6 Luna",

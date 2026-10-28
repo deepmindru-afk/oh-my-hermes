@@ -1348,11 +1348,27 @@ def _configured_path_contains_symlink(value: object) -> bool:
         path = Path.cwd() / path
     current = path
     while True:
-        if current.is_symlink():
+        if current.is_symlink() and not _is_system_root_alias(current):
             return True
         if current.parent == current:
             return False
         current = current.parent
+
+
+def _is_system_root_alias(path: Path) -> bool:
+    """A root-owned link directly under the filesystem root is an OS alias, not a user's link.
+
+    macOS ships ``/var``, ``/tmp`` and ``/etc`` as links into ``/private``; every per-user
+    temporary directory lives under ``/var/folders``. Refusing those would refuse every home
+    under them, while a link a user can plant (anywhere below, or owned by them) still refuses.
+    Windows reports no owner here, so it never takes this exemption.
+    """
+    if os.name == "nt" or path.parent != Path(path.anchor):
+        return False
+    try:
+        return path.lstat().st_uid == 0
+    except OSError:
+        return False
 
 
 def _configured_omh_home_link_refusal(args: argparse.Namespace, paths: OmhPaths) -> str | None:

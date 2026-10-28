@@ -10,7 +10,7 @@ from omh.tui.style import Line
 INFO_INSET = " " * INFO_INSET_CELLS  # the info line under the composer's rule starts this far in
 
 
-BADGE_TEXTS = ("[ ⚚ OMH Native ]", "[ ⚚ OMH ]", "⚚")  # the badge at the info line's left end, longest form first
+BADGE_TEXTS = ("[⚚ OMH Native]", "[⚚ OMH]", "⚚")  # the badge at the info line's left end, longest form first
 BADGE_GAP = "  "  # between the badge and what follows it
 
 

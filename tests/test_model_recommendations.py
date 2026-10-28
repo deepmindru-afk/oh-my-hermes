@@ -53,7 +53,7 @@ _ALL_ACTIVE = (
     _active("glm-5.2", provider="zai", family="glm"),
     _active("glm-5.2-ultrafast", provider="zai", family="glm"),
     _active("grok-build-0.1", provider="xai", family="grok"),
-    _active("gemini-3.1-pro", provider="google", family="gemini"),
+    _active("gemini-4-argon", provider="google", family="gemini"),
 )
 
 
@@ -323,26 +323,26 @@ class RecommendationCatalogTests(unittest.TestCase):
             # Fable 5.1 left the tail of `quick` for the same reason.
             "quick": (["glm-5.3-flash", "gpt-6-luna", "claude-haiku-5-5", "kimi-k3.1-pro"], "low"),
             "writing": (
-                ["claude-opus-5-5", "claude-sonnet-5-5", "kimi-k3.1-pro", "gemini-3.1-pro"], "medium",
+                ["claude-opus-5-5", "claude-sonnet-5-5", "kimi-k3.1-pro", "gemini-4-argon"], "medium",
             ),
             "visual-engineering": (
-                ["claude-opus-5-5", "claude-fable-5-1", "gemini-3.1-pro", "kimi-k3.1-pro"], "high",
+                ["claude-opus-5-5", "claude-fable-5-1", "gemini-4-argon", "kimi-k3.1-pro"], "high",
             ),
-            "artistry": (["gemini-3.1-pro", "claude-opus-5-5", "claude-fable-5-1", "kimi-k3.1-pro"], "high"),
+            "artistry": (["gemini-4-argon", "claude-opus-5-5", "claude-fable-5-1", "kimi-k3.1-pro"], "high"),
             "capable": (["claude-opus-5-5", "gpt-6.1-sol", "claude-fable-5-1", "kimi-k3.1-pro"], "medium"),
             "simple-work": (["gpt-6-luna", "claude-haiku-5-5", "deepseek-flash"], "low"),
             # `max` keeps deep-work's head distinct from deep's (owner choice).
             "deep-work": (["claude-opus-5-5", "gpt-6.1-sol"], "max"),
             # The routing-recipe categories (owner recipe, 2026-10-28): the
             # heads are the owner's, each tail crosses provider ecosystems.
-            "google-search": (["gemini-3.1-pro", "gpt-6.1-sol", "claude-opus-5-5"], "medium"),
-            "x-search": (["grok-4.7", "kimi-k3.1-pro", "gemini-3.1-pro"], "high"),
+            "google-search": (["gemini-4-argon", "gpt-6.1-sol", "claude-opus-5-5"], "medium"),
+            "x-search": (["grok-4.7", "kimi-k3.1-pro", "gemini-4-argon"], "high"),
             "review": (["gpt-6.1-sol", "claude-opus-5-5", "kimi-k3.1-pro"], "xhigh"),
             "swarm": (["deepseek-flash", "glm-5.3-flash", "gpt-6-luna"], "low"),
             "forensics": (["gpt-6-astra", "claude-opus-5-5", "kimi-k3.1-pro"], "xhigh"),
             # The one chain whose entries declare different efforts: Gemini
             # closes it at `high`, the rung it carries at depth elsewhere.
-            "synthesize": (["claude-opus-5-5", "gpt-6.1-sol", "gemini-3.1-pro"], ["xhigh", "xhigh", "high"]),
+            "synthesize": (["claude-opus-5-5", "gpt-6.1-sol", "gemini-4-argon"], ["xhigh", "xhigh", "high"]),
         }
         self.assertEqual(set(expected), set(catalog["categories"]))
         for name, (chain, effort) in expected.items():
@@ -351,7 +351,7 @@ class RecommendationCatalogTests(unittest.TestCase):
                 expected_efforts = effort if isinstance(effort, list) else [effort] * len(chain)
                 self.assertEqual(efforts("categories", name), expected_efforts)
         self.assertEqual(aliases("domain_affinities", "x_platform_data"), [
-            "grok-build-0.1", "kimi-k3.1-pro", "gemini-3.1-pro",
+            "grok-build-0.1", "kimi-k3.1-pro", "gemini-4-argon",
         ])
         for section in ("categories", "role_suggestions", "domain_affinities"):
             for chain in catalog[section].values():
@@ -511,7 +511,7 @@ class RecommendationResolverTests(unittest.TestCase):
         active = (
             _active("grok-build-0.1", provider="xai", family="grok", owners=("hermes",)),
             _active("kimi-k3.1-pro", provider="apitopia", family="kimi"),
-            _active("gemini-3.1-pro", provider="google", family="gemini"),
+            _active("gemini-4-argon", provider="google", family="gemini"),
         )
         route = resolve_model_recommendation(
             owner="maestro", domain="x_platform_data", active_models=active
@@ -520,7 +520,7 @@ class RecommendationResolverTests(unittest.TestCase):
         self.assertEqual(route["projection"]["kind"], "maestro_ordered_chain")
         self.assertEqual(
             [entry["model_alias"] for entry in route["projection"]["chain"]],
-            ["kimi-k3.1-pro", "gemini-3.1-pro"],
+            ["kimi-k3.1-pro", "gemini-4-argon"],
         )
         self.assertEqual(route["inactive_candidates"], ["grok-build-0.1"])
 
@@ -689,7 +689,7 @@ class LastResortFallbackTests(unittest.TestCase):
         self.assertEqual(route["selected"]["model_alias"], "gpt-6.1-sol")
         self.assertEqual(
             route["inactive_candidates"],
-            ["grok-build-0.1", "kimi-k3.1-pro", "gemini-3.1-pro", "claude-opus-5-5"],
+            ["grok-build-0.1", "kimi-k3.1-pro", "gemini-4-argon", "claude-opus-5-5"],
         )
 
     def test_unavailable_explicit_model_stays_fail_closed_against_last_resort(self) -> None:

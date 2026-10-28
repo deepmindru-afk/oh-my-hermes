@@ -199,6 +199,7 @@ class UserBlock:
     # for a prompt from the session's history (`recorded`), the names its catalog has (`resolve_recorded_prompts`).
     known: frozenset[str] = frozenset()
     recorded: bool = False
+    images: tuple[str, ...] = ()  # the labels of the images it went with, `[Image #1]`, one `⎿` row each under it
 
 
 @dataclass
@@ -754,8 +755,9 @@ def _text_rows(
 
 def _user_rows(block: UserBlock, width: int, theme: Theme) -> list[Line]:
     """Your prompt on a dim rail, behind a dim `❯`, in the muted colour; a `/name` that resolved to a command or skill
-    bold in its colour (`slash_spans`); `⧗ from queue` when the queue sent it. Every row, a wrapped or blank one too,
-    runs on `theme.prompt_band` to the right edge, its words measured against the band (`on_band`)."""
+    bold in its colour (`slash_spans`); `⧗ from queue` when the queue sent it; under it `  ⎿  [Image #1]` for each
+    image it went with. Every row, a wrapped or blank one too, runs on `theme.prompt_band` to the right edge, its words
+    measured against the band (`on_band`)."""
     band = theme.prompt_band
     theme = on_band(theme, band) if band.bg is not None else theme
     inner = max(width - len(RAIL), 1)
@@ -771,6 +773,7 @@ def _user_rows(block: UserBlock, width: int, theme: Theme) -> list[Line]:
         tag: Line = (Span(COLUMN_GAP + FROM_QUEUE_TAG, theme.muted),)
         if line_width(rows[0]) + line_width(tag) <= inner:
             rows[0] = (*rows[0], *tag)
+    rows.extend((*_output_leads(theme)[0], Span(label, theme.muted)) for label in block.images)
     rows = [_within((*_rail(theme.dim, faint=True), *row), width) for row in rows]
     return _banded(rows, band) if band.bg is not None else rows
 
@@ -1315,11 +1318,12 @@ class Transcript:
             self._version += 1
 
     def add_user(
-        self, text: str, from_queue: bool = False, known: frozenset[str] = frozenset(), recorded: bool = False
+        self, text: str, from_queue: bool = False, known: frozenset[str] = frozenset(), recorded: bool = False,
+        images: tuple[str, ...] = (),
     ) -> None:
         """Your prompt; `known` names the commands and skills a `/name` in it is drawn for (`slash.known_names`);
-        `recorded` for one from the session's history."""
-        self._append(UserBlock(text, from_queue=from_queue, known=known, recorded=recorded))
+        `recorded` for one from the session's history; `images` the labels of the images it went with."""
+        self._append(UserBlock(text, from_queue=from_queue, known=known, recorded=recorded, images=images))
 
     def resolve_recorded_prompts(self, known: frozenset[str], width: int, theme: Theme, max_rows: int) -> bool:
         """The history's prompts take `known`, the session's catalog, which answers after they are drawn (`App.startup`

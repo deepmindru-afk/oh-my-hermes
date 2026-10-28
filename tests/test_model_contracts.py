@@ -1854,6 +1854,94 @@ class KimiK31ProContractTests(unittest.TestCase):
                 self.assertEqual(composition_calibration_for_model(model), MAIN_AGENT_COMPOSITION_CALIBRATIONS["kimi"])
 
 
+class GeminiArgonContractTests(unittest.TestCase):
+    """Gemini 4 Argon (GA 2026-10-13): the first Gemini exact contract. A
+    `low`/`medium`/`high` ladder with no off switch, so the rungs below it are
+    raised on record; the rungs above it have no documented rung to raise to
+    and pass through. It took every Gemini 3.1 Pro slot on 2026-10-28."""
+
+    _FORMS = ("gemini-4-argon", "google/gemini-4-argon", "openrouter/google/gemini-4-argon", "Gemini-4-Argon")
+
+    def test_every_served_form_and_the_dated_snapshot_resolve_the_contract(self) -> None:
+        contract = model_contract("gemini-4-argon")
+        assert contract is not None
+        for form in self._FORMS:
+            with self.subTest(form=form):
+                self.assertEqual(model_family(form), "gemini")
+                self.assertIs(model_contract(form), contract)
+                projection = model_contract_projection(form)
+                assert projection is not None
+                self.assertEqual(projection["provenance"], "exact")
+        snapshot = model_contract_projection("google/gemini-4-argon-2026-10-13")
+        assert snapshot is not None
+        self.assertEqual(snapshot["contract_model_id"], "gemini-4-argon")
+        self.assertEqual(snapshot["provenance"], "dated_snapshot")
+        # The predecessor and spellings Google never published stay uncontracted.
+        for model_id in ("gemini-3.1-pro", "gemini-4-argon-preview", "gemini-4", "gemini-4-argon-cyber-permissive"):
+            with self.subTest(model_id=model_id):
+                self.assertIsNone(model_contract_projection(model_id))
+
+    def test_rungs_below_the_ladder_are_raised_and_rungs_above_pass_through(self) -> None:
+        for model in ("gemini-4-argon", "google/gemini-4-argon-2026-10-13"):
+            for requested in ("off", "none", "minimal"):
+                route = resolve_model_route("hermes", requested_model=model, requested_effort=requested)
+                with self.subTest(model=model, requested=requested):
+                    self.assertEqual(route["selected_reasoning_effort"], "low")
+                    self.assertEqual(route["effort_change"]["kind"], EFFORT_FLOOR_KIND)
+            # `xhigh` and `max` have no documented rung above them, so a raise
+            # would land on the floor; the route keeps them, never lowers them.
+            for requested in ("low", "medium", "high", "xhigh", "max"):
+                route = resolve_model_route("hermes", requested_model=model, requested_effort=requested)
+                with self.subTest(model=model, requested=requested):
+                    self.assertEqual(route["selected_reasoning_effort"], requested)
+                    self.assertNotEqual(route["effort_change"]["kind"], EFFORT_FLOOR_KIND)
+        for effort in ("low", "medium", "high", "xhigh", "max", "ultra"):
+            self.assertIsNone(contract_effort_floor("gemini-4-argon", effort), effort)
+
+    def test_contract_records_the_ladder_limits_price_and_surfaces(self) -> None:
+        from omh.plugin_bundle.omh.hermes_delegation import APPROX_CACHE_READ_RATIO
+
+        contract = model_contract("gemini-4-argon")
+        assert contract is not None
+        self.assertEqual(contract["reasoning_efforts"], ("low", "medium", "high"))
+        self.assertEqual((contract["effort_floor"], contract["effort_default"]), ("low", "medium"))
+        self.assertEqual(set(contract["unsupported_efforts"]), {"off", "minimal"})
+        self.assertEqual((contract["generation"], contract["released"]), ("gemini-4", "2026-10-13"))
+        self.assertEqual(
+            (contract["context_window_tokens"], contract["max_input_tokens"], contract["max_output_tokens"]),
+            (1_048_576, 1_048_576, 65_536),
+        )
+        self.assertIn("32,768", contract["limits_note"])
+        self.assertEqual(contract["unsupported_parameters"], ("temperature", "top_p", "top_k"))
+        self.assertIn("observed in the Hermes source", contract["surface_notes"]["hermes"])
+        self.assertIn("official-client", contract["surface_notes"]["gemini_cli"])
+        self.assertTrue(contract["surface_notes"]["openrouter"].endswith("community"))
+        pricing = contract["pricing_usd_per_mtok"]
+        self.assertEqual((pricing["input"], pricing["cached_input"], pricing["output"]), (2.0, 0.10, 10.0))
+        self.assertIn("input 4.00", pricing["from_2026_12_01"])
+        self.assertEqual(APPROX_PRICE_PER_MTOK["gemini-4-argon"], (pricing["input"], pricing["output"]))
+        self.assertAlmostEqual(pricing["input"] * APPROX_CACHE_READ_RATIO["gemini-4-argon"], pricing["cached_input"])
+        self.assertTrue(all(source.startswith("https://ai.google.dev/") for source in contract["sources"]))
+        self.assertEqual(contract["sources_read"], "2026-10-28")
+        self.assertNotIn("entitled", json.dumps(dict(contract)).casefold())
+        # The retired predecessor keeps its own list rate for overrides.
+        self.assertEqual(APPROX_PRICE_PER_MTOK["gemini-3.1-pro"], (2.0, 12.0))
+
+    def test_the_gemini_family_blocks_apply_unchanged(self) -> None:
+        self.assertNotIn("gemini-4-argon", MODEL_HIGH_EFFORT_CALIBRATIONS)
+        self.assertNotIn("gemini-4-argon", MODEL_COMPOSITION_CALIBRATIONS)
+        route = resolve_model_route("hermes", requested_model="gemini-4-argon", requested_effort="high")
+        self.assertEqual(calibration_for_route(route), HIGH_EFFORT_CALIBRATIONS["gemini"])
+        self.assertEqual(
+            composition_calibration_for_model("gemini-4-argon"), MAIN_AGENT_COMPOSITION_CALIBRATIONS["gemini"]
+        )
+
+    def test_the_cli_prints_the_ladder(self) -> None:
+        status, stdout, _stderr = run_cli(["coding", "model-contract", "--model", "gemini-4-argon"], output_json=False)
+        self.assertEqual(status, 0)
+        self.assertIn("reasoning efforts: low, medium, high (floor `low`)", stdout)
+
+
 class GrokBuildPriceTests(unittest.TestCase):
     """Grok Build 0.1 took the X-platform slot on 2026-10-01; xAI lists the
     retired Grok Code Fast ids as its aliases, so both spellings price alike."""

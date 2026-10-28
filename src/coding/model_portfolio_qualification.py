@@ -103,7 +103,7 @@ RECOMMENDATION_DECISIONS: Final[dict[str, tuple[str, ...]]] = {
     ),
     "claude-sonnet-5-5": ("categories:unspecified-low", "categories:writing"),
     "deepseek-flash": ("categories:simple-work", "categories:swarm", "categories:unspecified-low"),
-    "gemini-3.1-pro": (
+    "gemini-4-argon": (
         "categories:artistry", "categories:google-search", "categories:synthesize",
         "categories:visual-engineering", "categories:writing", "categories:x-search",
         "domain_affinities:x_platform_data",
@@ -161,6 +161,8 @@ RETIREMENT_DECISIONS: Final[dict[str, dict[str, object]]] = {
         ("gpt-6-sol", "gpt-6.1-sol", "all_shipped_chains", "2026-10-01"),
         ("claude-haiku-4-5", "claude-haiku-5-5", "all_shipped_chains", "2026-10-13"),
         ("kimi-k3", "kimi-k3.1-pro", "all_shipped_chains", "2026-10-24"),
+        # Google made Gemini 4 Argon generally available on 2026-10-13.
+        ("gemini-3.1-pro", "gemini-4-argon", "all_shipped_chains", "2026-10-28"),
     )
 } | {
     # Qwen3-Coder (2025) left its only slot on 2026-10-13 and no Qwen-line
