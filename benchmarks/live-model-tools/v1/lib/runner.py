@@ -29,9 +29,18 @@ def _snapshot(root: Path) -> dict[str, bytes]:
         relative = path.relative_to(root)
         if path.is_symlink():
             continue
-        if path.is_file() and "__pycache__" not in path.parts and ".venv" not in path.parts and ".pytest_cache" not in path.parts:
+        if path.is_file() and ".git" not in relative.parts and "__pycache__" not in path.parts and ".venv" not in path.parts and ".pytest_cache" not in path.parts:
             snapshot[path.relative_to(root).as_posix()] = path.read_bytes()
     return snapshot
+
+
+def _git_init(workspace: Path) -> None:
+    """Make the workspace a git worktree so Hermes LSP engages.
+
+    `agent/lsp/workspace.py: find_git_worktree` only checks that `.git` exists,
+    so a bare `git init` (no commit) suffices.
+    """
+    subprocess.run(["git", "init", "-q"], cwd=workspace, check=True, capture_output=True, timeout=60)
 
 
 def _live_task(instance_prompt: str) -> str:
@@ -86,7 +95,8 @@ def execute_one(
     hermes_executable: str = "hermes",
     current_session_provider: str | None = None,
     edit_surface: str = "patch",
-    edit_directive: bool = False,
+    edit_directive: bool | str = False,
+    git_init_workspace: bool = False,
 ) -> dict[str, Any]:
     if condition not in CONDITIONS:
         raise ValueError(f"condition must be one of: {', '.join(CONDITIONS)}")
@@ -97,6 +107,8 @@ def execute_one(
         workspace.mkdir()
         private.mkdir()
         instance, golden_path = materialize(split, template_id, task_class, seed, workspace, private)
+        if git_init_workspace:
+            _git_init(workspace)
         initial = _snapshot(workspace)
         answer_path = workspace / ".omh-benchmark-answer.json"
         events: list[dict[str, Any]] = []
@@ -225,6 +237,7 @@ def execute_one(
             "harness": harness,
             "edit_surface": edit_surface if harness == "hermes_current_session" else None,
             "edit_directive": edit_directive if harness == "hermes_current_session" else None,
+            "git_init_workspace": git_init_workspace if harness == "hermes_current_session" else None,
             "execution_path": harness,
             "model": model,
             "task_digest": trial_task_digest,
@@ -256,7 +269,8 @@ def run_matrix(
     hermes_executable: str = "hermes",
     current_session_provider: str | None = None,
     edit_surface: str = "patch",
-    edit_directive: bool = False,
+    edit_directive: bool | str = False,
+    git_init_workspace: bool = False,
     max_paid_calls: int = 0,
     templates: list[str] | None = None,
 ) -> dict[str, Any]:
@@ -290,6 +304,7 @@ def run_matrix(
                     current_session_provider=current_session_provider,
                     edit_surface=edit_surface,
                     edit_directive=edit_directive,
+                    git_init_workspace=git_init_workspace,
                 )
             )
     return {
