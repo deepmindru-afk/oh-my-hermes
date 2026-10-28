@@ -67,11 +67,14 @@ def request(
     method_builder: Callable[[], tuple[str, dict[str, Any]]],
     open_paths: list[str],
     timeout: float = REQUEST_TIMEOUT,
+    open_texts: dict[str, str] | None = None,
 ) -> Any:
     """Send one request to the server for ``abs_path``; return the raw result.
 
     ``method_builder`` returns ``(method, params)``; it is called after every path in
     ``open_paths`` was opened, so params may depend on what the caller read from disk.
+    ``open_texts`` (path -> text) syncs exactly that text instead of re-reading the disk, so a
+    caller that snapshotted the bytes can later prove the server's edit was computed on them.
     Raises ``BridgeError`` (``lsp_unavailable``, ``server_unavailable``, ``timeout``).
     """
     svc, reason = available()
@@ -87,8 +90,12 @@ def request(
         client = await svc._get_or_spawn(abs_path)
         if client is None:
             raise BridgeError("server_unavailable", "the language server could not be started for this file")
-        for path in open_paths:
-            await client.open_file(path, language_id=_language_id(svc, path))
+        if open_texts:
+            for path, text in open_texts.items():
+                await client.open_file(path, language_id=_language_id(svc, path), text=text)
+        else:
+            for path in open_paths:
+                await client.open_file(path, language_id=_language_id(svc, path))
         method, params = method_builder()
         return await client._send_request_with_retry(method, params, timeout=timeout)
 

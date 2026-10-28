@@ -273,6 +273,7 @@ class _FakeBridge:
     def __init__(self, answers, available=True, git=True):
         self.answers, self.available_ok, self.git = answers, available, git
         self.calls, self.notified = [], []
+        self.synced_by_method = {}
 
     def available(self):
         return (object(), None) if self.available_ok else (None, "lsp_unavailable: disabled")
@@ -280,10 +281,12 @@ class _FakeBridge:
     def in_git_worktree(self, path):
         return self.git
 
-    def request(self, path, builder, open_paths, timeout):
+    def request(self, path, builder, open_paths, timeout, open_texts=None):
         method, params = builder()
         self.calls.append((method, params))
         self.opened = list(open_paths)
+        self.synced = dict(open_texts or {})
+        self.synced_by_method.setdefault(method, []).append(dict(open_texts or {}))
         answer = self.answers.get(method)
         return answer(params) if callable(answer) else answer
 
@@ -399,6 +402,48 @@ class HandlerTests(_Root):
         self.assertEqual(self.read("pkg/core.py"), "CAP = 2\n\ndef budget():\n    return CAP\n")
         self.assertEqual(self.read("use.py"), "from pkg.core import CAP\nprint(CAP, 'LIMIT')\n")
         self.assertEqual(sorted(bridge.notified), sorted([self.core, self.use]))
+
+    def test_rename_syncs_disk_snapshot_of_every_workspace_file(self):
+        # The verifier's 2c case: preview, another writer edits use.py, then apply. The server must be
+        # given the CURRENT bytes of every file it may edit, not whatever it cached at preview time.
+        bridge = self.fake({"textDocument/prepareRename": {"start": {}, "end": {}},
+                            "textDocument/rename": self.rename_edit()})
+        self.call(lsp_rename_handler, path="pkg/core.py", line=1, symbol="LIMIT", new_name="CAP", apply=False)
+        self.write("use.py", "from pkg.core import LIMIT\nprint(LIMIT, 'LIMIT')\n")  # same text, rewritten
+        self.write("use.py", "from pkg.core import LIMIT\nprint(LIMIT, 'LIMIT')  # edited\n")
+        self.call(lsp_rename_handler, path="pkg/core.py", line=1, symbol="LIMIT", new_name="CAP", apply=False)
+        sent = bridge.synced_by_method["textDocument/rename"][-1]
+        self.assertEqual(sent[self.use], "from pkg.core import LIMIT\nprint(LIMIT, 'LIMIT')  # edited\n")
+        self.assertEqual(sent[self.core], self.read("pkg/core.py"))
+
+    def test_rename_refuses_file_changed_after_sync(self):
+        original = (self.read("pkg/core.py"), self.read("use.py"))
+
+        def edit_then_race(_params):
+            # Another writer changes use.py while the server computes the edit.
+            with open(self.use, "a", encoding="utf-8") as handle:
+                handle.write("# raced\n")
+            return self.rename_edit()
+
+        bridge = self.fake({"textDocument/prepareRename": {"start": {}, "end": {}},
+                            "textDocument/rename": edit_then_race})
+        out = self.call(lsp_rename_handler, path="pkg/core.py", line=1, symbol="LIMIT", new_name="CAP")
+        self.assertEqual(out["error"], "stale_file", out)
+        self.assertEqual(self.read("pkg/core.py"), original[0])
+        self.assertEqual(self.read("use.py"), original[1] + "# raced\n")
+        self.assertEqual(bridge.notified, [])
+
+    def test_rename_resyncs_target_the_server_reached_alone(self):
+        stub = self.write("pkg/core.pyi", "LIMIT: int\n")
+        edit = self.rename_edit()
+        edit["documentChanges"].append({"textDocument": {"uri": path_to_uri(stub), "version": 1},
+                                        "edits": [_edit(0, 0, 5, "CAP")]})
+        bridge = self.fake({"textDocument/prepareRename": {"start": {}, "end": {}}, "textDocument/rename": edit})
+        out = self.call(lsp_rename_handler, path="pkg/core.py", line=1, symbol="LIMIT", new_name="CAP")
+        self.assertTrue(out["applied"], out)
+        self.assertEqual(len(bridge.synced_by_method["textDocument/rename"]), 2)
+        self.assertIn(stub, bridge.synced_by_method["textDocument/rename"][1])
+        self.assertEqual(self.read("pkg/core.pyi"), "CAP: int\n")
 
     def test_rename_resource_op_writes_nothing(self):
         edit = self.rename_edit()

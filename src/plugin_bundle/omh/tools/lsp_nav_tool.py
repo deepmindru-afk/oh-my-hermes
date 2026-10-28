@@ -165,11 +165,39 @@ def _ready(path: str) -> None:
 _OPEN_CAP = 200
 
 
-def _send(path: str, method: str, params: dict[str, Any], open_paths: list[str] | None = None) -> Any:
+def _send(path: str, method: str, params: dict[str, Any], open_paths: list[str] | None = None,
+          open_texts: dict[str, str] | None = None) -> Any:
     try:
+        if open_texts is not None:
+            return lsp_bridge.request(path, lambda: (method, params), list(open_texts), lsp_bridge.REQUEST_TIMEOUT,
+                                      open_texts=open_texts)
         return lsp_bridge.request(path, lambda: (method, params), open_paths or [path], lsp_bridge.REQUEST_TIMEOUT)
     except BridgeError as exc:
         raise _Fail(exc.code, exc.hint) from None
+
+
+def _snapshot(root: str, path: str, extra: list[str] = ()) -> tuple[dict[str, bytes], dict[str, str]]:
+    """Read the target, up to ``_OPEN_CAP`` workspace files of its kind and ``extra`` ONCE.
+
+    The texts are what the server is given; the bytes are what a later write must still
+    find on disk. A rename edit is applied only to bytes the server actually saw, so a
+    file changed by anyone between this read and the write is refused as ``stale_file``.
+    """
+    paths = lsp_nav.workspace_files(root, os.path.splitext(path)[1] or ".py", path, _OPEN_CAP)
+    for item in extra:
+        if item not in paths:
+            paths.append(item)
+    raw: dict[str, bytes] = {}
+    texts: dict[str, str] = {}
+    for item in paths:
+        try:
+            with open(item, "rb") as handle:
+                data = handle.read()
+            texts[item] = lsp_nav.decode(data)[0]
+        except (OSError, LspNavError):
+            continue  # unreadable or not UTF-8: never synced, so never a valid rename target
+        raw[item] = data
+    return raw, texts
 
 
 _LINE_CACHE_CAP = 64
@@ -272,21 +300,35 @@ def lsp_rename_handler(args: dict[str, Any], **kwargs: object) -> str:
         if not isinstance(apply, bool):
             return _fail("invalid_argument", "apply must be a boolean")
         _ready(path)
-        if _send(path, "textDocument/prepareRename", position) is None:
+        raw, texts = _snapshot(root, path)
+        if path not in texts:
+            return _fail("unsupported_edit", f"{os.path.relpath(path, root)} is not readable UTF-8")
+        if _send(path, "textDocument/prepareRename", position, open_texts={path: texts[path]}) is None:
             return _fail("no_result", "not a renameable symbol here")
-        edit = _send(path, "textDocument/rename", {**position, "newName": new_name})
-        if edit is None:
-            return _fail("no_result", "the language server returned no rename edit")
-        targets = {k: v for k, v in lsp_nav.workspace_edit_targets(edit).items() if v}
-        if not targets:
-            return _fail("no_result", "the language server returned an empty rename edit")
         expected: dict[str, bytes] = {}
-        for key in targets:
-            target = os.path.realpath(lsp_nav.uri_to_path(key))
-            if not lsp_nav.inside(target, root):
-                raise lsp_nav.ScopeMismatch(f"edit targets {target}, outside the workspace root; nothing written")
-            with open(target, "rb") as handle:
-                expected[target] = handle.read()
+        targets: dict[str, list[dict[str, Any]]] = {}
+        for attempt in (1, 2):
+            edit = _send(path, "textDocument/rename", {**position, "newName": new_name}, open_texts=texts)
+            if edit is None:
+                return _fail("no_result", "the language server returned no rename edit")
+            targets = {k: v for k, v in lsp_nav.workspace_edit_targets(edit).items() if v}
+            if not targets:
+                return _fail("no_result", "the language server returned an empty rename edit")
+            unsynced = []
+            for key in targets:
+                target = os.path.realpath(lsp_nav.uri_to_path(key))
+                if not lsp_nav.inside(target, root):
+                    raise lsp_nav.ScopeMismatch(f"edit targets {target}, outside the workspace root")
+                if target not in raw:
+                    unsynced.append(target)
+            if not unsynced:
+                expected = {os.path.realpath(lsp_nav.uri_to_path(key)): raw[os.path.realpath(lsp_nav.uri_to_path(key))]
+                            for key in targets}
+                break
+            if attempt == 2:
+                raise lsp_nav.StaleFile(
+                    f"{os.path.relpath(unsynced[0], root)} could not be synced with the language server")
+            raw, texts = _snapshot(root, path, unsynced)  # sync the files the server reached on its own, then ask again
         plans = lsp_nav.plan_workspace_edit(root, targets, expected)
         if not apply:
             files = [{"path": os.path.relpath(p, root), "edits": n} for p, _, n in plans]
