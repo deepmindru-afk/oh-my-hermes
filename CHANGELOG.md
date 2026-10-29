@@ -13,9 +13,12 @@ All notable changes will be documented here.
   `+ N other commands`; a directory change (`cd`, `pushd`, `popd`) or a
   variable assignment (`T=/`, `printf -v`, `${T:=/}`) now stays listed
   whenever a listed command comes after it, and `echo`-like noise still
-  folds. When rows run short they fold step by step, the last one before
-  each risky command going last, then every row that is not risky, so a
-  `▲` row is never cut while another command's row shows. A download run
+  folds. When rows run short the spacing and the rule go first, then the
+  rows fold step by step, the last one before each risky command going
+  last, then every row that is not risky; a `▲` row is never cut while
+  another command's row shows, and no command that may change something
+  is hidden where the slot used to show it. A here-document body inside
+  `$(…)`, such as a commit or PR body, is read as text. A download run
   as a script (`curl … | sh`, `bash <(curl …)`, `eval "$(curl …)"`,
   `sh -c "$(wget -qO- …)"`, and inside a `-c` script, a substitution or
   after `then`), decoded text piped into a shell (`base64 -d | sh`,

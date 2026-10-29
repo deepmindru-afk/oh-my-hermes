@@ -309,7 +309,10 @@ def _chmod(args: list[str]) -> list[str]:
     operands = rest + (args[args.index("--") + 1 :] if "--" in args else [])
     mode = operands[0] if operands else ""
     if mode and all(digit in "01234567" for digit in mode):
-        return ["makes files world-writable"] if mode[-1] in "2367" else []
+        # A sticky shared directory (`1777`, as /tmp is) lets others write but not delete what is not theirs; Hermes'
+        # pattern does not match it either.
+        sticky = len(mode) == 4 and mode[0] in "1357"
+        return ["makes files world-writable"] if mode[-1] in "2367" and not sticky else []
     for clause in mode.split(","):
         who, op, perms = clause.partition("+") if "+" in clause else clause.partition("=")
         if op and "w" in perms and set(who) & {"o", "a"}:
@@ -415,12 +418,47 @@ def _decodes(program: str, args: list[str], previous: str) -> bool:
 
 
 def _closing(text: str, index: int) -> int:
-    """The index of the `)` that closes the `(` before `index`, or the end of `text` when none does."""
-    depth = 1
+    """The index of the `)` that closes the `(` before `index`, or the end of `text` when none does. A parenthesis
+    inside quotes, a backtick span or a here-document body (`_heredoc`, `_heredoc_end`) is text, not one that
+    closes: a commit message's `a)` must not end its `$(cat <<'EOF' …`."""
+    closers = [")"]  # what ends each context open at `index`: `)`, a double quote, or a backtick
+    pending: list[tuple[str, bool]] = []
     while index < len(text):
-        depth += {"(": 1, ")": -1}.get(text[index], 0)
-        if depth == 0:
-            return index
+        char = text[index]
+        inside = closers[-1]
+        if char == "\\":
+            index += 2
+            continue
+        if inside != ")":  # in a double quote only `$(` and a backtick open; in a backtick span nothing does
+            if char == inside:
+                closers.pop()
+            elif inside == '"' and text.startswith("$(", index):
+                closers.append(")")
+                index += 1
+            elif inside == '"' and char == "`":
+                closers.append(char)
+            index += 1
+            continue
+        if char == "'":
+            end = text.find("'", index + 1)
+            index = len(text) if end < 0 else end + 1
+            continue
+        if text.startswith("<<", index) and not text.startswith("<<<", index):
+            delimiter, end, tabs = _heredoc(text, index)
+            if delimiter:
+                pending.append((delimiter, tabs))
+                index = end
+                continue
+        if char == "\n" and pending:
+            index = _heredoc_end(text, index, pending)
+            pending = []
+            continue
+        if char in "\"`(":
+            closers.append(")" if char == "(" else char)
+        elif char == ")":
+            closers.pop()
+            if not closers:
+                return index
         index += 1
     return len(text)
 
@@ -475,33 +513,54 @@ def _runs_text(word: str) -> bool:
     return word[:1] == "-" and word[1:2] != "-" and "c" in word
 
 
+def _shell_operand(args: list[str]) -> tuple[bool, int]:
+    """Whether a shell's options in `args` include `-c`, and the index of its first operand (`len(args)` when it has
+    none): the script it runs, from `-c` or a file. Options end at the first operand, so `bash run.sh -c x` passes
+    `-c` to `run.sh`; `-o`, `-O`, `--rcfile` and `--init-file` take a value, and a `<` redirect is no operand."""
+    runs = False
+    index = 0
+    while index < len(args):
+        arg = args[index]
+        if arg == "<":
+            index += 1
+        elif arg in ("-o", "-O", "--rcfile", "--init-file"):
+            index += 2
+        elif arg.startswith("-") and arg != "-":
+            runs = runs or _runs_text(arg)
+            index += 1
+        else:
+            break
+    return runs, index
+
+
 def _shell_script(args: list[str]) -> str | None:
-    """The script a shell with `args` runs from its `-c`, or None when it has none."""
-    for index, arg in enumerate(args):
-        if _runs_text(arg):
-            return next((word for word in args[index + 1 :] if not word.startswith("-")), None)
-    return None
+    """The script a shell with `args` runs from its `-c` (`_shell_operand`), or None when it has none."""
+    runs, index = _shell_operand(args)
+    return args[index] if runs and index < len(args) else None
 
 
 def _runs_download(stages: list[list[str]], substituted: list[tuple[str, str]]) -> bool:
     """Whether the pipe `stages` (substitutions masked, `_substitutions`) hand a download to what runs it as a
     script: a shell, `eval`, `source` or `.` reading a process substitution that downloads (`bash <(curl …)`, :314),
     `eval`, `source` or `.` given a command substitution that does (`eval "$(curl …)"`, :316), or a shell given one
-    after its `-c` (`sh -c "$(curl …)"`)."""
+    as the script its `-c` runs (`sh -c "$(curl …)"`). A shell's later operands are its script's arguments."""
     fetching = {str(number) for number, (_, body) in enumerate(substituted) if _fetches(body)}
     if not fetching:
         return False
     for stage in stages:
         words = _program(stage)
         program = words[0].rsplit("/", 1)[-1] if words else ""
-        if program not in _SHELLS | _SOURCES:
+        if program in _SOURCES:
+            read = words[1:]
+        elif program in _SHELLS:
+            runs, index = _shell_operand(words[1:])
+            read = words[1 + index : 2 + index]
+        else:
             continue
-        given = False  # the shell's `-c` came before
-        for word in words[1:]:
+        for word in read:
             for number in word.split("\x00")[1::2]:
-                if number in fetching and (substituted[int(number)][0] == "<(" or program in _SOURCES or given):
+                if number in fetching and (substituted[int(number)][0] == "<(" or program in _SOURCES or runs):
                     return True
-            given = given or _runs_text(word)
     return False
 
 

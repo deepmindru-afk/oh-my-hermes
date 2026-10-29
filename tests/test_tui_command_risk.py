@@ -179,8 +179,26 @@ class RiskTableTests(unittest.TestCase):
         'echo "bash <(curl x)"', "echo 'eval $(curl x)'", 'printf "%s" "sh -c $(curl x)"', 'sh -c "$(cat f)"',
         'eval "$(ssh-agent -s)"', "bash <(cat local.sh)", "base64 payload | sh", "base64 -d payload > out",
         "cat f | tr -d a | bash", "xxd payload | sh", "xxd -groupsize 2 f | sh", "chmod ² f", "chmod ¹²³ f",
-        "chmod =w f", "chmod +w f", "base64 -i payload | sh", "sh -c 'echo rm -rf /'",
+        "chmod =w f", "chmod +w f", "chmod 1777 /tmp/shared", "base64 -i payload | sh", "sh -c 'echo rm -rf /'",
+        # A script's operands after its name are its arguments, not a `-c` script.
+        'bash run.sh -c "rm -rf build"', "sh ./deploy.sh -c 'git push --force'", "bash -c 'echo' \"$(curl -s x)\"",
     )
+
+    def test_a_here_document_body_in_a_substitution_is_text(self) -> None:
+        # Commit and PR bodies: `a)` must not close the `$(`, and backticked commands in the prose run nothing.
+        end = "EOF"
+        for line in (
+            f'gh pr create --title "x" --body "$(cat <<\'{end}\'\n## Summary\n- step 1) drop the `rm -rf build` line\n'
+            f'- see `git reset --hard` docs\n{end}\n)"',
+            f'git commit -m "$(cat <<\'{end}\'\nfix: handle a) and b); avoid `git push --force`\n{end}\n)"',
+            f'gh pr create --body "$(cat <<{end}\n## Summary\n- a) the `rm -rf build` line\n- b) `curl x | sh`\n{end}\n)"',
+            f'git commit -F - <<\'{end}\'\nfix: a) `git push --force` b) `rm -rf /`\n{end}',
+        ):
+            with self.subTest(line=line[:30]):
+                self.assertEqual([segment.risks for segment in segments(line) if segment.risks], [])
+        # What runs around the body is still read.
+        line = f'git commit -m "$(cat <<\'{end}\'\nfix: a)\n{end}\n)" && git push --force'
+        self.assertEqual([segment.risks for segment in segments(line)], [(), ("force-pushes",)])
 
     def test_each_row_of_the_table_names_its_risk(self) -> None:
         for command, risks in self.RISKY.items():
@@ -491,51 +509,77 @@ class SlotRowsTests(unittest.TestCase):
         self.assertTrue(all(row.startswith("    ./dir") for row in body[1:]), rows)
         self.assertIn("./dir-11", "\n".join(rows))
 
-    def test_on_a_short_slot_the_spacing_goes_first_then_the_state_rows_then_the_folded_row(self) -> None:
+    def test_on_a_short_slot_the_spacing_goes_first_then_the_rule_then_the_state_rows(self) -> None:
         self.assertIn("", self.rows(OWNER_REQUEST, max_rows=OWNER_SLOT + 2))  # with room, spaced
         risky = [row for row in self.rows(OWNER_REQUEST, max_rows=OWNER_SLOT) if row.startswith("  ▲")]
         self.assertEqual(len(risky), 4)
         cd, assigns = '    cd "/Users/someone/Desktop/repo"', '    W="/Users/someone/Desktop/repo-worktrees/advanced-delegation-strategy"'
+        rule = "  " + "─" * prompts.RULE_CELLS
         steps = {
-            OWNER_SLOT: ([cd, assigns], "    + 8 other commands (git, gh, echo, ls)"),
+            OWNER_SLOT: (True, [cd, assigns], "    + 8 other commands (git, gh, echo, ls)"),
+            # The rule goes before any command folds.
+            OWNER_SLOT - 2: (False, [cd, assigns], "    + 8 other commands (git, gh, echo, ls)"),
             # The last assignment before the worktree removal stays longest: it names what the removal removes.
-            OWNER_SLOT - 2: ([assigns], "    + 9 other commands (cd, git, gh, echo, ls)"),
-            OWNER_SLOT - 3: ([], "    + 10 other commands (cd, W=, git, gh, echo, ls)"),
+            OWNER_SLOT - 3: (False, [assigns], "    + 9 other commands (cd, git, gh, echo, ls)"),
+            OWNER_SLOT - 4: (False, [], "    + 10 other commands (cd, W=, git, gh, echo, ls)"),
         }
-        for max_rows, (state, folded) in steps.items():
+        for max_rows, (ruled, state, folded) in steps.items():
             with self.subTest(max_rows=max_rows):
                 rows = self.rows(OWNER_REQUEST, max_rows=max_rows)
                 self.assertNotIn("", rows)
-                self.assertIn("  " + "─" * prompts.RULE_CELLS, rows)
+                self.assertEqual(rule in rows, ruled, rows)
                 self.assertEqual([row for row in rows if row.startswith("  ▲")], risky, rows)
                 self.assertIn(folded + " · ctrl+o shows all", rows)
                 self.assertEqual(rows[2 : rows.index(risky[0])], state, rows)
-        shorter = self.rows(OWNER_REQUEST, max_rows=OWNER_SLOT - 4)  # the rule goes before any ▲ row
-        self.assertFalse([row for row in shorter if "─" in row], shorter)
-        self.assertEqual([row for row in shorter if row.startswith("  ▲")], risky, shorter)
         shortest = self.rows(OWNER_REQUEST, max_rows=OWNER_SLOT - 5)  # `_fit` cuts the body from its end, marked
         self.assertFalse([row for row in shortest if "other commands" in row], shortest)
         self.assertEqual([row for row in shortest if row.startswith("  ▲")], risky[:3], shortest)
         self.assertIn("  … +2 more lines · ctrl+o shows all", shortest)
         self.assertIn("❯ ✗ deny", shortest)
 
+    def test_a_command_folds_only_when_dropping_the_rule_is_not_enough(self) -> None:
+        # Folding `dd` to keep a separator hid a command that changes a disk (24x80).
+        line = ("cd ~/repo; rm -rf ./build; dd if=/dev/zero of=/dev/disk2 bs=1m; git status; "
+                "git push --force origin main; echo done")
+        rows = self.rows({"command": line, "description": "recursive delete"}, 78, choice_cap(24, 80))
+        self.assertIn("    dd if=/dev/zero of=/dev/disk2 bs=1m", rows)
+        self.assertEqual(len([row for row in rows if row.startswith("  ▲")]), 2, rows)
+        # A fold that saves no row hides a command for nothing (80x8).
+        line = "docker build -t img .; git branch -D a b c; git branch -D a b c"
+        rows = self.rows({"command": line, "description": "git branch force delete"}, 78, 8)
+        self.assertIn("    docker build -t img .", rows)
+        self.assertFalse([row for row in rows if "other command" in row], rows)
+
+    def test_each_command_is_wrapped_once_per_frame(self) -> None:
+        line = "; ".join(["cd a", "T=1", "make", "echo x", "rm -rf ./x"] * 20)
+        approval = slot({"command": line, "description": "recursive delete"})
+        approval.lines(80, DEFAULT_THEME, 12)  # reads the segments once
+        with mock.patch.object(prompts, "wrap_prefixed", wraps=prompts.wrap_prefixed) as wrap:
+            approval.lines(80, DEFAULT_THEME, 12)
+        self.assertLessEqual(wrap.call_count, 100 + 12, wrap.call_count)  # 100 commands, the head and the choices
+
     def test_no_risky_row_is_cut_while_another_command_s_row_shows(self) -> None:
+        heredoc = "cat > notes.txt <<'EOF'\nline one\nline two\nEOF"
         lines = (
             OWNER_COMMAND,
             "; ".join(f"V{n}=x{n}" for n in range(14)) + "; rm -rf ./build",
             f"cd ~ && {FILLER}; rm -rf ./*",
             f"cd /a; echo 1; cd /b; echo 2; export P=1; make; {FILLER}; rm -rf ./x; git push -f",
+            f"{heredoc}\nrm -rf ./build; pytest -q {'tests/test_something_long.py ' * 5}; git reset --hard HEAD~3",
         )
         for line in lines:
-            found = segments(line)
-            plain = {"    " + segment.text for segment in found if not segment.risks}
-            for width, max_rows in [(width, rows) for width in (78, 122) for rows in range(8, OWNER_SLOT + 3)]:
+            risky = sum(1 for segment in segments(line) if segment.risks)
+            for width, max_rows in [(width, rows) for width in (40, 78, 122) for rows in range(6, OWNER_SLOT + 3)]:
                 with self.subTest(line=line[:40], width=width, max_rows=max_rows):
-                    rows = self.rows({"command": line, "description": "recursive delete"}, width, max_rows)
-                    marked = [row for row in rows if row.startswith("  ▲")]
-                    if len(marked) < sum(1 for segment in found if segment.risks):
-                        self.assertFalse(plain & set(rows), rows)
-                        self.assertFalse([row for row in rows if "other commands" in row], rows)
+                    with mock.patch.object(os.path, "expanduser", return_value=HOME):
+                        drawn = slot({"command": line, "description": "recursive delete"}).lines(
+                            width, DEFAULT_THEME, max_rows)
+                    marked = sum(1 for row in drawn if any(span.text == prompts.RISK_MARK for span in row))
+                    others = [row for row in drawn
+                              if any(span.style == DEFAULT_THEME.code and span.text.strip() for span in row)
+                              or any("other command" in span.text for span in row)]
+                    if marked < risky:
+                        self.assertFalse(others, line_text(others[0]) if others else "")
         # Every risky row shows at the sizes the owner's terminals have, and on a 30-row one.
         for line in lines[1:3]:
             for width, max_rows in ((78, choice_cap(24, 80)), (122, choice_cap(30, 124)), (122, OWNER_SLOT)):
