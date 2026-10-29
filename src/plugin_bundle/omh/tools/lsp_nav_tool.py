@@ -13,7 +13,7 @@ import json
 import os
 from typing import Any
 
-from .. import lsp_bridge, lsp_nav
+from .. import lsp_bridge, lsp_nav, runtime_paths
 from ..lsp_bridge import BridgeError
 from ..lsp_nav import LspNavError
 
@@ -78,8 +78,6 @@ def _lsp_tools_enabled() -> bool:
     if os.environ.get("OMH_LSP_TOOLS", "").strip().lower() in _ON:
         return True
     try:
-        from .. import runtime_paths
-
         text = (runtime_paths.default_hermes_home() / "config.yaml").read_text(encoding="utf-8")
         value = runtime_paths.plugin_setting_text(text, "lsp_tools")
     except Exception:
