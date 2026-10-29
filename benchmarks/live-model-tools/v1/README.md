@@ -75,6 +75,12 @@ python benchmarks/live-model-tools/v1/bench.py smoke \
   --max-paid-calls 1
 ```
 
+Before a paid `hermes_current_session` run, set a turn cap in every profile the run uses
+(`hermes -p <profile> config set agent.max_turns 120`). The harness timeout stops only the
+`hermes` client; the gateway keeps running the turn until the cap. Count tokens as well as
+paid calls: watch each profile's `state.db` during the run for sessions still writing past
+their timeout.
+
 `--current-session-provider` is only for `hermes_current_session`: use it when
 the active Hermes profile registered the selected model under a local custom
 provider ID (for example, `kimi_k3`) that differs from the manifest's provider.
@@ -547,6 +553,72 @@ that added this section.
 Results describe this pinned corpus, OMH version, Hermes version, provider,
 model id and conditions only. They do not establish universal model
 superiority.
+
+### 2026-10-29 debugging: builtin `patch` vs a debugpy tool (`omh-dap`), gate failed
+
+One question, from oh-my-pi's `debug` tool: does giving the model a debugger (breakpoints,
+locals, evaluate) help it find and fix a bug that the failing assertion does not explain? On
+this corpus it does not: pass counts barely move and the token clause fails, so the
+`debug_python` tool (branch `feature/omh-dap`) does **not** merge.
+
+The setup:
+
+- Split `dap-ab`, three templates whose failing test shows only values (`assert 118 == 76`):
+  `D-MUTABLE-DEFAULT` (a mutable default argument), `D-ALIASED-STATE` (a shallow copy shares
+  state), `D-ORDER-DEPENDENT` (a cache keyed on the wrong thing). 3 seeds each, 9 per model
+  per arm, effort `medium`, OpenGateway (`og`).
+- Both arms: `--edit-directive debug` (one shared sentence plus "if the same test still fails
+  after three edits, stop editing and inspect state again"), `--git-init-workspace`,
+  `--test-env` (pytest and debugpy ready). Only the dap arm has toolset `omh-dap`.
+- omh `feature/omh-dap` `9528a8c73`. Records: `artifacts/dap-ab` on that branch (143 of 144;
+  one gpt-4.1-nano dap run left no record and is scored as a fail).
+- qwen-flash `D-MUTABLE-DEFAULT` in both arms reuses the last smoke's records (same commit,
+  same flags), decided before the run because the paid-call cap was short by four.
+
+| Model | patch | dap |
+| --- | ---: | ---: |
+| `deepseek/deepseek-v4.1-flash-ultrafast` | 9 / 9 | 9 / 9 |
+| `moonshotai/kimi-k3.1-pro` | 9 / 9 | 9 / 9 |
+| `z-ai/glm-5.3` | 8 / 9 | 7 / 9 |
+| `minimax/MiniMax-M3` | 9 / 9 | 9 / 9 |
+| `x-ai/grok-4-1-fast` | 9 / 9 | 9 / 9 |
+| `qwen/qwen-flash` | 0 / 9 | 2 / 9 |
+| `openai/gpt-4o-mini` | 0 / 9 | 0 / 9 |
+| `openai/gpt-4.1-nano` | 0 / 9 | 1 / 9 |
+| **Total** | **44 / 72** | **46 / 72** |
+
+The merge gate, fixed before the first paid run:
+
+- Weak models, dap at least patch + 3: 12 vs 9, pass.
+- Strong models, dap at least patch - 1: 34 vs 35, pass.
+- No dap run above 3x its patch pair's median tokens: **fail, 7 runs**. Among runs that
+  finished normally: gpt-4.1-nano 6.3x, MiniMax-M3 3.7x, grok-4-1-fast 3.3x. The rest are
+  three qwen-flash timeouts and the missing nano record.
+- `debug_python` used in at least half of the dap-arm sessions: 46 / 65, pass.
+
+What it shows:
+
+- Strong models already fix these bugs by reading the code and printing; the debugger adds
+  nothing for them. Weak models mostly cannot fix them either way, and with a debugger they
+  loop longer, because each debugger call is cheap.
+- Four smokes before the run each found a different loop, and each was fixed in the tool:
+  a statement passed to evaluate (now `not_an_expression` with the way to read a module
+  value), 558 evaluates walking `lines[0]` to `lines[541]` at one stop (now 15 per stop and
+  40 per session), a launch refused while a session was live (a relaunch now replaces it),
+  and breakpoints that stopped during import (now says to continue). After each fix the
+  weak model found another loop.
+- The shared "three edits" sentence stopped the patch arm's edit/test loops in the smoke.
+- Provider failures: from 22:18 KST og answered `401 model_access_denied` for qwen-flash,
+  gpt-4o-mini and gpt-4.1-nano. Six gpt-4o-mini dap runs crashed within 10 s and the nano run
+  left no record. The token clause fails without them.
+- **A bench timeout did not stop the model.** `hermes -p <bench>` is a client of the
+  profile's gateway; the 30-minute timeout killed the client, and the agent turn went on.
+  Two qwen-flash sessions ran for over three hours. Over the whole DAP effort the bench
+  profiles used 1.15B tokens, 87% of them in sessions that outlived their timeout, while
+  the paid-call count stayed at 155 of 160. The longest passing run here took 40 model calls
+  (84 in the LSP run), so every bench profile now sets `agent.max_turns: 120`; a live check
+  with `max_turns: 3` stopped a turn after 3 calls. See "Before a paid run" under Commands.
+- Python and debugpy only. n = 9 per model per arm.
 
 ### 2026-10-29 rename: builtin `patch` vs Hermes LSP through `omh-lsp`
 
