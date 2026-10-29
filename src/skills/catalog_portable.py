@@ -440,6 +440,7 @@ PORTABLE_REFERENCE_PATHS = frozenset({
     'design-quality-gate/references/design-critique-rubric.md',
     'visual-qa/references/visual-verdict-contract.md',
     'visual-qa/references/motion-continuity.md',
+    'visual-qa/references/playable-check.md',
     'apple-design/references/platform-foundations.md',
     'apple-design/references/materials-and-accessibility.md',
     'apple-design/references/product-visual-production.md',

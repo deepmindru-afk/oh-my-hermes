@@ -193,7 +193,8 @@ class AiJobSearchContextBudgetTests(unittest.TestCase):
         # and lists 3.1 Pro as superseded (2026-10-28); reverting only that
         # edit reproduces the previous pin 48d98811b4a4c7ceea14d1b5995065c37420b6c46b1e16bb4b3081906cbc07d3.
         # Then frontend's observe-each-change quality-bar line; only frontend moves.
-        self.assertEqual(_digest(legacy_hashes), '541956e4096499a68ecaa5a3d1f4e66ed04cf62470c4c7d07da7d439aaed13e1')
+        # Then visual-qa's playable-check quality-bar line; only visual-qa moves, and its portable shadow pin is re-read.
+        self.assertEqual(_digest(legacy_hashes), '131ec2bffb10dcd53ef2ab71c5d93c3c4f1162fbcf50130a5304e0408dee252d')
         legacy = _skill_context_cost_profile('full', legacy_templates, refs)
         current = _skill_context_cost_profile('full', templates, refs)
         # Main's search guidance adds 305; repro-audit's mandatory rails 1,943.
