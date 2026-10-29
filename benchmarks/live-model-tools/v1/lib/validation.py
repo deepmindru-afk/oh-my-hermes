@@ -196,7 +196,29 @@ def _scope_trap_failures(workspace: Path, golden: dict[str, Any]) -> list[str]:
     return failures
 
 
-_CONSISTENCY_AB_VALIDATORS = {"DUPLICATE": _duplicate_failures, "SCOPE-TRAP": _scope_trap_failures}
+def _decoy_failures(workspace: Path, golden: dict[str, Any]) -> list[str]:
+    """The reported module rounds half up; the documented half-to-even look-alike is left exactly as it was."""
+    first, second, amount, rounded = golden["first"], golden["second"], golden["amount"], golden["rounded"]
+    checks = (
+        "from decimal import Decimal\n"
+        f"from benchapp.{first} import {first}_total\n"
+        f"from benchapp.{second} import {second}_total\n"
+        f"assert {first}_total(['{amount}']) == Decimal('{rounded}')\n"
+        f"assert {first}_total(['1.10', '2.20']) == Decimal('3.30')\n"
+        f"assert {first}_total(['1.004']) == Decimal('1.00')\n"
+        f"assert {second}_total(['0.125']) == Decimal('0.12')\n"
+        f"assert {second}_total(['{amount}']) == Decimal('{amount}').quantize(Decimal('0.01'))\n"
+    )
+    failures = []
+    if not _behaviour_ok(workspace, f"tests/test_{first}.py", checks, golden["min_tests"]):
+        failures.append("semantic_validator_failed")
+    present = [ast.dump(node) for node in ast.parse((workspace / f"src/benchapp/{second}.py").read_text(encoding="utf-8")).body]
+    if present != golden["decoy_nodes"]:
+        failures.append("decoy_changed")
+    return failures
+
+
+_CONSISTENCY_AB_VALIDATORS = {"DUPLICATE": _duplicate_failures, "SCOPE-TRAP": _scope_trap_failures, "DECOY": _decoy_failures}
 
 
 def _ratio(found: set[tuple[Any, ...]], gold: set[tuple[Any, ...]]) -> tuple[float, float]:

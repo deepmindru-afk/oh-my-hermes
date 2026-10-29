@@ -610,17 +610,16 @@ below: a run with no completed record is a fail.
   repeat. The off arm is checked for zero such rows.
 
 Measurement 1 (checklist text at `0c0e1c5e2`) failed one clause: on-arm median tokens
-were 1.434x off (302,806 vs 211,211). Every other clause passed, with 66 vs 57 passes.
-After the checklist, 62 of 72 on-arm sessions re-ran a test suite that had already
-passed, because the verification line said "run a check". Measurement 2 (`185abfc78`)
-changes only that line: it asks for the command already run after the last edit, and
-says to run one only if none was. It re-runs both arms on two fresh profiles
-(`cebench-off2`, `cebench-on2`), with `agent.run_budget_seconds: 600` set from the
-start. The gate does not change.
+were 1.434x off (302,806 vs 211,211). Every other clause passed, with 66 on vs 57 off.
+After the checklist the on arm ran pytest 62 times, in 49 of 72 sessions. For
+comparison, the off arm ran it 24 times after its last code edit. The verification line
+said "run a check". Measurement 2 (`185abfc78`) changes only that line: it asks for the
+command already run after the last edit, and says to run one only if none was. It
+re-runs both arms on two fresh profiles (`cebench-off2`, `cebench-on2`), with
+`agent.run_budget_seconds: 600` set from the start. The gate does not change.
 
-Measurement 2 is the result: it passes every clause, so the checklist ships, on by
-default. omh `feature/round-end-checklist` `185abfc78` on origin/main `5cc1ed311`;
-Hermes Agent v0.22.5 · stable · local bf0203a794a0. 144 of 144 run records, all
+Measurement 2 passed every clause as written: omh `185abfc78` on origin/main `5cc1ed311`;
+Hermes Agent v0.22.5 · stable · local bf0203a794a0; 144 of 144 run records, all
 completed.
 
 | Model | off | on | off tokens (median) | on tokens (median) |
@@ -637,7 +636,7 @@ Per template, off vs on: `E-BUGFIX` 17 vs 17, `E-RENAME` 18 vs 18, `C-DUPLICATE`
 `C-SCOPE-TRAP` 18 vs 18. Failure codes: `copy_not_updated` 10 vs 6,
 `mutation_outside_scope` 1 vs 1, `unrequested_edit` 0 vs 0.
 
-The gate:
+Measurement 2 against the gate:
 
 - Total, on at least off + 3: 65 vs 61.
 - Strong models, on at least off - 1: 36 vs 32.
@@ -645,9 +644,7 @@ The gate:
 - Median tokens, on at most 1.3x off: 247,577 vs 204,806, 1.21x. No on run above 3x its
   off pair's median.
 - Fired in 71 of 72 on-arm coding sessions (98.6%), never twice in a session; 0 rows in
-  the off arm. The one coding session without it (opus, `E-BUGFIX`) edited through
-  `patch` and `write_file` and stopped once; why the hook stayed silent there is not
-  established.
+  the off arm.
 
 Measurement 1, for the record (same setup, profiles `cebench-off`/`cebench-on`):
 
@@ -667,24 +664,76 @@ interrupted every running turn and failed the next runs at launch. Every cell (m
 arm, template) with a run overlapping that window was moved aside and run again in full,
 and `agent.run_budget_seconds: 600` was added to both profiles then.
 
-What it shows, and what it does not:
+**Neither measurement can ship the checklist.** An independent review found a defect
+that the gate did not measure: the checklist displaced the turn's final answer. Hermes
+keeps the answer the model stopped with only as an interim message, and returns
+whatever the model says after the nudge as the turn's final response. That is the
+response `--oneshot`, API and delegating callers receive. The checklist ended "say so in
+one line and finish", so models finished with a report on the check. The bench missed
+this because it grades the answer file. Read from the session databases, the last
+assistant message contained the task's `changed_paths` answer in these sessions:
 
-- The gain is in consistency: a second copy of fixed logic that the task did not name.
-  After the checklist, models searched for other uses (`search_files` and `read_file`
-  are most of the 1.8 extra calls per session in measurement 2) and fixed the copy.
-- Scope did not move: no model took the `C-SCOPE-TRAP` bait in either arm, and the one
-  `mutation_outside_scope` in each arm is `gpt-6-luna` on the same `E-BUGFIX` seed. The scope line is
-  kept because it costs one sentence, not because this corpus shows it helps.
-- Weak models gained in measurement 1 (27 to 31) and not in measurement 2 (29 to 29);
-  strong models gained in both (30 to 35, 32 to 36).
-- The verification wording is what made the token clause pass: "run a check" led 62 of
-  72 sessions to re-run passing tests; the revised line led 10 of 72 to.
-- Two measurements of one feature against one gate. The second is reported as the
-  result because the change between them was made to fix the measured cost, the way
-  the rename section above reports its fourth run. n = 12 per model per arm.
+| | off | on |
+| --- | ---: | ---: |
+| Measurement 1 | 48 / 72 | 3 / 72 |
+| Measurement 2 | 53 / 72 | 3 / 72 |
 
-Pass counts come from the run records. Firing and tool calls come from each profile's
-session DB.
+The token figures were also re-counted. The on arm ran pytest 62 times in 49 sessions
+after the checklist in measurement 1, and 10 times in 10 sessions in measurement 2. The
+off arm ran it 24 and 23 times after its last code edit. Counted by `session_counts.py`.
+A sentence in earlier commits said "62 of 72 sessions": that was the number of calls,
+not of sessions.
+
+What measurements 1 and 2 show, and what they do not:
+
+- The pass margin is inside noise. The off arm ran identical code both times and moved
+  from 57 to 61. Measurement 2's 65 vs 61 alone has a two-sided Fisher exact p of 0.45,
+  and measurement 1's 66 vs 57 has 0.057. Pooled over both, the totals are 131 vs 118 of
+  144 (p = 0.038).
+- The one effect that stands out is `C-DUPLICATE`: pooled, 25 vs 12 of 36 (p = 0.004).
+  A model fixed a second copy of the logic that the task did not name, after searching
+  for other uses: `search_files` and `read_file` were most of the 1.8 extra calls per
+  session in measurement 2.
+- `C-DUPLICATE` plants exactly the defect the checklist names, and the corpus had no
+  negative case for it. Measurement 3 adds one (`C-DECOY`, below).
+- Scope did not move. No model took the `C-SCOPE-TRAP` bait in either arm. The one
+  `mutation_outside_scope` in each arm is `gpt-6-luna` on the same `E-BUGFIX` seed.
+- Weak models gained in measurement 1 (27 to 31) and not in measurement 2 (29 to 29).
+  Strong models gained in both (30 to 35, 32 to 36). n = 12 per model per arm.
+- The one measurement-2 coding session without the checklist (opus, `E-BUGFIX`) was
+  dropped by Hermes, not by OMH. The profile log reads "Hook 'pre_verify' callback
+  pre_verify skipped after previous timeout or while still running". `pre_verify` has no
+  entry in `_HOOK_CALL_IDENTITY_FIELDS` (`hermes_cli/plugins_dispatch.py`). So two
+  sessions of one profile that reach the hook at the same moment share one gate key, and
+  the second call is skipped.
+
+#### Measurement 3, pre-registered before its first run
+
+Changes from measurement 2:
+
+- The checklist's last line now asks for the final answer to the task again, in full and
+  in the form the task asked for, because it replaces the answer just given. It also
+  says not to answer with a report on the check.
+- Delegated children (`platform == "subagent"`) get no checklist.
+- New template `C-DECOY`, the negative case for `C-DUPLICATE`. It has the same rounding
+  bug in one module, next to a look-alike helper whose half-to-even rounding is
+  required, documented, and pinned by a test. Changing the look-alike's code scores
+  `decoy_changed`.
+- 5 templates × 3 seeds = 15 runs per model per arm, 90 per arm. Same panel, same flags,
+  subscription routes only. Fresh profiles `cebench-off3` and `cebench-on3`, both with
+  `agent.max_turns: 120` and `agent.run_budget_seconds: 600`.
+
+The gate keeps every clause above unchanged, now over 90 runs per arm, and adds two:
+
+- Final answer kept: the number of runs whose last assistant message contains
+  `changed_paths` is, in the on arm, at least the off arm's minus 2. It is read from the
+  session databases.
+- `C-DECOY`: on at least off - 1.
+
+If measurement 3 fails a clause, it is recorded here and the checklist does not merge.
+
+Pass counts come from the run records. Firing, final answers and tool calls come from
+each profile's session DB.
 
 ### 2026-10-29 debugging: builtin `patch` vs a debugpy tool (`omh-dap`), gate failed
 

@@ -39,7 +39,7 @@ class ConsistencyAbTemplateTests(unittest.TestCase):
 
     def test_specs(self) -> None:
         self.assertEqual(corpus.all_specs(SPLIT), [
-            (f"C-{name}", "edit", seed) for name in ("DUPLICATE", "SCOPE-TRAP") for seed in corpus.EVALUATION_SEEDS
+            (f"C-{name}", "edit", seed) for name in ("DUPLICATE", "SCOPE-TRAP", "DECOY") for seed in corpus.EVALUATION_SEEDS
         ])
 
     def test_duplicate_needs_both_copies(self) -> None:
@@ -97,8 +97,31 @@ class ConsistencyAbTemplateTests(unittest.TestCase):
                 self.assertEqual(self._grade("C-SCOPE-TRAP", seed, fix_and_kib)["failure_codes"],
                                  ["semantic_validator_failed", "unrequested_edit"])
 
+    def test_decoy_must_stay_unchanged(self) -> None:
+        def first_only(workspace, golden):
+            _replace(workspace, f"src/benchapp/{golden['first']}.py", "ROUND_HALF_EVEN", "ROUND_HALF_UP")
+
+        def both(workspace, golden):
+            first_only(workspace, golden)
+            _replace(workspace, f"src/benchapp/{golden['second']}.py", "ROUND_HALF_EVEN", "ROUND_HALF_UP")
+
+        def first_and_decoy_comment(workspace, golden):
+            first_only(workspace, golden)
+            _replace(workspace, f"src/benchapp/{golden['second']}.py", "import decimal\n", "import decimal  # noqa\n")
+
+        for seed in corpus.EVALUATION_SEEDS:
+            with self.subTest(seed=seed):
+                self.assertEqual(self._grade("C-DECOY", seed, lambda w, g: None)["failure_codes"],
+                                 ["mutation_outside_scope", "semantic_validator_failed"])
+                good = self._grade("C-DECOY", seed, first_only)
+                self.assertTrue(good["pass"], good["failure_codes"])
+                self.assertEqual(self._grade("C-DECOY", seed, both)["failure_codes"],
+                                 ["decoy_changed", "semantic_validator_failed"])
+                # A comment-only edit leaves the AST alone: the decoy check is about behaviour-bearing code.
+                self.assertTrue(self._grade("C-DECOY", seed, first_and_decoy_comment)["pass"])
+
     def test_seeds_vary_fixture(self) -> None:
-        for template_id in ("C-DUPLICATE", "C-SCOPE-TRAP"):
+        for template_id in ("C-DUPLICATE", "C-SCOPE-TRAP", "C-DECOY"):
             digests = set()
             for seed in corpus.EVALUATION_SEEDS:
                 with TemporaryDirectory() as root:
@@ -110,7 +133,7 @@ class ConsistencyAbTemplateTests(unittest.TestCase):
         with TemporaryDirectory() as root:
             receipt = run_matrix(BASE, json.loads((BASE / "manifest.json").read_text()), SPLIT,
                                  "baseline", Path(root) / "runs.jsonl")
-        self.assertEqual((receipt["scheduled"], receipt["passed"]), (6, 6))
+        self.assertEqual((receipt["scheduled"], receipt["passed"]), (9, 9))
 
 
 if __name__ == "__main__":

@@ -83,6 +83,23 @@ check only for surfaces where ordinary code tests are insufficient:
 - dependency or build metadata changes require installation or import smoke
 - CI workflow changes require a syntax check or the workflow's local command
 
+Every turn that edited a source file also gets a round-end checklist, once,
+at its first stop (`attempt == 0`), on any surface except a delegated child
+(`platform == "subagent"`). The checklist covers three things:
+
+- Consistency: every place that has to change with the edit did.
+- Scope: no edit nobody asked for.
+- Verification: the command run after the last edit, and its result.
+
+It ends by asking for the final answer again in full, because Hermes keeps the
+answer the model stopped with only as an interim message and returns what
+follows the nudge as the turn's final response. The cost is an extra round of
+the turn. On the bench corpus this was about two more model calls per coding
+session and about 1.2x the median tokens. The measured gain was in fixing a
+second copy of the changed logic. The measurements are in the 2026-10-30
+section of `benchmarks/live-model-tools/v1/README.md`. `agent.max_verify_nudges:
+0` turns this off together with every other `pre_verify` nudge.
+
 The same hook carries one further directive: when the session's own OMH plan
 still has open work, or a finished dispatch is unacknowledged, the message also
 names the plan position and the next item. This is the only moment a host lets

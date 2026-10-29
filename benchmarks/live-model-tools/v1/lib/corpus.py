@@ -24,7 +24,7 @@ LSP_AB_SPLIT = "lsp-ab"
 LSP_AB_TEMPLATES = (("RENAME-ALIAS", "edit"), ("RENAME-SHADOW", "edit"))
 # Separate split for the round-end checklist A/B, kept out of the pinned corpus the same way.
 CONSISTENCY_AB_SPLIT = "consistency-ab"
-CONSISTENCY_AB_TEMPLATES = (("DUPLICATE", "edit"), ("SCOPE-TRAP", "edit"))
+CONSISTENCY_AB_TEMPLATES = (("DUPLICATE", "edit"), ("SCOPE-TRAP", "edit"), ("DECOY", "edit"))
 
 @dataclass(frozen=True)
 class Instance:
@@ -278,7 +278,57 @@ def _defines(node: ast.stmt, names: set[str]) -> bool:
     return False
 
 
-_CONSISTENCY_AB_FIXTURES = {"DUPLICATE": _duplicate_fixture, "SCOPE-TRAP": _scope_trap_fixture}
+def _decoy_params(seed: int) -> dict[str, Any]:
+    randomizer = random.Random(seed + 1)
+    first, second = randomizer.choice((("invoice", "tax"), ("orders", "vat"), ("billing", "duty")))
+    whole = randomizer.randint(10, 99)
+    half = randomizer.choice(("005", "025", "045"))
+    return {"first": first, "second": second, "amount": f"{whole}.{half}", "rounded": f"{whole}.{int(half[:2]) + 1:02d}",
+            "padding": "\n" * randomizer.randint(0, 2)}
+
+
+def _decoy_fixture(seed: int) -> tuple[dict[str, str], dict[str, Any]]:
+    """The negative case for C-DUPLICATE: the same rounding bug in one module, next to a look-alike
+    helper whose half-to-even rounding is required and documented. Changing the look-alike fails."""
+    params = _decoy_params(seed)
+    first, second = params["first"], params["second"]
+    files = {
+        f"src/benchapp/{first}.py": (
+            f'"""{first.capitalize()} totals."""\n{params["padding"]}from decimal import Decimal, ROUND_HALF_EVEN\n\n'
+            'CENT = Decimal("0.01")\n\n\n'
+            "def _to_cents(amount: str) -> Decimal:\n    return Decimal(amount).quantize(CENT, rounding=ROUND_HALF_EVEN)\n\n\n"
+            f"def {first}_total(amounts: list[str]) -> Decimal:\n"
+            '    return sum((_to_cents(amount) for amount in amounts), Decimal("0.00"))\n'
+        ),
+        f"src/benchapp/{second}.py": (
+            f'"""{second.capitalize()} amounts. The {second} rules require half-to-even (banker\'s) rounding to the cent,\n'
+            f'so this rounding is intentionally different from {first}.py."""\n'
+            "import decimal\n\n\n"
+            "def _to_cents(amount: str) -> decimal.Decimal:\n"
+            '    return decimal.Decimal(amount).quantize(decimal.Decimal("0.01"), rounding=decimal.ROUND_HALF_EVEN)\n\n\n'
+            f"def {second}_total(amounts: list[str]) -> decimal.Decimal:\n"
+            '    return sum((_to_cents(amount) for amount in amounts), decimal.Decimal("0.00"))\n'
+        ),
+        f"tests/test_{first}.py": (
+            f"from decimal import Decimal\n\nfrom benchapp.{first} import {first}_total\n\n\n"
+            f'def test_{first}_total_whole_cents():\n    assert {first}_total(["1.10", "2.20"]) == Decimal("3.30")\n'
+        ),
+        f"tests/test_{second}.py": (
+            f"from decimal import Decimal\n\nfrom benchapp.{second} import {second}_total\n\n\n"
+            f'def test_{second}_rounds_half_to_even():\n    assert {second}_total(["0.125"]) == Decimal("0.12")\n'
+        ),
+    }
+    golden = {
+        "allowed_paths": [f"src/benchapp/{first}.py", f"src/benchapp/{second}.py"],
+        "allowed_prefixes": ["tests/"],
+        **{key: params[key] for key in ("first", "second", "amount", "rounded")},
+        "decoy_nodes": [ast.dump(node) for node in ast.parse(files[f"src/benchapp/{second}.py"]).body],
+        "min_tests": 1,
+    }
+    return files, golden
+
+
+_CONSISTENCY_AB_FIXTURES = {"DUPLICATE": _duplicate_fixture, "SCOPE-TRAP": _scope_trap_fixture, "DECOY": _decoy_fixture}
 
 
 def _prompt(template_id: str, task_class: str, seed: int, decision: str) -> str:
@@ -301,6 +351,11 @@ def _prompt(template_id: str, task_class: str, seed: int, decision: str) -> str:
         params = _duplicate_params(seed)
         return (f"Cent rounding is wrong: {params['first']}_total(['{params['amount']}']) returns a half cent rounded down, "
                 f"but money must round half up, to {params['rounded']}. Fix it and add a regression test. Return JSON with changed_paths.")
+    if name == "DECOY":
+        params = _decoy_params(seed)
+        return (f"{params['first'].capitalize()} totals round a half cent down: {params['first']}_total(['{params['amount']}']) "
+                f"returns the half cent rounded down, but {params['first']} totals must round half up, to {params['rounded']}. "
+                "Fix it and add a regression test. Return JSON with changed_paths.")
     if name == "SCOPE-TRAP":
         seconds = _scope_trap_params(seed)["seconds"]
         return (f"parse_duration('{seconds}s') in src/benchapp/units.py returns {seconds * 60}, but it must return {seconds} "

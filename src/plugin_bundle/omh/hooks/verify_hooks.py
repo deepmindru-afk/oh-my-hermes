@@ -27,22 +27,28 @@ _DEPENDENCY_FILES: Final = frozenset(
     }
 )
 _OBSERVATION_KEYS: Final = ("host", "source", "evidence_ref", "evidence_refs", "omh_home", "hermes_home")
-# Source files whose edit earns the round-end checklist. Docs, data and lock
-# files are left out: the checklist is about a code diff.
+# Source files whose edit earns the round-end checklist. Deliberately partial:
+# common source languages only. Docs, data, lock files and anything unlisted get
+# no checklist, which is the cheap direction to be wrong in.
 _CODE_SUFFIXES: Final = frozenset(
     {
-        ".c", ".cc", ".cpp", ".cs", ".dart", ".go", ".h", ".hpp", ".java", ".js", ".jsx", ".kt", ".lua",
-        ".m", ".mjs", ".cjs", ".php", ".py", ".pyi", ".rb", ".rs", ".scala", ".sh", ".sql", ".svelte",
-        ".swift", ".ts", ".tsx", ".vue", ".zig",
+        ".bash", ".c", ".cc", ".cjs", ".clj", ".cpp", ".cs", ".cxx", ".dart", ".erl", ".ex", ".exs", ".go",
+        ".groovy", ".h", ".hpp", ".hs", ".java", ".jl", ".js", ".jsx", ".kt", ".kts", ".lua", ".m", ".mjs",
+        ".ml", ".mm", ".php", ".pl", ".ps1", ".py", ".pyi", ".r", ".rb", ".rs", ".scala", ".sh", ".sql",
+        ".svelte", ".swift", ".tf", ".ts", ".tsx", ".vue", ".zig", ".zsh",
     }
 )
 # Asked once per turn, at the first stop after a code edit. The three checks are
 # the ones a model skips when it stops as soon as the target test passes: a
 # second copy of the fixed logic left behind, a drive-by edit nobody asked for,
 # and "should work" in place of a command that was run. The verification line
-# asks for the command already run, not a new one: told to "run a check", 62 of
-# 72 measured sessions re-ran a test suite that had just passed (bench README,
-# 2026-10-30), and that re-run cost more tokens than the gate allows.
+# asks for the command already run rather than a new run, which kept the
+# measured token cost inside its gate (bench README, 2026-10-30).
+#
+# The host keeps the answer the model stopped with only as an interim message:
+# whatever the model says after this note becomes the turn's final response,
+# the one `--oneshot`, API and delegating callers receive. So the note ends by
+# asking for that answer again in full, never for a report on the check.
 ROUND_END_CHECKLIST: Final = (
     "OMH round-end check, once per turn. Before you finish, review this turn's code edits:\n"
     "- Consistency: the change follows the code around it, and every other place that has to change "
@@ -50,8 +56,13 @@ ROUND_END_CHECKLIST: Final = (
     "- Scope: the diff holds only what was asked for. Undo any edit nobody requested.\n"
     "- Verification: name the command, run after your last edit, that shows the change works, and its "
     "result. Run one only if you have not.\n"
-    "If all three already hold, say so in one line and finish. This note is guidance, not verification evidence."
+    "Fix anything that fails a check. Then give your final answer to the task again, in full and in the "
+    "form the task asked for: it replaces the answer you just gave. Do not answer with a report on this "
+    "check. This note is guidance, not verification evidence."
 )
+# Delegated children answer a parent, often against an output schema; their
+# final response is the parent's tool result and must stay the task's answer.
+_NO_CHECKLIST_PLATFORMS: Final = frozenset({"subagent"})
 
 
 def pre_verify(
@@ -100,7 +111,11 @@ def pre_verify(
     # The round-end checklist is one-shot for the same reason, and it is the
     # turn's only one: attempt 0 is the first stop after the edits, and the
     # host moves `attempt` past 0 once any nudge here continues the turn.
-    checklist_message = ROUND_END_CHECKLIST if attempt_value == 0 and any(map(_is_code_path, paths)) else ""
+    checklist_message = (
+        ROUND_END_CHECKLIST
+        if attempt_value == 0 and str(platform) not in _NO_CHECKLIST_PLATFORMS and any(map(_is_code_path, paths))
+        else ""
+    )
     # Three obligations, one directive. The served-surface gate asks for the
     # check the edit just earned; the checklist asks the model to review its
     # own diff; the plan directive says the run is not finished. All can be

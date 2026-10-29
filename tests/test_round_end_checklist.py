@@ -3,9 +3,11 @@
 When a turn's edits include a source file, the first stop of that turn
 (`attempt == 0`) continues once with a short checklist: consistency (every
 place that must change together did), scope (no edit nobody asked for) and
-verification (a check that fails without the change, with its command). It is
+verification (the command run after the last edit, and its result). It is
 one-shot: the host moves `attempt` past 0 as soon as any `pre_verify` message
-continues the turn, so a later stop in the same turn never repeats it.
+continues the turn, so a later stop in the same turn never repeats it. It ends
+by asking for the final answer again, because whatever the model says after
+it becomes the turn's final response. Delegated children never get it.
 """
 
 from __future__ import annotations
@@ -59,8 +61,20 @@ class ChecklistFiresOnCodeEditsTest(_Homes):
             self.assertIn(item, text)
         self.assertIn("not verification evidence", text)
 
+    def test_it_asks_for_the_final_answer_again_not_a_report(self):
+        text = verify_hooks.ROUND_END_CHECKLIST
+        self.assertIn("give your final answer to the task again, in full", text)
+        self.assertIn("Do not answer with a report on this check.", text)
+        self.assertNotIn("say so in one line", text)
+
+    def test_a_delegated_child_gets_no_checklist(self):
+        self.assertIsNone(self._fire(platform="subagent"))
+        for platform in ("cli", "tui", "", None, ["cli"]):
+            with self.subTest(platform=platform):
+                self.assertIsNotNone(self._fire(platform=platform))
+
     def test_any_code_file_among_the_edits_is_enough(self):
-        for paths in (["README.md", "src/app.py"], ["web/main.TS"], ["cmd/server.go"], ["scripts/run.sh"]):
+        for paths in (["README.md", "src/app.py"], ["web/main.TS"], ["cmd/server.go"], ["scripts/run.sh"], ["infra/main.tf"], ["lib/app.ex"]):
             with self.subTest(paths=paths):
                 result = self._fire(changed_paths=paths)
                 self.assertIsNotNone(result)
