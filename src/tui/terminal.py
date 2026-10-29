@@ -132,6 +132,22 @@ FALLBACK_SIZE = (80, 24)
 # cursor's row, and the device-attributes request (DA1) behind them is answered by every terminal, after the other
 # answers if there are any, so its answer ends the wait.
 BACKGROUND_QUERY = "\x1b]11;?\x07"
+# The living wallpaper's background (`App._sync_ground`): OSC 11 sets the terminal's default background, and on the
+# way out the colour the startup query read is set back, then OSC 111 resets it to the terminal's own default where
+# the terminal knows that command (one that does not ignores it, and keeps the colour set just before).
+OSC_TERMINATOR = "\x1b\\"
+
+
+def background_set(colour: str) -> str:
+    """OSC 11: the terminal's default background becomes `colour` (`#rrggbb`)."""
+    return f"\x1b]11;{colour}{OSC_TERMINATOR}"
+
+
+def background_restore(original: str) -> str:
+    """The terminal's background put back: `original`, the colour it reported at start, then OSC 111 (reset)."""
+    return f"{background_set(original)}\x1b]111{OSC_TERMINATOR}"
+
+
 CURSOR_POSITION_QUERY = f"{CSI}6n"
 DEVICE_ATTRIBUTES_QUERY = f"{CSI}c"
 BACKGROUND_QUERY_SECONDS = 0.1

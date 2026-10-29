@@ -6,6 +6,26 @@ All notable changes will be documented here.
 
 ![Sprite Forge patch notes](https://raw.githubusercontent.com/rlaope/oh-my-hermes/main/assets/omh-sprite-forge-patch-notes.png)
 
+- **Each OMH TUI launch look now has a living wallpaper: its own background
+  colour and a small scene that keeps moving.** While the TUI runs it sets
+  the terminal's background to the look's colour with OSC 11 and puts the
+  terminal's own back on every way out: on exit, after a crash or a signal,
+  while the job is stopped with Ctrl+Z, and as soon as the wallpaper is
+  turned off. moonlit is deep navy with a crescent moon, twinkling stars and
+  slow clouds; sakura dusky plum with falling petals; aurora deep teal with
+  wavy ribbons of light; ember dark brown-red with rising sparks; gold
+  floating motes; violet drifting bokeh; graphite soft rain; spectrum a slow
+  prism shimmer. A light terminal gets each look's pale ground. The theme is
+  measured against the ground, so every colour keeps its contrast floor. The
+  scene is sparse and dim, is drawn only on blank cells, never over text or
+  into the scrollback, repaints only the cells that changed every 0.1 s, and
+  stands still with reduced motion. It shows at truecolor on a terminal that
+  answered the background query, and not under `NO_COLOR`. It is on by
+  default; `/wallpaper on|off` (alone, it switches) and
+  `omh theme wallpaper on|off` save the choice as `wallpaper` in the theme
+  record, and `OMH_TUI_WALLPAPER=0` holds it off in one terminal. The
+  `/theme` picker shows each look's colours on its ground.
+
 - **The OMH TUI has eight launch looks, and a look now tints the chrome.**
   `/theme` adds `sakura` (pastel pink, sky blue and cream), `moonlit`
   (moonlight yellow and silver over navy), `aurora` (emerald and teal into

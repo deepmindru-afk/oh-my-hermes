@@ -871,6 +871,31 @@ run and approval decision stays Hermes'; the screen is OMH's.
   `<omh_home>/tui/theme.json`; `omh theme glow on|off` saves the same choice
   from the shell. `OMH_TUI_GLOW=0` holds it off in one terminal whatever is
   saved.
+- Each launch look has a living wallpaper: the TUI sets the terminal's
+  background to the look's own colour (OSC 11) while it runs and keeps a
+  small, sparse scene moving in the screen's blank cells. moonlit is deep
+  navy with a crescent moon, twinkling stars and slow clouds; sakura a dusky
+  plum with falling petals; aurora deep teal with wavy ribbons of light;
+  ember a dark warm brown with rising sparks; gold floating motes; violet
+  drifting bokeh; graphite soft rain; spectrum a slow prism shimmer. A
+  terminal with a light background gets each look's pale ground instead.
+  The theme is measured against that ground, so every colour keeps its
+  contrast floor. The scene is drawn only on blank cells: the tail of each
+  row to the right of its text, the rows under a short session and the
+  launch screen's empty area, never over text, never on the rows already
+  printed above, and never into the scrollback (it is taken off before
+  anything scrolls). It repaints only the cells that changed, every 0.1 s,
+  and stands still with reduced motion. It shows at truecolor, on a terminal
+  that answered the background query at start, and not under `NO_COLOR`.
+  The terminal's own background comes back on every way out: on exit
+  (normal, a crash, or a signal), while the job is stopped with Ctrl+Z (set
+  again when it continues), and as soon as the wallpaper is turned off.
+  `/wallpaper off` turns it off and `/wallpaper on` back on (`/wallpaper`
+  alone switches it); the choice is saved as `wallpaper` in
+  `<omh_home>/tui/theme.json`, and `omh theme wallpaper on|off` saves the
+  same choice from the shell. `OMH_TUI_WALLPAPER=0` holds it off in one
+  terminal whatever is saved. Each row of the `/theme` picker shows the
+  look's colours on its ground.
 - Each tool call is a block of its own on a rail in its state's
   colour, with a blank row between two calls and no header over a turn's
   calls: its state's mark (below), its name, and what it ran on (a path, a
@@ -1290,7 +1315,7 @@ and Shift+Tab move the highlight, Space folds a box, d shows or hides Node
 details; it sends nothing anywhere; q or Esc closes it), `/bots` (the bot
 board, also Ctrl+S, described below), `/copy`, `/image`,
 `/paste` (the clipboard
-image), `/theme`, `/glow`, `/omh-model`, `/rewind`, `/todos` (the session's whole
+image), `/theme`, `/glow`, `/wallpaper`, `/omh-model`, `/rewind`, `/todos` (the session's whole
 plan), `/model` (alone, a picker of the models Hermes offers this session,
 from Hermes' `model.options`, opened on the session's model, marked `●`, which
 comes first when no provider lists it, and with the highlight's place in the
@@ -2911,6 +2936,7 @@ omh theme use crimson        # select one directly (also accepts omh-crimson)
 omh theme use crimson --dry-run
 omh theme status             # the active theme, which source decided it, and where it is saved
 omh theme glow off           # the working glow off in every later OMH TUI session (on, or alone to show it)
+omh theme wallpaper off      # the living wallpaper off in every later OMH TUI session (on, or alone to show it)
 ```
 
 Bare `omh theme` opens a picker: up/down arrows (or `j`/`k`) move the cursor,
@@ -2939,8 +2965,8 @@ Rules worth knowing:
   the open session (see [The OMH TUI](#the-omh-tui)).
 - **The launch look is saved in the same record.** `/theme` in the OMH TUI
   writes `launch` beside `theme` in `<omh_home>/tui/theme.json`, and
-  `/glow` or `omh theme glow` writes `glow` there; each write keeps the
-  others.
+  `/glow` or `omh theme glow` writes `glow` there, and `/wallpaper` or
+  `omh theme wallpaper` writes `wallpaper`; each write keeps the others.
 - **Bare `hermes` keeps its own skin.** `display.skin` is yours; OMH reads it
   only for the fallback above and never writes it.
 
