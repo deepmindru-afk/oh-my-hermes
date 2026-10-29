@@ -51,7 +51,9 @@ from omh.tui.theme import (
     with_prompt_band,
 )
 from omh.tui.theme import MARK_STEPS, WORD_ROLES, WORD_STEPS
-from omh.tui.wallpaper import AMBIENT_CONTRAST, LIT_CEILING, SCENES, Cell, scene
+from omh.tui.wallpaper import (
+    AMBIENT_CONTRAST, CLEAR, FULL, LIT_CEILING, LOWER, SCENES, SPRITES, UPPER, Cell, scene,
+)
 from omh.tui.width import cell_width
 from test_tui_modes import make_app, notices, type_text
 import test_tui_working_glow as glow_tests
@@ -70,6 +72,12 @@ def ambiguous_wide():
                            lambda cluster: 2 if len(cluster) == 1 and unicodedata.east_asian_width(cluster) == "A"
                            else narrow(cluster)):
         yield
+
+
+ROLES = {  # each bitmap's letters, as its comment in `wallpaper` names them
+    "MOON": "abch", "CLOUD": "abc", "STAR": "sw", "BLOSSOM": "pqc", "PETAL": "pq", "LOGS": "lk", "FLAME": "roy",
+    "SUN": "oyw", "JELLYFISH": "ebwt", "PRISM": "ef",
+}
 
 
 class Clock:
@@ -119,17 +127,44 @@ class SceneTests(unittest.TestCase):
                     lit = len(scene(look, cols, rows, step * 0.73, False))
                     self.assertLessEqual(lit, LIT_CEILING * cols * rows, (look, cols, rows, step))
 
-    def test_a_scene_is_plain_one_cell_characters_dimmer_than_words_on_its_ground(self) -> None:
+    def test_a_scene_is_half_block_pixels_dimmer_than_words_on_its_ground(self) -> None:
+        # Pixel art (owner's choice): `▀` over `▄`, a space on the colour where a cell's two pixels match; no text.
         for look in LAUNCH_PRESETS:
             for light in (False, True):
                 ground = look_ground(look, light)
                 for step in range(40):
                     for cell in scene(look, 150, 42, step * 1.3, light):
+                        self.assertIn(cell.char, (UPPER, LOWER, FULL), (look, cell))
                         self.assertEqual(cell_width(cell.char), 1, (look, cell))
-                        self.assertTrue(cell.char.isascii(), (look, cell))
-                        self.assertGreater(contrast_ratio(cell.fg, ground), 1.0, (look, cell))
-                        self.assertLessEqual(contrast_ratio(cell.fg, ground), AMBIENT_CONTRAST, (look, cell))
+                        if cell.char == LOWER:
+                            self.assertIsNone(cell.bg, "a bottom pixel alone has the ground above it")
+                        if cell.char == FULL:
+                            self.assertEqual(cell.bg, cell.fg, "two pixels of one colour: a space on it")
+                        for colour in (cell.fg, cell.bg):
+                            if colour is not None:
+                                self.assertGreater(contrast_ratio(colour, ground), 1.0, (look, cell))
+                                self.assertLessEqual(contrast_ratio(colour, ground), AMBIENT_CONTRAST, (look, cell))
                         self.assertLess(AMBIENT_CONTRAST, TEXT_CONTRAST)
+
+    def test_the_bitmaps_are_well_formed(self) -> None:
+        # Every frame's rows are one length, frames of one motif are one size, and each letter is a role its scene
+        # colours (`ROLES`) or CLEAR.
+        for name, art in SPRITES.items():
+            frames = art if isinstance(art[0], tuple) else (art,)
+            with self.subTest(sprite=name):
+                sizes = {(len(frame), len(frame[0])) for frame in frames}
+                self.assertEqual(len(sizes), 1 if name not in ("STAR", "PETAL", "FLAME") else len(sizes), sizes)
+                for frame in frames:
+                    self.assertEqual(len({len(line) for line in frame}), 1, frame)
+                    letters = {letter for line in frame for letter in line} - {CLEAR}
+                    self.assertLessEqual(letters, set(ROLES[name]), (name, letters))
+                    self.assertLessEqual(len(letters), 5, "three to five colours a motif")
+
+    def test_the_motifs_move(self) -> None:
+        # Each frame-animated motif shows another frame within a second, and every scene changes within a second.
+        for look in LAUNCH_PRESETS:
+            with self.subTest(look=look):
+                self.assertNotEqual(scene(look, 150, 42, 10.0, False), scene(look, 150, 42, 10.9, False))
 
     def test_a_small_screen_has_no_scene(self) -> None:
         self.assertEqual(scene("moonlit", 79, 30, 1.0, False), ())
@@ -279,6 +314,8 @@ class RegionTests(unittest.TestCase):
 
     def random_frames(self, seed: int, wide: bool) -> None:
         rnd = random.Random(seed)
+        # Half-block pixels with a background on every other seed: blanked, a cell must lose the background too.
+        glyph = UPPER if not wide and seed % 2 else MARK
         rows, cols = rnd.choice([(8, 30), (12, 40), (20, 60)])
         footer = rnd.random() < 0.5
         margin = int(footer)
@@ -293,8 +330,8 @@ class RegionTests(unittest.TestCase):
         width, screen_rows = cols - 2 * margin, rows - footer
         lines: list = []
         for step in range(50):
-            ambient = tuple(Cell(r, c, MARK, "#445566") for r in range(rows) for c in range(cols)
-                            if rnd.random() < 0.7)
+            ambient = tuple(Cell(r, c, glyph, "#445566", "#223344" if glyph == UPPER else None)
+                            for r in range(rows) for c in range(cols) if rnd.random() < 0.7)
             if rnd.random() < 0.15:
                 regions[0].paint_ambient(ambient, screen_rows)
             else:
@@ -315,12 +352,17 @@ class RegionTests(unittest.TestCase):
                                   ambient_above=rnd.random() < 0.7)
                 regions[1].render(lines, cursor, width, flush=flush, screen_rows=screen_rows)
             where = f"seed {seed} step {step}"
-            self.assertEqual([line.replace(MARK, " ").rstrip() for line in painted.lines()],
+            self.assertEqual([line.replace(glyph, " ").rstrip() for line in painted.lines()],
                              [line.rstrip() for line in plain.lines()], where)
-            self.assertFalse(any(MARK in line for line in painted.scrollback), where)
+            self.assertFalse(any(glyph in line for line in painted.scrollback), where)
             marks = {(row, col) for row in range(rows) for col, cell in enumerate(painted._text[row])
-                     if cell == MARK}  # by cell, where a wide glyph takes two
+                     if cell == glyph}  # by cell, where a wide glyph takes two
             self.assertEqual(marks, set(regions[0]._paper), where)
+            if not wide:  # every cell the wallpaper does not hold looks as it would without it, background and all
+                for row in range(rows):
+                    for col in range(cols):
+                        if (row, col) not in marks:
+                            self.assertEqual(painted.attrs_at(row, col), plain.attrs_at(row, col), (where, row, col))
 
     def test_clearing_the_region_takes_the_cells_above_it_off_too(self) -> None:
         # Exit from the launch screen (nothing to flush) and Ctrl+Z only clear the region: the cells beside the logo

@@ -6,6 +6,24 @@ All notable changes will be documented here.
 
 ![Sprite Forge patch notes](https://raw.githubusercontent.com/rlaope/oh-my-hermes/main/assets/omh-sprite-forge-patch-notes.png)
 
+- **The living wallpaper is pixel art.** The scenes drew their motifs in
+  characters (`%t;:`, rings of `O`), which read as broken text; every scene
+  is now drawn in half blocks, two pixels to a cell (`▀` in the top
+  pixel's colour over the bottom one's, `▄`, and a space on the colour where
+  both match, since a block glyph leaves the terminal's line spacing as a
+  stripe), from small bitmaps kept as data: a crescent moon with a pulsing halo and pixel clouds, a cherry
+  branch with five-petal blossoms and falling petals, curtains of light as
+  gradient columns, a campfire with a three-frame flame, a sun whose rays
+  turn, jellyfish with pulsing bells and trailing tentacles (they replace
+  violet's rings), rain with spreading ripples, and a prism splitting a beam
+  into five hues. A big screen (140×40 or more) draws the motifs' art
+  pixels two pixels square, and the motifs sit in the lower half on the
+  right, where the launch card and a working session's rows leave the
+  screen blank. The rules are unchanged: blank cells only,
+  never in the scrollback, at most a sixth of the screen lit, no pixel past
+  3:1 against the ground; a motif's shades are now spread within that cap
+  instead of collapsing onto it.
+
 - **Each OMH TUI launch look now has a living wallpaper: its own background
   colour and a scene that keeps moving.** While the TUI runs it sets the
   terminal's background to the look's colour with OSC 11 and puts the

@@ -873,15 +873,17 @@ run and approval decision stays Hermes'; the screen is OMH's.
   saved.
 - Each launch look has a living wallpaper: the TUI sets the terminal's
   background to the look's own colour (OSC 11) while it runs and keeps a
-  scene moving in the screen's blank cells, one or two motifs drawn big in
-  dense characters with light particles round them. moonlit is deep navy
-  with a large crescent moon whose glow pulses, clouds drifting and stars
-  twinkling; sakura a dusky plum with a blossoming branch from the top-right
-  corner and petals falling; aurora deep teal with tall curtains of light
-  waving; ember a dark warm brown with a campfire, its flames flickering and
-  sparks rising; gold a large sun whose rays turn, and motes; violet large
-  soft bokeh drifting; graphite rain over a puddle that ripples; spectrum a
-  prism with a beam of light fanning out into five hues. A terminal with a
+  scene moving in the screen's blank cells, drawn as pixel art with half
+  blocks, two pixels to a cell (`▀` over a background, `▄`, and a space on
+  a background where both pixels match; nothing else is drawn). moonlit
+  is deep navy with a crescent moon whose halo pulses, drifting clouds and
+  twinkling stars; sakura a dusky plum with a cherry branch of five-petal
+  blossoms from the top-right corner and petals falling; aurora deep teal
+  with curtains of light that wave; ember a dark warm brown with a campfire
+  whose flame flickers and sparks rising; gold a sun whose rays turn, and
+  motes; violet jellyfish drifting with pulsing bells and trailing
+  tentacles; graphite rain over a puddle whose ripples spread; spectrum a
+  prism splitting a beam into five hues. A terminal with a
   light background gets each look's pale ground instead.
   The theme is measured against that ground, and every word and mark also
   keeps its floor against the terminal's own background, which the rows
