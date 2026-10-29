@@ -40,8 +40,9 @@ a genre qualifier, an explainer of one topic word, or a promo of one product
 word. Any loop phrasing anywhere in the message admits nothing (`_LOOP_STEMS`).
 "make me" / "make us" / "create for me" may lead a video or genre request; an
 intro genre (title, channel, podcast or YouTube intro, an intro animation) needs
-a closed adjunct; and a logo genre may name a coined three-part brand after
-"for" ("for oh-my-hermes", `_name_adjunct`), never a bare word.
+a closed adjunct; an intro or logo genre may name only this product after
+"for" ("for oh-my-hermes", `_OWN_PRODUCT_NAMES`); and a bare "3d scene" takes
+exactly one "of <subject>" topic.
 
 Stdlib only; this leaf imports no catalog or router.
 """
@@ -100,11 +101,12 @@ _AUTHORED_PHRASES = (
 # on loom" is a recording or a fault report as often as a film.
 _VIDEO_PHRASES = ("video", "intro video", "shorts video", "vertical video")
 # The intro genres, which open a channel, a show or a brand: each needs an
-# adjunct, and only these and the logo intro family take a name after "for"
-# ("a logo intro animation for oh-my-hermes", "a channel intro for TechTalks").
+# adjunct, and only these and the logo intro family take this product's own name
+# after "for" ("a logo intro animation for oh-my-hermes"). A YouTube intro stays
+# main's reading: the modifier "youtube" before the video noun "intro video".
 _INTRO_PHRASES = (
     "title intro", "intro animation", "channel intro", "channel intro video", "podcast intro",
-    "podcast intro animation", "youtube intro", "youtube intro video",
+    "podcast intro animation",
 )
 _INTRO_NOUNS = frozenset(tuple(phrase.split()) for phrase in _INTRO_PHRASES)
 _LOGO_GENRE_NOUNS = frozenset(
@@ -112,15 +114,21 @@ _LOGO_GENRE_NOUNS = frozenset(
     for phrase in ("logo intro animation", "logo intro video", "logo intro", "logo animation", "logo reveal", "logo reveal animation")
 )
 
+_AUTHORED_NOUNS = frozenset(tuple(phrase.split()) for phrase in _AUTHORED_PHRASES)
+_VIDEO_NOUNS = frozenset(tuple(phrase.split()) for phrase in _VIDEO_PHRASES)
+_LEAD_VERBS = frozenset({"animate", "build", "create", "design", "make", "produce", "write"})
+# A bare "3d scene" is as often a game level or a WebGL view as a film: it is
+# admitted only with exactly one "of <subject>" topic and nothing else.
+_SCENE_NOUN = ("3d", "scene")
+
 
 def _named_kind(phrase: tuple[str, ...]) -> str:
     """Which name a genre may take after "for" (`_name_adjunct`): "logo", "intro" or none."""
     if phrase in _LOGO_GENRE_NOUNS:
         return "logo"
     return "intro" if phrase in _INTRO_NOUNS else ""
-_AUTHORED_NOUNS = frozenset(tuple(phrase.split()) for phrase in _AUTHORED_PHRASES)
-_VIDEO_NOUNS = frozenset(tuple(phrase.split()) for phrase in _VIDEO_PHRASES)
-_LEAD_VERBS = frozenset({"animate", "build", "create", "design", "make", "produce", "write"})
+
+
 _REEL_LEAD_VERBS = _LEAD_VERBS | {"cut", "edit"}
 # Leads only an authored or generic video noun: "render a motion graphic of
 # the water cycle", "generate a video explaining recursion".
@@ -371,12 +379,13 @@ _GENRE_AUDIENCE_NOUNS = frozenset({
 _GENRE_ADJUNCT_DETERMINERS = frozenset({"this"})
 _OWN_DETERMINERS = frozenset({"my", "our"})
 # Hyphenated phrasal words are not coined names: "sign-in", "pop-up", "front-end".
-_PHRASAL_PARTICLES = frozenset({"in", "up", "out", "down", "on", "off", "end", "over", "back"})
+# This product's own names, the only names an intro or logo genre takes after "for".
+_OWN_PRODUCT_NAMES = frozenset({"oh-my-hermes", "omh"})
 # An intro genre opens a show, a channel or an occasion: its closed adjuncts are
 # only these, never a software artifact ("a title intro for the README").
 _INTRO_ADJUNCT_NOUNS = frozenset({
-    "audience", "booth", "conference", "customers", "event", "hackathon", "instagram", "investors", "launch",
-    "linkedin", "marketing", "meetup", "newsletter", "social", "team", "tiktok", "twitter", "users", "youtube",
+    "audience", "booth", "conference", "event", "hackathon", "instagram", "investors", "launch",
+    "linkedin", "marketing", "meetup", "newsletter", "social", "team", "tiktok", "twitter", "youtube",
 }) | _GENRE_AUDIENCE_NOUNS
 _OWN_AUDIENCES = frozenset({"channel", "podcast", "show", "stream"})
 # The frames "the" may open an open topic with: "the history of jazz", "the
@@ -490,23 +499,25 @@ def _closed_adjunct(rest: list[str], index: int, *, genre: bool = False, intro: 
         index += 1
     if not 0 < index - start <= 3 or rest[index - 1] not in nouns:
         return 0
+    # After an intro genre one noun names the occasion; a chain ("for our team
+    # stream") names something else.
+    if intro and index - start != 1:
+        return 0
     return index
 
 
 def _name_adjunct(rest: list[str], index: int, named: str) -> int:
     """Where a name after "for" ends, or 0.
 
-    - After a logo genre (`named` "logo"): one hyphenated coined name of three or
-      more parts of letters and digits ("for oh-my-hermes"). A bare word is not
-      one: "for staging", "for login" or "for ios" read as a name as easily as a
-      brand, and a two-part word is as often an ordinary one ("real-time",
-      "front-end"). A part that is a phrasal particle ("up-to-date",
-      "end-to-end") makes it an ordinary word too.
+    - After an intro or logo genre: this product's own name from the closed
+      `_OWN_PRODUCT_NAMES` ("for oh-my-hermes"). No shape of an id is a name:
+      a kebab id names a component, a job or a branch as often as a brand
+      ("site-header-logo", "fix-login-crash").
     - After any intro or logo genre: my/our and a podcast, show or stream
       directly ("for our podcast"), or my/our youtube channel. A word between
       them is an open topic ("our support podcast", "our team channel").
     """
-    if rest[index] != "for" or index + 1 >= len(rest):
+    if not named or rest[index] != "for" or index + 1 >= len(rest):
         return 0
     stops = _TOPIC_PREPOSITIONS | _ADJUNCT_PREPOSITIONS | {","}
     if rest[index + 1] in _OWN_DETERMINERS:
@@ -517,12 +528,9 @@ def _name_adjunct(rest: list[str], index: int, named: str) -> int:
         own = (len(words) == 1 and words[0] in _OWN_AUDIENCES - {"channel"}) or words == ["youtube", "channel"]
         return end if own else 0
     end = index + 2
-    if named != "logo" or (end < len(rest) and rest[end] not in stops):
+    if end < len(rest) and rest[end] not in stops:
         return 0
-    parts = rest[index + 1].split("-")
-    if len(parts) < 3 or any(len(part) < 2 or part in _PHRASAL_PARTICLES for part in parts):
-        return 0
-    return end
+    return end if rest[index + 1] in _OWN_PRODUCT_NAMES else 0
 
 
 def _closed_adjuncts(
@@ -593,6 +601,16 @@ def _english_production_lead(sentence: str, *, whole_message: bool) -> str:
         for phrase in _NOUN_PHRASES:
             if tuple(words[index:index + len(phrase)]) == phrase:
                 rest = words[index + len(phrase):]
+                if phrase == _SCENE_NOUN:
+                    closed = (
+                        whole_message
+                        and words[0] in _LEAD_VERBS | _AUTHORED_LEAD_VERBS
+                        and bool(rest)
+                        and rest[0] == "of"
+                        and _topic_adjunct(rest, 0, "genre") == len(rest)
+                        and _CLOSED_SENTENCE.fullmatch(sentence) is not None
+                    )
+                    return "closed" if closed else ""
                 if phrase in _AUTHORED_NOUNS or phrase in _VIDEO_NOUNS or phrase in _INTRO_NOUNS:
                     genre = phrase not in _VIDEO_NOUNS
                     adjuncts = _closed_adjuncts(
@@ -660,7 +678,8 @@ def _folded(*words: str) -> frozenset[str]:
 
 
 _NATIVE_REFUSED = tuple(_fold(stem) for stem in (
-    "다운", "롤백", "터진", "ダウン", "事故",
+    "서버다운", "서버 다운", "다운됐", "다운되", "다운타임", "サーバーダウン", "システムダウン", "ダウンした", "ダウンして",
+    "롤백", "터진", "事故",
     "오류", "에러", "버그", "장애", "재현", "깨지", "깨진", "깨짐", "먹통", "멈추", "멈춘", "멈춤", "크래시", "충돌",
     "실패", "문제", "이슈", "안 되", "안되", "안 나", "느린", "느려", "끊기", "끊김", "끊긴", "튕기", "튕김", "사고",
     "고장", "결함", "요약", "편집", "자막", "번역", "자르", "잘라", "줄여", "올려", "업로드", "재생", "통화",
@@ -690,8 +709,8 @@ _KO_MECHANISM_WORDS = _folded("동작", "작동")
 _KO_PROMO_WORDS = _folded("홍보", "광고", "런칭", "론칭", "출시")
 _KO_INTRO_OWNERS = _folded("로고", "유튜브", "채널", "팟캐스트", "오프닝")
 _KO_OURS = _folded("우리")
-# The frames that make a topic a subject to explain: its principle, concept,
-# history or structure. Only before one of these may the topic run to two words.
+# The frames that make one topic word a subject to explain: its principle,
+# concept, history or structure.
 _KO_FRAMES = _folded("원리", "개념", "역사", "구조")
 
 
@@ -728,11 +747,9 @@ def _korean_span_admitted(span: str, noun: str) -> bool:
         middle = tokens[1:-1]
         if middle in ([], [_fold("원리")]) or (len(middle) == 2 and middle[0] in _KO_MECHANISM_WORDS and middle[1] == _fold("원리")):
             return True
-        # One topic word and a frame, or two topic words before a frame:
-        # "복리 개념 설명하는", "우주 탐사 역사 설명하는".
-        framed = (len(middle) == 1 and middle[0] in _KO_FRAMES) or (
-            len(middle) == 2 and middle[1] in _KO_FRAMES and middle[0] not in _KO_FRAMES
-        )
+        # One topic word and a frame: "복리 개념 설명하는". Two topic words before
+        # a frame ("어제 배포 원리") read a fault or a UI as easily as a subject.
+        framed = len(middle) == 1 and middle[0] in _KO_FRAMES
         return framed and not any(surface in token for token in tokens for surface in _NATIVE_APP_SURFACES)
     if noun != _fold("애니메이션") and len(tokens) == 2 and tokens[-1] in _KO_PROMO_WORDS:
         return True
@@ -757,12 +774,17 @@ _JA_EXPLAINER = re.compile(_fold_pattern(
 
 def _japanese_span_admitted(span: str, noun: str) -> bool:
     """A Japanese span in one closed shape: a genre noun, a genre qualifier, or an explainer (`_JA_EXPLAINER`)."""
-    formatted = False
-    while _JA_FORMAT_TAIL.search(span) or _JA_FORMAT_HEAD.search(span):
-        span = _JA_FORMAT_HEAD.sub("", _JA_FORMAT_TAIL.sub("", span))
+    # A format at either end beside an explainer word alone is a genre
+    # ("30秒の縦型解説動画"); every other shape reads the span with only its
+    # trailing format removed, so a leading format never opens a topic.
+    bare, formatted = span, False
+    while _JA_FORMAT_TAIL.search(bare) or _JA_FORMAT_HEAD.search(bare):
+        bare = _JA_FORMAT_HEAD.sub("", _JA_FORMAT_TAIL.sub("", bare))
         formatted = True
-    if formatted and span in _JA_EXPLAIN_WORDS and noun != _fold("アニメーション"):
+    if formatted and bare in _JA_EXPLAIN_WORDS and noun != _fold("アニメーション"):
         return True
+    while _JA_FORMAT_TAIL.search(span):
+        span = _JA_FORMAT_TAIL.sub("", span)
     if noun in _JA_GENRE_NOUNS:
         return len(span) <= 20
     genre = _JA_GENRE_QUALIFIER.fullmatch(span)

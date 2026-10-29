@@ -355,7 +355,9 @@ class ShowReelAdmissionTests(unittest.TestCase):
             "create a kinetic typography piece about focus",
             "make a 3D scene of a mountain lake at sunrise",
             "복리 개념 설명하는 영상 만들어줘",
-            "우주 탐사 역사 설명하는 영상 만들어줘",
+            "make a logo intro for omh",
+            "새해 카운트다운 모션그래픽 만들어줘",
+            "make a youtube intro video for the product launch",
             "30초짜리 세로형 설명 영상 만들어줘",
             "30秒の縦型解説動画を作って",
             "DNSの仕組みを説明する20秒の動画を作って",
@@ -460,7 +462,6 @@ class ShowReelAdmissionTests(unittest.TestCase):
             "make a podcast intro for our team channel",
             "make a title intro for our support podcast",
             "make a title intro for the README",
-            "make a youtube intro video for my app",
             # A beneficiary leaves every other refusal in place.
             "make me a video on loom",
             "make me a confetti animation for the checkout page",
@@ -473,7 +474,24 @@ class ShowReelAdmissionTests(unittest.TestCase):
             "サーバーダウンを説明する動画を作って",
             "30秒の縦型の不具合解説動画を作って",
             "앱 화면 구조 설명하는 영상 만들어줘",
-            "30秒の解説アニメーションを作って",
+            # Review round of the recall follow-up: a kebab id is no name, a bare
+            # 3D scene takes one "of" subject only, two topic words before a KO
+            # frame, a leading JA format before a topic, and intro audiences.
+            "make a logo intro for nav-bar-item",
+            "make a logo animation for site-header-logo",
+            "make a logo intro for hello-world",
+            "make a 3d scene",
+            "make a 3d scene for my game",
+            "make a 3d scene with three.js",
+            "make a 3d scene of a dungeon for the game",
+            "어제 배포 원리 설명하는 영상 만들어줘",
+            "우주 탐사 역사 설명하는 영상 만들어줘",
+            "30秒のインシデントの説明動画を作って",
+            "縦型の設定画面の紹介動画を作って",
+            "make a podcast intro for our users",
+            "make a podcast intro for our team stream",
+            "시스템 다운됐던 원리 설명하는 영상 만들어줘",
+            "システムダウンを解説する動画を作って",
         ):
             with self.subTest(message=message):
                 self.assertFalse(show_reel_request_admitted(message))
@@ -500,6 +518,33 @@ class ShowReelAdmissionTests(unittest.TestCase):
             with self.subTest(message=message):
                 route = route_chat_message(message, source="discord")
                 self.assertEqual((route["action"], route.get("selected_skill")), ("dispatch", owner))
+
+    def test_the_hint_fires_exactly_where_the_router_dispatches_show_reel(self):
+        # Each recall shape, and each refusal the review found: the awareness
+        # hint and the router read one admission, so neither offers show-reel
+        # alone.
+        for message in (
+            "make me an explainer video on how TLS handshakes work",
+            "make a 10 second logo intro animation for oh-my-hermes",
+            "make a motion graphics piece about ocean currents",
+            "make a 3D scene of a mountain lake at sunrise",
+            "복리 개념 설명하는 영상 만들어줘",
+            "30秒の縦型解説動画を作って",
+            "make a logo intro for nav-bar-item",
+            "make a logo animation for dark-mode-toggle",
+            "make a 3d scene for the game",
+            "make a 3d scene with webgl",
+            "어제 배포 원리 설명하는 영상 만들어줘",
+            "로그인 폼 구조 설명하는 영상 만들어줘",
+            "30秒のインシデントの説明動画を作って",
+            "make a podcast intro for our team stream",
+        ):
+            with self.subTest(message=message):
+                route = route_chat_message(message, source="discord")
+                dispatched = route["action"] == "dispatch" and route.get("selected_skill") == "show-reel"
+                hint = awareness_route_hint(message)
+                hinted = "show_reel_production" in [row.get("id") for row in hint.get("hints", [])]
+                self.assertEqual(hinted, dispatched)
 
     def test_the_hint_follows_the_router_on_loop_and_ui_rows(self):
         # Another skill dispatches each of these; the show-reel hint must not fire beside it.

@@ -945,7 +945,10 @@ def count_metrics() -> tuple[CountMetric, ...]:
             # The recall follow-up: a bare word after a logo intro, an intro for
             # a login flow, two chat channels after an intro, a recording made
             # "for me", and a one-word Japanese fault before 説明 (+6).
-            expected=1302,
+            # Its review round: a kebab id after a logo intro, a bare 3D scene
+            # with shaders, a two-noun chain after an intro, and a leading
+            # Japanese format before an open topic (+4).
+            expected=1306,
             # The one reviewed test pin. Every other test compares its payload
             # against build_routing_precision_demo() rather than a literal.
             sites=("tests/test_routing_precision.py",),
@@ -1496,7 +1499,7 @@ def count_metrics() -> tuple[CountMetric, ...]:
             # as a source or target keeps its owner: four image cards, three
             # connector actions and one pitch-deck material (+8).
             # The recall follow-up: "make me" before an explainer video, a logo
-            # intro for a coined three-part name, a motion graphics piece, a 3D
+            # intro for this product's own name, a motion graphics piece, a 3D
             # scene, a Korean concept explainer and a Japanese format beside an
             # explainer genre (+6).
             expected=1203,

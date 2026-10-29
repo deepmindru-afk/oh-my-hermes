@@ -84,8 +84,9 @@ class RoutingPrecisionTests(unittest.TestCase):
         # show-reel's idea-video lane adds thirteen video words in other senses,
         # and its second review eighteen more (UI, loop, fault, recording), and
         # its third two Japanese logo animations on an app surface.
-        # The show-reel recall follow-up adds six closed-shape controls.
-        self.assertEqual(payload["summary"]["case_count"], 1302)
+        # The show-reel recall follow-up adds six closed-shape controls, and its
+        # review round four more.
+        self.assertEqual(payload["summary"]["case_count"], 1306)
         self.assertEqual(payload["summary"]["passing_count"], payload["summary"]["case_count"])
         self.assertEqual(payload["summary"]["negative_case_count"], payload["summary"]["case_count"])
         self.assertEqual(payload["summary"]["negative_passing_count"], payload["summary"]["case_count"])
