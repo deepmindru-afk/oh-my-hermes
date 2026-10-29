@@ -34,6 +34,16 @@ All notable changes will be documented here.
   dark shade rather than into the ground) and a motif's shades are spread
   within it instead of collapsing onto it.
 
+- **`omh coding run --owner codex` finishes when an agent shell starts it
+  (#2402, reported by @vince2930).** Every unit inherited the dispatcher's
+  stdin. An agent shell such as Hermes' terminal tool keeps an open pipe on
+  that stdin and never closes it, and `codex exec "<prompt>"` reads a piped
+  stdin to EOF even with the prompt in argv, so the unit waited until its
+  deadline and failed as `timeout` (exit 124) whatever `--timeout` said. A
+  unit, a declared verification command and the dispatcher's git calls now
+  get the null device as stdin; the workspace preflight's git blob, the one
+  call that passes input, still goes through its own pipe.
+
 - **A game now passes visual QA only when it boots, answers input and keeps
   running, and a scene is looked at after every change that affects what
   renders.** While building, `frontend` captures the affected surface (for a
