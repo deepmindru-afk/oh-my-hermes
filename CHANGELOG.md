@@ -19,6 +19,28 @@ All notable changes will be documented here.
   tab as spaces and no longer lets a colour code in stderr shift the columns a
   click or a drag lands on.
 
+- **The OMH TUI has eight launch looks, and a look now tints the chrome.**
+  `/theme` adds `sakura` (pastel pink, sky blue and cream), `moonlit`
+  (moonlight yellow and silver over navy), `aurora` (emerald and teal into
+  violet) and `ember` (amber through orange to crimson) to `spectrum`,
+  `violet`, `gold` and `graphite`, each with a set for dark and one for
+  light backgrounds. Every look, the four earlier ones too, now also paints
+  the composer's rules and the frames drawn like them in its card-edge
+  colour, and a tool call's rail and the working row's spinner in its label
+  colour, each lifted to 3:1 against the background; a failed or denied
+  call's rail stays red. Body text, the grey details, the reply's rail and
+  the state colours keep the theme's, and `spectrum` stays the default with
+  its logo unchanged. The picker, `/theme <look>`, Tab completion and the
+  saved `launch` key take the new names; an unknown saved name still warns
+  and falls back to `spectrum`.
+
+- **The working glow no longer blanks the screen's top row.** While a turn
+  ran, the OMH TUI painted the whole top row as the light's track, so that
+  row's text (the logo's first line on the launch screen, or the oldest
+  row of a short session) was hidden for the whole turn. The row's own text
+  is now painted again under the light, and only the cells the light
+  reaches cover it.
+
 - **`/glow off` turns the OMH TUI's working glow off, and it now shows in a
   short session too.** `/glow on|off` (alone, it switches) is saved beside
   the theme under the OMH home, so it holds in every later session;
