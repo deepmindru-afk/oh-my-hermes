@@ -69,6 +69,20 @@ def main():
             changed.append(relative)
         events.append({"sequence":1,"name":"edit","mutating":True,"arguments_digest":"0"*64,"started_ms":0,"ended_ms":1,"result":"success"})
         answer = {"changed_paths":sorted(changed)}
+    elif name == "DUPLICATE":
+        changed = []
+        for path in sorted((workspace / "src/benchapp").glob("*.py")):
+            text = path.read_text(encoding="utf-8")
+            if "ROUND_HALF_EVEN" in text:
+                path.write_text(text.replace("ROUND_HALF_EVEN", "ROUND_HALF_UP"), encoding="utf-8")
+                changed.append(path.relative_to(workspace).as_posix())
+        events.append({"sequence":1,"name":"edit","mutating":True,"arguments_digest":"0"*64,"started_ms":0,"ended_ms":1,"result":"success"})
+        answer = {"changed_paths":changed}
+    elif name == "SCOPE-TRAP":
+        path = workspace / "src/benchapp/units.py"
+        path.write_text(path.read_text(encoding="utf-8").replace('{"s": 60,', '{"s": 1,'), encoding="utf-8")
+        events.append({"sequence":1,"name":"edit","mutating":True,"arguments_digest":"0"*64,"started_ms":0,"ended_ms":1,"result":"success"})
+        answer = {"changed_paths":["src/benchapp/units.py"]}
     elif name == "BUGFIX":
         path = workspace / "src/benchapp/provider_select.py"
         text = path.read_text(encoding="utf-8")

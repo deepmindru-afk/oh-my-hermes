@@ -554,6 +554,59 @@ Results describe this pinned corpus, OMH version, Hermes version, provider,
 model id and conditions only. They do not establish universal model
 superiority.
 
+### 2026-10-30 round-end checklist in `pre_verify`: off vs on
+
+One question, from oh-my-pi's prewalk checklist and its delivery rules: after a turn
+that edited code, does one short checklist at the first stop (consistency, scope,
+verification) make the model's diff more correct? The checklist is
+`ROUND_END_CHECKLIST` in `src/plugin_bundle/omh/hooks/verify_hooks.py`; `pre_verify`
+returns it at `attempt == 0` when the turn's changed paths include a source file, so a
+turn sees it at most once. No new tool.
+
+The setup, fixed before the first live run:
+
+- The pinned `E-BUGFIX` and `E-RENAME` templates, plus a new split `consistency-ab`
+  (`--split consistency-ab`; the evaluation corpus and its digest are unchanged):
+  - `C-DUPLICATE`: a cent-rounding bug in two copies of a helper. The task names the
+    first copy's symptom; the second module says it is kept in step with the first.
+    Fixing only the first scores `copy_not_updated`.
+  - `C-SCOPE-TRAP`: a one-line duration bug next to an unused import and a size table
+    whose `kib` entry looks wrong. Changing either scores `unrequested_edit`.
+  - Both allow any new or changed file under `tests/`.
+- 3 seeds each, 12 instances per model per arm, effort `medium`, condition `baseline`.
+- Both arms: `--edit-directive`, `--git-init-workspace`, `--test-env`,
+  `--harness hermes_current_session`, toolsets `file,terminal`.
+- Two Hermes profiles that differ only in the OMH plugin bundle and OMH home: `off`
+  links the bundle at origin/main `5cc1ed311` (the branch's base), `on` links this
+  branch. The bundles differ only in `verify_hooks.py`. `agent.max_turns: 120` in both.
+- Hermes runs from its own venv entry point (`~/.hermes/hermes-agent/.venv/bin/hermes
+  -p <profile>`), not the `hermes` launcher, so the bench timeout kills the process that
+  runs the agent turn.
+- Subscription routes only: Claude through the local proxy (`claude-proxy`), GPT through
+  Hermes `openai-codex`.
+
+| Weak | Strong |
+| --- | --- |
+| `claude-haiku-4-5-20251001`, `claude-haiku-5-5`, `gpt-6-luna` | `claude-sonnet-5-5`, `claude-opus-5-5`, `gpt-6.1-sol` |
+
+`gpt-6-luna` is the smallest model the Codex subscription served on 2026-10-30
+(`gpt-6.1-sol`, `gpt-6-astra`, `gpt-6.1-terra`, `gpt-6-sol`, `gpt-6-luna`, `gpt-5.6-*`).
+
+The merge gate, fixed before the first live run. Runs are scored as in the sections
+below: a run with no completed record is a fail.
+
+- Total passes, all six models and both splits: on at least off + 3.
+- Strong models: on at least off - 1.
+- `mutation_outside_scope` count: on at most off.
+- Median tokens per run over all runs: on at most 1.3x off. No on run above 3x the off
+  median of its model and template.
+- The checklist fired in at least 90% of on-arm coding sessions, and at most once per
+  turn. A coding session is a completed on-arm session with a `patch` or `write_file`
+  call on a `.py` path. Firing is read from the session database: an assistant row with
+  `finish_reason = 'verify_hook_continue'`. These tasks touch no served surface and keep
+  no plan, so a second such row in a session (a one-shot run is one turn) would be a
+  repeat. The off arm is checked for zero such rows.
+
 ### 2026-10-29 debugging: builtin `patch` vs a debugpy tool (`omh-dap`), gate failed
 
 One question, from oh-my-pi's `debug` tool: does giving the model a debugger (breakpoints,

@@ -119,7 +119,10 @@ class PreVerifyHookTests(unittest.TestCase):
 
         self.assertIn("pre_verify", context.hooks)
         hook = context.hooks["pre_verify"]
-        self.assertIsNone(hook(coding=True, attempt=0, changed_paths=["src/example.py"]))
+        self.assertEqual(
+            hook(coding=True, attempt=0, changed_paths=["src/example.py"]),
+            {"action": "continue", "message": verify_hooks.ROUND_END_CHECKLIST},
+        )
         self.assertIsNone(hook(coding=True, attempt=0, changed_paths=["docs/guide.md"]))
         self.assertIsNone(hook(coding=False, attempt=0, changed_paths=["src/app.tsx"]))
         self.assertIsNone(hook(coding=True, attempt=1, changed_paths=["src/app.tsx"]))

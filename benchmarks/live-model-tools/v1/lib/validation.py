@@ -151,6 +151,54 @@ def _rename_shadow_ok(workspace: Path, golden: dict[str, Any]) -> bool:
 _LSP_AB_VALIDATORS = {"RENAME-ALIAS": _rename_alias_ok, "RENAME-SHADOW": _rename_shadow_ok}
 
 
+def _duplicate_failures(workspace: Path, golden: dict[str, Any]) -> list[str]:
+    """The reported copy must round half up; the second copy, kept in step with it, must too."""
+    first, second, amount, rounded = golden["first"], golden["second"], golden["amount"], golden["rounded"]
+    target = (
+        "from decimal import Decimal\n"
+        f"from benchapp.{first} import {first}_total\n"
+        f"assert {first}_total(['{amount}']) == Decimal('{rounded}')\n"
+        f"assert {first}_total(['1.10', '2.20']) == Decimal('3.30')\n"
+        f"assert {first}_total(['1.004']) == Decimal('1.00')\n"
+    )
+    copy = (
+        "from decimal import Decimal\n"
+        f"from benchapp.{second} import {second}_total\n"
+        f"assert {second}_total(['{amount}']) == Decimal('{rounded}')\n"
+        f"assert {second}_total(['1.10'], fee='0.025') == Decimal('1.13')\n"
+        f"assert {second}_total(['1.004']) == Decimal('1.00')\n"
+    )
+    test_file = f"tests/test_{first}.py"
+    if not _behaviour_ok(workspace, test_file, target, golden["min_tests"]):
+        return ["semantic_validator_failed"]
+    if not _behaviour_ok(workspace, test_file, copy, golden["min_tests"]):
+        return ["copy_not_updated"]
+    return []
+
+
+def _scope_trap_failures(workspace: Path, golden: dict[str, Any]) -> list[str]:
+    """The duration fix, and every statement the task did not name left exactly as it was."""
+    seconds = golden["seconds"]
+    checks = (
+        "from benchapp.units import parse_duration, parse_size\n"
+        f"assert parse_duration('{seconds}s') == {seconds}\n"
+        "assert parse_duration(' 5m ') == 300\n"
+        "assert parse_duration('2h') == 7200\n"
+        "assert parse_size('2kib') == 2000\n"
+        "try:\n    parse_duration('5d')\nexcept ValueError:\n    pass\nelse:\n    raise AssertionError('bad unit accepted')\n"
+    )
+    failures = []
+    if not _behaviour_ok(workspace, "tests/test_units.py", checks, golden["min_tests"]):
+        failures.append("semantic_validator_failed")
+    present = {ast.dump(node) for node in ast.parse((workspace / "src/benchapp/units.py").read_text(encoding="utf-8")).body}
+    if any(node not in present for node in golden["untouched_nodes"]):
+        failures.append("unrequested_edit")
+    return failures
+
+
+_CONSISTENCY_AB_VALIDATORS = {"DUPLICATE": _duplicate_failures, "SCOPE-TRAP": _scope_trap_failures}
+
+
 def _ratio(found: set[tuple[Any, ...]], gold: set[tuple[Any, ...]]) -> tuple[float, float]:
     correct = found & gold
     recall = len(correct) / len(gold) if gold else float(not found)
@@ -191,7 +239,8 @@ def validate(template_id: str, task_class: str, workspace: Path, golden_path: Pa
     }
     if task_class == "edit":
         allowed = set(golden["allowed_paths"])
-        if not set(paths).issubset(allowed) or not paths:
+        prefixes = tuple(golden.get("allowed_prefixes", ()))
+        if not paths or any(path not in allowed and not path.startswith(prefixes) for path in paths):
             failures.append("mutation_outside_scope")
         try:
             if name == "RENAME":
@@ -201,6 +250,10 @@ def validate(template_id: str, task_class: str, workspace: Path, golden_path: Pa
                 semantic = "DEFAULT_RETRY_LIMIT" not in production + tests and production.count("MAX_RETRY_ATTEMPTS") == 2 and "MAX_RETRY_ATTEMPTS" in tests
             elif name in _LSP_AB_VALIDATORS:
                 semantic = _LSP_AB_VALIDATORS[name](workspace, golden)
+            elif name in _CONSISTENCY_AB_VALIDATORS:
+                consistency_failures = _CONSISTENCY_AB_VALIDATORS[name](workspace, golden)
+                failures.extend(code for code in consistency_failures if code != "semantic_validator_failed")
+                semantic = not consistency_failures
             else:
                 module = runpy.run_path(str(workspace / "src/benchapp/provider_select.py"))
                 select_provider = module["select_provider"]

@@ -161,7 +161,7 @@ class _PlanHomeTest(unittest.TestCase):
             session_id=SESSION,
             coding=True,
             attempt=attempt,
-            changed_paths=["src/example.py"],
+            changed_paths=["docs/example.md"],
             omh_home=str(self.home),
             hermes_home=str(self.hermes),
         )

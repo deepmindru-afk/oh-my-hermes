@@ -27,6 +27,28 @@ _DEPENDENCY_FILES: Final = frozenset(
     }
 )
 _OBSERVATION_KEYS: Final = ("host", "source", "evidence_ref", "evidence_refs", "omh_home", "hermes_home")
+# Source files whose edit earns the round-end checklist. Docs, data and lock
+# files are left out: the checklist is about a code diff.
+_CODE_SUFFIXES: Final = frozenset(
+    {
+        ".c", ".cc", ".cpp", ".cs", ".dart", ".go", ".h", ".hpp", ".java", ".js", ".jsx", ".kt", ".lua",
+        ".m", ".mjs", ".cjs", ".php", ".py", ".pyi", ".rb", ".rs", ".scala", ".sh", ".sql", ".svelte",
+        ".swift", ".ts", ".tsx", ".vue", ".zig",
+    }
+)
+# Asked once per turn, at the first stop after a code edit. The three checks are
+# the ones a model skips when it stops as soon as the target test passes: a
+# second copy of the fixed logic left behind, a drive-by edit nobody asked for,
+# and "should work" in place of a command that was run.
+ROUND_END_CHECKLIST: Final = (
+    "OMH round-end check, once per turn. Before you finish, review this turn's code edits:\n"
+    "- Consistency: the change follows the code around it, and every other place that has to change "
+    "with it (copies of the same logic, callers, tests) has changed too.\n"
+    "- Scope: the diff holds only what was asked for. Undo any edit nobody requested.\n"
+    "- Verification: run a check that fails without the change and passes with it, and report the "
+    "command and its result.\n"
+    "If all three already hold, say so in one line and finish. This note is guidance, not verification evidence."
+)
 
 
 def pre_verify(
@@ -72,11 +94,16 @@ def pre_verify(
     # edit just earned, and the edits are the same on a later attempt of the
     # same turn, so repeating it would restate a request the turn already has.
     surface_message = _served_surface_message(paths) if attempt_value == 0 else ""
-    # Two obligations, one directive. The served-surface gate asks for the
-    # check the edit just earned; the plan directive says the run is not
-    # finished. Both can be true of the same turn, and dropping either one
-    # because the other fired would lose exactly the case each was written for.
-    messages = [text for text in (surface_message, plan_message) if text]
+    # The round-end checklist is one-shot for the same reason, and it is the
+    # turn's only one: attempt 0 is the first stop after the edits, and the
+    # host moves `attempt` past 0 once any nudge here continues the turn.
+    checklist_message = ROUND_END_CHECKLIST if attempt_value == 0 and any(map(_is_code_path, paths)) else ""
+    # Three obligations, one directive. The served-surface gate asks for the
+    # check the edit just earned; the checklist asks the model to review its
+    # own diff; the plan directive says the run is not finished. All can be
+    # true of the same turn, and dropping one because another fired would
+    # lose exactly the case each was written for.
+    messages = [text for text in (surface_message, checklist_message, plan_message) if text]
     if not messages:
         return None
     # Recorded for the person once per turn. `attempt` is the only turn
@@ -163,6 +190,10 @@ def _served_surface_message(paths: tuple[str, ...]) -> str:
             "This nudge is guidance, not CI or verification evidence."
         )
     return ""
+
+
+def _is_code_path(path: str) -> bool:
+    return PurePosixPath(path).suffix in _CODE_SUFFIXES
 
 
 def _is_ui_path(path: str) -> bool:
