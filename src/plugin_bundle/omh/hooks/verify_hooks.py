@@ -39,14 +39,17 @@ _CODE_SUFFIXES: Final = frozenset(
 # Asked once per turn, at the first stop after a code edit. The three checks are
 # the ones a model skips when it stops as soon as the target test passes: a
 # second copy of the fixed logic left behind, a drive-by edit nobody asked for,
-# and "should work" in place of a command that was run.
+# and "should work" in place of a command that was run. The verification line
+# asks for the command already run, not a new one: told to "run a check", 62 of
+# 72 measured sessions re-ran a test suite that had just passed (bench README,
+# 2026-10-30), and that re-run cost more tokens than the gate allows.
 ROUND_END_CHECKLIST: Final = (
     "OMH round-end check, once per turn. Before you finish, review this turn's code edits:\n"
     "- Consistency: the change follows the code around it, and every other place that has to change "
     "with it (copies of the same logic, callers, tests) has changed too.\n"
     "- Scope: the diff holds only what was asked for. Undo any edit nobody requested.\n"
-    "- Verification: run a check that fails without the change and passes with it, and report the "
-    "command and its result.\n"
+    "- Verification: name the command, run after your last edit, that shows the change works, and its "
+    "result. Run one only if you have not.\n"
     "If all three already hold, say so in one line and finish. This note is guidance, not verification evidence."
 )
 
