@@ -1702,6 +1702,7 @@ class App(ModesMixin, AgentViewMixin):
         self.bg_after = 0
         self.notification: Notification | None = None  # Hermes' out-of-band notice, shown above the composer
         self.exit_armed_at: float | None = None
+        self.exit_armed_by_interrupt = False  # whether the press that armed it interrupted a turn (`_exit_said`)
         self.exit_code: int | None = None
         self.farewell = ""
         self.banner_facts: dict[str, str] | None = None  # the header, flushed above the next frame
@@ -3192,10 +3193,10 @@ class App(ModesMixin, AgentViewMixin):
         # The second Ctrl+C leaves even over text while the info line names it (`_exit_said`): the queue an interrupt
         # gives back lands in the composer between the presses, and clearing it there would leave the TUI open. Any
         # Ctrl+C the composer would take (Shift or Alt too) counts. What the composer holds is not kept on exit; what
-        # was sent or queued is in Hermes' history, where Up finds it. A submit held for its paste is not left
-        # behind: with one held the press clears the draft as ever, and the held submit still goes.
+        # was sent or queued is in Hermes' history, where Up finds it. With a submit held for its paste the press
+        # does not exit (`_exit_said`): it clears the draft as ever, and the held submit still goes.
         if isinstance(event, Key) and event.name == CHAR and event.ctrl and event.char == "c" and (
-            self.composer.text and not self.held_submits and self._exit_said()
+            self.composer.text and self._exit_said()
         ):
             self.exit_code = 0
             return
@@ -3432,13 +3433,18 @@ class App(ModesMixin, AgentViewMixin):
         return True
 
     def _exit_said(self) -> bool:
-        """Whether the info line says `EXIT_HINT` now: an exit armed inside its window, and nothing the line names
-        before it open (a question, a picker, the agent list or tree, a steer, a rewind, a tell)."""
+        """Whether a Ctrl+C exits now, which is when the info line says `EXIT_HINT`: an exit armed inside its window,
+        no submit held for its paste (Ctrl+C gives that back, or clears the draft, first), and no question, picker,
+        agent list or tree open. A steer, rewind or tell names its own keys first, unless the press that armed
+        the exit interrupted a turn: then the second press leaves from there too."""
         return (
             self.exit_armed_at is not None and self.clock() - self.exit_armed_at <= EXIT_CONFIRM_SECONDS
-            and self.slot is None and not self._picker_keys() and self.list_selected is None
-            and self.tree_selected is None and self.roster.agents.get(self.agent_steer or "") is None
-            and self.rewind is None and self.tell_draft is None
+            and not self.held_submits and self.slot is None and not self._picker_keys()
+            and self.list_selected is None and self.tree_selected is None
+            and (self.exit_armed_by_interrupt or (
+                self.roster.agents.get(self.agent_steer or "") is None and self.rewind is None
+                and self.tell_draft is None
+            ))
         )
 
     def _expire_exit(self) -> None:
@@ -3973,12 +3979,14 @@ class App(ModesMixin, AgentViewMixin):
         if not self._busy() and self._give_back_held():
             self.dirty = True  # a submit held for its paste comes back, as Esc gives it; this press arms no exit
             return
-        if self._exit_said():  # only while the info line says so: a steer, rewind or tell names its own keys first
+        if self._exit_said():  # only while the info line says so
             self.exit_code = 0
             return
-        if self._busy():
+        busy = self._busy()
+        if busy:
             self._interrupt()
         self.exit_armed_at = now  # the info line says so until the second press can no longer come
+        self.exit_armed_by_interrupt = busy
         self.dirty = True
 
     def _menu_entries(self) -> list[Completion]:
@@ -6345,14 +6353,14 @@ class App(ModesMixin, AgentViewMixin):
             say, say_style = self._agent_list_say()
         elif self.tree_selected is not None:
             say, say_style = self._tree_say()
+        elif self._exit_said():  # over a steer, rewind or tell only after an interrupt (`_exit_said`)
+            say = EXIT_HINT
         elif steered is not None:
             say, say_style = tuple(form.format(name=steered.name) for form in STEER_SAY), self.theme.muted
         elif self.rewind is not None:
             say, say_style = tuple(form.format(ordinal=self.rewind.ordinal) for form in REWIND_SAY), self.theme.warn
         elif self.tell_draft is not None:
             say, say_style = TELL_SAY, self.theme.muted
-        elif self._exit_said():
-            say = EXIT_HINT
         elif armed is not None and self.clock() - armed[1] <= DOUBLE_ESCAPE_SECONDS:
             say = ESCAPE_AGAIN.format(armed[0])
         elif self._newline_keys_due():

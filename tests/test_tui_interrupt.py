@@ -249,10 +249,10 @@ class CtrlCExitTests(unittest.TestCase):
                 self.assertEqual(app.exit_code, 0)
                 self.assertEqual(app.composer.text, "kept")
 
-    def test_no_exit_while_the_info_line_names_a_rewind_or_a_tell_instead(self) -> None:
+    def test_an_idle_arm_gives_a_rewind_or_a_tell_its_own_keys_and_no_exit(self) -> None:
         now = [100.0]
         app, _client = make_app(clock=lambda: now[0])
-        app._on_input(CTRL_C)
+        app._on_input(CTRL_C)  # no turn: arms only
         app.rewind = Rewind(row_id=7, ordinal=2, before=())
         app._set_composer("picked prompt")
         self.assertNotIn(EXIT_HINT, info_row_of(drawn(app)))
@@ -260,8 +260,8 @@ class CtrlCExitTests(unittest.TestCase):
         app._on_input(CTRL_C)
         self.assertIsNone(app.exit_code)
 
-        app, _client = make_app(busy=True, clock=lambda: now[0])
-        app._on_input(CTRL_C)  # interrupts and arms
+        app, _client = make_app(clock=lambda: now[0])
+        app._on_input(CTRL_C)  # no turn: arms only
         app._on_server_request(TELL_APPROVAL)
         armed(app)
         press(app, *[Key(DOWN)] * 3, Key(ENTER))  # the tell row: a field of its own
@@ -272,3 +272,29 @@ class CtrlCExitTests(unittest.TestCase):
         type_text(app, "go left")
         app._on_input(CTRL_C)
         self.assertIsNone(app.exit_code)
+
+    def test_after_an_interrupt_the_second_press_exits_from_a_rewind_or_a_tell_too(self) -> None:
+        # The owner's rule (#2302): the press that interrupts arms the exit, and the next within 2 s leaves.
+        now = [100.0]
+        app, client = make_app(busy=True, clock=lambda: now[0])
+        app._on_input(CTRL_C)
+        app.rewind = Rewind(row_id=7, ordinal=2, before=())
+        app._set_composer("picked prompt")
+        self.assertIn(EXIT_HINT, info_row_of(drawn(app)))
+        now[0] += 0.5
+        app._on_input(CTRL_C)
+        self.assertEqual((app.exit_code, len(client.named("session.interrupt"))), (0, 1))
+
+        for typed in ("", "go left"):
+            with self.subTest(typed=typed):
+                app, client = make_app(busy=True, clock=lambda: now[0])
+                app._on_server_request(TELL_APPROVAL)
+                armed(app)
+                press(app, *[Key(DOWN)] * 3, Key(ENTER))  # the tell row: the turn goes on
+                app._on_input(CTRL_C)  # on the empty field: interrupts and arms
+                self.assertEqual(len(client.named("session.interrupt")), 1)
+                self.assertIsNotNone(app.tell_draft)
+                self.assertIn(EXIT_HINT, info_row_of(drawn(app)))
+                type_text(app, typed)
+                app._on_input(CTRL_C)
+                self.assertEqual((app.exit_code, len(client.named("session.interrupt"))), (0, 1))
