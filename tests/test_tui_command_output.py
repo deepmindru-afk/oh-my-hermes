@@ -99,11 +99,14 @@ class CommandEchoTests(unittest.TestCase):
     def test_a_title_reply_of_no_marked_shape_stays_as_written(self) -> None:
         # Review 2 of #2389: the slash worker's `cli.title.set` (en.yaml:2533) has no marks, and a title refused as in
         # use (hermes_state_titles.py:163) quotes it, so neither may lose a `**` or a backtick.
-        for output in ("Session title set: **x** and `y`", "Title 'use `uv` sync' is already in use by session abc"):
+        # Review 3: the worker's `cli.title.current` (en.yaml:2528) is "Title: {title}", and a title may be `**draft**`.
+        for output in ("Session title set: **x** and `y`", "Title 'use `uv` sync' is already in use by session abc",
+                       "Session ID: abc\nTitle: **draft**"):
             app, client = make_app()
             send(app, "/title x")
             answer(app, client, {"output": output})
-            self.assertIn(f"    ⎿  {output}", drawn(app))
+            self.assertIn(f"    ⎿  {output.splitlines()[0]}", drawn(app))
+            self.assertIn(output.splitlines()[-1], lines_text(block_rows(last(app), 100, THEME))[-1])
             self.assertFalse(any(span.style.bold for row in block_rows(last(app), 100, THEME) for span in row))
         app, client = make_app()
         send(app, "/title")
