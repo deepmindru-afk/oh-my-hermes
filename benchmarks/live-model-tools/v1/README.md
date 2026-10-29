@@ -570,8 +570,9 @@ The setup:
 - Both arms: `--edit-directive debug` (one shared sentence plus "if the same test still fails
   after three edits, stop editing and inspect state again"), `--git-init-workspace`,
   `--test-env` (pytest and debugpy ready). Only the dap arm has toolset `omh-dap`.
-- omh `feature/omh-dap` `9528a8c73`. Records: `artifacts/dap-ab` on that branch (143 of 144;
-  one gpt-4.1-nano dap run left no record and is scored as a fail).
+- omh `feature/omh-dap` `9528a8c73` (pushed, not merged). 143 of 144 run records (one
+  gpt-4.1-nano dap run left none and is scored as a fail); `artifacts/` is git-ignored, so the
+  records stay local, as for the other sections here.
 - qwen-flash `D-MUTABLE-DEFAULT` in both arms reuses the last smoke's records (same commit,
   same flags), decided before the run because the paid-call cap was short by four.
 
