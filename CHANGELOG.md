@@ -6,6 +6,21 @@ All notable changes will be documented here.
 
 ![Sprite Forge patch notes](https://raw.githubusercontent.com/rlaope/oh-my-hermes/main/assets/omh-sprite-forge-patch-notes.png)
 
+- **The OMH TUI has eight launch looks, and a look now tints the chrome.**
+  `/theme` adds `sakura` (pastel pink, sky blue and cream), `moonlit`
+  (moonlight yellow and silver over navy), `aurora` (emerald and teal into
+  violet) and `ember` (amber through orange to crimson) to `spectrum`,
+  `violet`, `gold` and `graphite`, each with a set for dark and one for
+  light backgrounds. Every look, the four earlier ones too, now also paints
+  the composer's rules and the frames drawn like them in its card-edge
+  colour, and a tool call's rail and the working row's spinner in its label
+  colour, each lifted to 3:1 against the background; a failed or denied
+  call's rail stays red. Body text, the grey details, the reply's rail and
+  the state colours keep the theme's, and `spectrum` stays the default with
+  its logo unchanged. The picker, `/theme <look>`, Tab completion and the
+  saved `launch` key take the new names; an unknown saved name still warns
+  and falls back to `spectrum`.
+
 - **A light goes round the OMH TUI's screen while a turn runs.** It runs
   along the terminal's whole edge, clockwise, once every four seconds, with
   a round head and a trail in the launch look's logo colours that fades
