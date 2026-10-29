@@ -937,7 +937,10 @@ def count_metrics() -> tuple[CountMetric, ...]:
             # definite causative, a recommendation, a failed-deploy animation
             # and a quoted ask (9), a Korean video call and playback fault (2),
             # a Japanese bug reproduction video and a Japanese summary (2) (+13).
-            expected=1276,
+            # Its second review's families: five UI effects, five loop phrasings
+            # (two Japanese), five faults named as events (one Japanese) and
+            # three recordings (+18).
+            expected=1294,
             # The one reviewed test pin. Every other test compares its payload
             # against build_routing_precision_demo() rather than a literal.
             sites=("tests/test_routing_precision.py",),
@@ -1483,7 +1486,11 @@ def count_metrics() -> tuple[CountMetric, ...]:
             # dispatched img-summary or connector-operator on main, a music
             # visualizer, a data-viz animation), three Korean, one Japanese,
             # and the display name invoked (+14).
-            expected=1190,
+            # Its second review: the Korean vertical-shorts case leaves (the
+            # request stays img-summary's, as on main) (-1), and a video named
+            # as a source or target keeps its owner: four image cards, three
+            # connector actions and one pitch-deck material (+8).
+            expected=1197,
             # The one reviewed test pin. Every other test compares its payload
             # against build_routing_precision_demo() rather than a literal.
             sites=("tests/test_routing_precision.py",),

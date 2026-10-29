@@ -35,7 +35,7 @@ the user's words first and from the defaults second, and label every default:
 2. a duration: 20-30 s when none is given, about 2.5 s per beat;
 3. one style anchor: a palette family, a material or a reference look;
 4. one self-contained HTML file with its time controlled by a seek;
-5. a verification loop: style frames, a draft, a contact sheet, one rebuild.
+5. a verification pass: style frames, a draft, a contact sheet, one rebuild.
 
 ## Recipes
 

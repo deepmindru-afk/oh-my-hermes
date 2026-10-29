@@ -35,6 +35,7 @@ from ..plugin_bundle.omh.invocation_cues import invoked_instruction
 from ..coding.pi_family_interop import PI_DISTRIBUTION_HOST, RUNTIME_SHORT_NAME
 from ..plugin_bundle.omh.name_report_cues import about_the_skill
 from ..plugin_bundle.omh.request_lead import after_courtesy
+from ..plugin_bundle.omh.show_reel_cues import show_reel_request_admitted
 from ..plugin_bundle.omh.spend_signals import (
     SPEND_EVERYDAY_SENSE_ANCHORS,
     SPEND_EVERYDAY_SENSE_PHRASES,
@@ -10156,7 +10157,7 @@ def _connector_operator_guard_applies(normalized_query: str, query_tokens: set[s
         return True
     context = _CONNECTOR_OPERATOR_CONTEXT_TOKENS & query_tokens
     # "a SaaS product launch video" names a video about a SaaS, not an app to act in.
-    if context == {"saas"} and _names_video_output(normalized_query, query_tokens):
+    if context == {"saas"} and show_reel_request_admitted(normalized_query):
         context = set()
     connector_context = bool(context)
     connector_action = bool(_CONNECTOR_OPERATOR_ACTION_TOKENS & query_tokens)
@@ -10270,20 +10271,13 @@ def _content_operator_guard_applies(normalized_query: str, query_tokens: set[str
     return content_context and content_action and quality_context
 
 
-# A video named as the output. Two image-card modality words are as often a
-# video's ("a vertical video", "a motion graphic"), and a SaaS is as often the
-# subject of a launch video as a connected app; beside one of these nouns
-# neither word names its skill's own target (`_visual_summary_guard_applies`,
+# Two image-card modality words are as often a video's ("a vertical video", "a
+# motion graphic"), and a SaaS is as often the subject of a launch video as a
+# connected app. Neither word names its skill's own target when the request is
+# one show-reel admits: the video is then the requested output, not the source
+# of a card or a post (`_visual_summary_guard_applies`,
 # `_connector_operator_guard_applies`).
-_VIDEO_OUTPUT_TOKENS = frozenset({"animation", "animations", "mp4", "video", "videos"})
-_VIDEO_OUTPUT_PHRASES = (
-    "motion graphic", "영상", "동영상", "애니메이션", "모션그래픽", "모션 그래픽", "쇼츠", "動画", "アニメーション",
-)
 _VIDEO_SHARED_MODALITY_TOKENS = frozenset({"graphic", "vertical", normalized_phrase("세로")})
-
-
-def _names_video_output(normalized_query: str, query_tokens: set[str]) -> bool:
-    return bool(_VIDEO_OUTPUT_TOKENS & query_tokens) or _contains_phrase(normalized_query, _VIDEO_OUTPUT_PHRASES)
 
 
 def _visual_summary_guard_applies(normalized_query: str, query_tokens: set[str]) -> bool:
@@ -10326,7 +10320,7 @@ def _visual_summary_guard_applies(normalized_query: str, query_tokens: set[str])
     modality = _VISUAL_SUMMARY_MODALITY_TOKENS & query_tokens
     # "make a vertical video", "a motion graphic showing how coffee is brewed":
     # the modality word qualifies a video, so no image is named.
-    if modality <= _VIDEO_SHARED_MODALITY_TOKENS and _names_video_output(normalized_query, query_tokens):
+    if modality <= _VIDEO_SHARED_MODALITY_TOKENS and show_reel_request_admitted(normalized_query):
         modality = set()
     if modality and _VISUAL_SUMMARY_CAPABILITY_TOKENS & query_tokens:
         return True
