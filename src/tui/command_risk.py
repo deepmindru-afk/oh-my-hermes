@@ -16,7 +16,10 @@ Two small, explicit steps, no shell parser:
 - A command is risky only when a program it runs (its first word after any
   `NAME=value` assignments, the first word of a pipe stage, or the word after
   `sudo`, `env` or `xargs` and their options) matches a row of `RISKS`, or
-  when a pipe stage runs a shell after one that downloads (`curl … | sh`).
+  when it runs a download or decoded text as a script: a pipe stage running
+  a shell after one that downloads or decodes (`curl … | sh`, `base64 -d |
+  sh`), or a shell, `eval`, `source` or `.` handed a substitution that
+  downloads (`bash <(curl …)`, `eval "$(curl …)"`, `sh -c "$(curl …)"`).
   Words are read quote-aware, so text inside quotes, or an argument to `echo`
   or `grep`, never matches.
 
@@ -51,6 +54,8 @@ _MOVES = frozenset(("cd", "pushd", "popd"))
 # tools/approval_detection.py:157-158 `_SHELL_NAMES`).
 _FETCHERS = frozenset(("curl", "wget"))
 _SHELLS = frozenset(("bash", "sh", "zsh", "ksh", "dash"))
+# The builtins that run the text they are given in the current shell.
+_SOURCES = frozenset(("eval", "source", "."))
 GH_READ_ONLY = frozenset((
     ("pr", "view"), ("pr", "list"), ("pr", "checks"), ("pr", "status"), ("pr", "diff"), ("issue", "view"),
     ("issue", "list"), ("run", "view"), ("run", "list"), ("run", "watch"), ("repo", "view"), ("auth", "status"),
@@ -333,8 +338,10 @@ def _git(args: list[str]) -> list[str]:
 
 # The closed table: a program's name, and what reads its arguments for the risks it names.
 RISKS: dict[str, Callable[[list[str]], list[str]]] = {"rm": _rm, "git": _git, "chmod": _chmod}
-# What a pipe stage running a shell (`_SHELLS`) after one that downloads (`_FETCHERS`) is named: it runs the download.
-PIPE_TO_SHELL = "pipes a download into a shell"
+# A download run as a script (`_runs_download`, or a pipe from `_FETCHERS` into `_SHELLS`), and decoded text piped
+# into a shell (`_decodes`).
+REMOTE_SCRIPT = "runs a downloaded script"
+DECODED_SCRIPT = "runs decoded text as a script"
 # Hermes' own descriptions of the same risks where its wording differs from OMH's (tools/approval_detection.py,
 # hermes-agent bf0203a794), so a risk Hermes already named is not named again in other words.
 HERMES_NAMES = {
@@ -361,28 +368,138 @@ HERMES_NAMES = {
     ),
     "hard reset": ("git reset --hard (destroys uncommitted changes)",),
     "deletes untracked files": ("git clean with force (deletes untracked files)",),
-    # tools/approval_detection.py:287-288 (`chmod` with 777, 666, o+w or a+w) and :313 (`curl` or `wget` piped to
-    # a shell).
+    # tools/approval_detection.py:287-288 (`chmod` with 777, 666, o+w or a+w).
     "makes files world-writable": (
         "world/other-writable permissions",
         "recursive world/other-writable (long flag)",
     ),
-    PIPE_TO_SHELL: ("pipe remote content to shell",),
+    # :313 (`curl` or `wget` piped to a shell), :314 (a shell reading `<(curl …)`), :316 (`eval`, `source` or `.`
+    # given `$(curl …)`); a shell's `-c` is Hermes' structural "shell command via -c/-lc flag" (:1013-1016), which
+    # names every `-c`, so it is not taken as naming this.
+    REMOTE_SCRIPT: (
+        "pipe remote content to shell",
+        "execute remote script via process substitution",
+        "execute remote content via command substitution",
+    ),
+    # :332-338: base64/base32/base16 `-d`, `xxd -r`, `echo | tr` and `openssl` decoding, piped to a shell.
+    DECODED_SCRIPT: (
+        "pipe decoded content to shell (possible command obfuscation)",
+        "pipe xxd-decoded content to shell (possible command obfuscation)",
+        "pipe tr-transformed output to shell (possible command obfuscation)",
+        "pipe openssl-decoded content to shell (possible command obfuscation)",
+    ),
 }
 
 
+def _decodes(program: str, args: list[str], previous: str) -> bool:
+    """Whether a pipe stage running `program` with `args`, after one running `previous`, decodes what it reads into
+    text a shell after it would run (tools/approval_detection.py:332-338)."""
+    if program in ("base64", "base32", "base16"):
+        return bool({"-d", "-D", "--decode"} & set(args))
+    if program == "xxd":
+        return any(arg.startswith("-") and not arg.startswith("--") and "r" in arg for arg in args)
+    if program == "openssl":
+        return bool({"base64", "enc"} & set(args)) and bool({"-d", "-D"} & set(args))
+    return program == "tr" and previous == "echo"
+
+
+def _closing(text: str, index: int) -> int:
+    """The index of the `)` that closes the `(` before `index`, or the end of `text` when none does."""
+    depth = 1
+    while index < len(text):
+        depth += {"(": 1, ")": -1}.get(text[index], 0)
+        if depth == 0:
+            return index
+        index += 1
+    return len(text)
+
+
+def _substitutions(segment: str) -> tuple[str, list[tuple[str, str]]]:
+    """`segment` with each substitution replaced by its number between NULs, and each one's opener and body: a
+    command substitution (`$(…)`, `` `…` ``) outside single quotes, a process substitution (`<(…)`) outside any
+    quotes."""
+    masked: list[str] = []
+    found: list[tuple[str, str]] = []
+    quote = ""
+    index = 0
+    while index < len(segment):
+        char = segment[index]
+        opener = ""
+        if quote == "'":
+            quote = "" if char == "'" else quote
+        elif char == "\\" and index + 1 < len(segment):
+            masked.append(segment[index : index + 2])
+            index += 2
+            continue
+        elif char == '"' and quote in ("", '"'):
+            quote = "" if quote else char
+        elif char == "'" and not quote:
+            quote = char
+        elif segment.startswith("$(", index) and not segment.startswith("$((", index):
+            opener = "$("
+        elif char == "`":
+            opener = "`"
+        elif segment.startswith("<(", index) and not quote:
+            opener = "<("
+        if not opener:
+            masked.append(char)
+            index += 1
+            continue
+        start = index + len(opener)
+        end = segment.find("`", start) if opener == "`" else _closing(segment, start)
+        end = len(segment) if end < 0 else end
+        masked.append(f"\x00{len(found)}\x00")
+        found.append((opener, segment[start:end]))
+        index = end + 1
+    return "".join(masked), found
+
+
+def _fetches(text: str) -> bool:
+    """Whether a pipe stage of `text` runs `curl` or `wget`."""
+    return any(words and words[0].rsplit("/", 1)[-1] in _FETCHERS for words in map(_program, _stages(text)))
+
+
+def _runs_download(segment: str) -> bool:
+    """Whether `segment` hands a download to what runs it as a script: a shell, `eval`, `source` or `.` reading a
+    process substitution that downloads (`bash <(curl …)`, :314), `eval`, `source` or `.` given a command
+    substitution that does (`eval "$(curl …)"`, :316), or a shell given one after its `-c` (`sh -c "$(curl …)"`)."""
+    masked, found = _substitutions(segment)
+    for stage in _stages(masked):
+        words = _program(stage)
+        program = words[0].rsplit("/", 1)[-1] if words else ""
+        if program not in _SHELLS | _SOURCES:
+            continue
+        for position, word in enumerate(words[1:], start=1):
+            for number, (opener, body) in enumerate(found):
+                if f"\x00{number}\x00" not in word or not _fetches(body):
+                    continue
+                flagged = any(arg.startswith("-") and not arg.startswith("--") and "c" in arg
+                              for arg in words[1:position])
+                if opener == "<(" or program in _SOURCES or flagged:
+                    return True
+    return False
+
+
 def segment_risks(segment: str) -> tuple[str, ...]:
-    """The risks of the programs `segment` runs, in table order within each, once each; a shell a download is piped
-    into is `PIPE_TO_SHELL`."""
+    """The risks of the programs `segment` runs, in table order within each, once each; a shell a download or decoded
+    text is piped into, or a download handed to what runs it (`_runs_download`), is `REMOTE_SCRIPT` or
+    `DECODED_SCRIPT`."""
     found: list[str] = []
-    fetched = False
+    fetched = decoded = False
+    previous = ""
     for stage in _stages(segment):
         words = _program(stage)
         program = words[0].rsplit("/", 1)[-1] if words else ""
         check = RISKS.get(program)
-        risks = [*(check(words[1:]) if check else []), *([PIPE_TO_SHELL] if fetched and program in _SHELLS else [])]
+        risks = check(words[1:]) if check else []
+        if program in _SHELLS:
+            risks += [REMOTE_SCRIPT] * fetched + [DECODED_SCRIPT] * decoded
         found.extend(risk for risk in risks if risk not in found)
         fetched = fetched or program in _FETCHERS
+        decoded = decoded or _decodes(program, words[1:], previous)
+        previous = program
+    if REMOTE_SCRIPT not in found and _runs_download(segment):
+        found.append(REMOTE_SCRIPT)
     return tuple(found)
 
 
