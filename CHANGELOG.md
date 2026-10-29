@@ -6,6 +6,18 @@ All notable changes will be documented here.
 
 ![Sprite Forge patch notes](https://raw.githubusercontent.com/rlaope/oh-my-hermes/main/assets/omh-sprite-forge-patch-notes.png)
 
+- **A steer sent while a reply streams no longer erases that reply.** When
+  Hermes read the steer before a second model call, the OMH TUI replaced the
+  whole streamed text with the last call's at turn end. Once you steer, what
+  streamed now stays as it was, and only what the final adds past it (a
+  footer) is added. The `↪ steer queued by Hermes` row shows after the reply,
+  not between the two calls: Hermes sends nothing that marks where one call
+  ends, so the TUI cannot place it there reliably. A long one-paragraph
+  reply now wraps only its last rows each frame, so a frame no longer costs
+  more as the paragraph grows; agent names drop a goal's trailing colon
+  (`Interrupted child alpha.`); and `/title X` shows the title bold instead
+  of `**X**`.
+
 - **An approval no longer folds away the `cd` or the assignment that aims a
   risky command, and it marks a download piped into a shell and a
   world-writable `chmod`.** `cd ~ && …; rm -rf ./*` and `T=/; …; rm -rf
