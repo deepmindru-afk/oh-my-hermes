@@ -249,6 +249,11 @@ pasting it into the goal, and the `coding-handling` harness and
 (`plugin_delegation_protocol`), so a rename shows as a warning rather than as
 children quietly losing the protocol.
 
+A main session gets `omh.main-calibration`, rendered once at session start
+from its own `session_info.model`: only the Kimi family has a block, and any
+`platform == "subagent"` child, other family, or malformed metadata renders
+nothing.
+
 A separate `omh.child-calibration` section renders one model-matched worker
 calibration for every native child (`platform == "subagent"`), using only that
 child's own `session_info.model`: exact-model override (including declared
