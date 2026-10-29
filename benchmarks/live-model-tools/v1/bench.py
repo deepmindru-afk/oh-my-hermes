@@ -79,6 +79,11 @@ def main(argv: list[str] | None = None) -> int:
             default=None,
             help="Comma-separated template IDs to include (e.g. E-RENAME,E-BUGFIX). Applies to the 'run' command.",
         )
+        command.add_argument(
+            "--seeds",
+            default=None,
+            help="Comma-separated seeds to include (e.g. 104729). Applies to the 'run' command; a retry reruns only these.",
+        )
         command.add_argument("--allow-paid-live", action="store_true")
         command.add_argument("--max-paid-calls", type=int, default=0)
     args = parser.parse_args(argv)
@@ -165,6 +170,7 @@ def main(argv: list[str] | None = None) -> int:
                 test_env=args.test_env,
                 max_paid_calls=args.max_paid_calls,
                 templates=args.templates.split(",") if args.templates else None,
+                seeds=[int(seed) for seed in args.seeds.split(",")] if args.seeds else None,
             )
     emit(result)
     return 0 if result.get("ok", True) else 1

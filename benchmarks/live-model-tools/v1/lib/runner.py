@@ -309,12 +309,15 @@ def run_matrix(
     test_env: bool = False,
     max_paid_calls: int = 0,
     templates: list[str] | None = None,
+    seeds: list[int] | None = None,
 ) -> dict[str, Any]:
     selected = models or [None]
     specs = all_specs(split)
     if templates:
         wanted = set(templates)
         specs = [spec for spec in specs if spec[0] in wanted]
+    if seeds:
+        specs = [spec for spec in specs if spec[2] in set(seeds)]
     scheduled = len(selected) * len(specs)
     if harness in {"omh", "hermes_current_session"} and (max_paid_calls < 1 or scheduled > max_paid_calls):
         raise ValueError(
