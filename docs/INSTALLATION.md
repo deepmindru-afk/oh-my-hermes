@@ -861,6 +861,16 @@ run and approval decision stays Hermes'; the screen is OMH's.
   terminal's own notification: OSC 9 in iTerm2, WezTerm and Ghostty, OSC 777
   in foot and rxvt, the bell elsewhere (tmux among them, which flags the
   window); `OMH_TUI_BELL=0` keeps all of it quiet.
+- While a turn runs, a light goes round the screen's edge, clockwise, once
+  every four seconds, in the launch look's colours, and it is gone when the
+  turn ends. To keep the edge free, the rows are drawn one column in from
+  each side and the screen's last row stays blank, whether a turn runs or
+  not. It shows with motion on, at truecolor, on a screen 20×8 or larger.
+  `/glow off` turns it off and `/glow on` back on (`/glow` alone switches
+  it); the choice is saved beside the theme, as `glow` in
+  `<omh_home>/tui/theme.json`; `omh theme glow on|off` saves the same choice
+  from the shell. `OMH_TUI_GLOW=0` holds it off in one terminal whatever is
+  saved.
 - Each tool call is a block of its own on a rail in its state's
   colour, with a blank row between two calls and no header over a turn's
   calls: its state's mark (below), its name, and what it ran on (a path, a
@@ -1280,7 +1290,7 @@ and Shift+Tab move the highlight, Space folds a box, d shows or hides Node
 details; it sends nothing anywhere; q or Esc closes it), `/bots` (the bot
 board, also Ctrl+S, described below), `/copy`, `/image`,
 `/paste` (the clipboard
-image), `/theme`, `/omh-model`, `/rewind`, `/todos` (the session's whole
+image), `/theme`, `/glow`, `/omh-model`, `/rewind`, `/todos` (the session's whole
 plan), `/model` (alone, a picker of the models Hermes offers this session,
 from Hermes' `model.options`, opened on the session's model, marked `●`, which
 comes first when no provider lists it, and with the highlight's place in the
@@ -2900,6 +2910,7 @@ omh theme list               # plain listing, always (the scriptable surface)
 omh theme use crimson        # select one directly (also accepts omh-crimson)
 omh theme use crimson --dry-run
 omh theme status             # the active theme, which source decided it, and where it is saved
+omh theme glow off           # the working glow off in every later OMH TUI session (on, or alone to show it)
 ```
 
 Bare `omh theme` opens a picker: up/down arrows (or `j`/`k`) move the cursor,
@@ -2927,8 +2938,9 @@ Rules worth knowing:
   session opens, and `/theme auto|light|dark` chooses that background for
   the open session (see [The OMH TUI](#the-omh-tui)).
 - **The launch look is saved in the same record.** `/theme` in the OMH TUI
-  writes `launch` beside `theme` in `<omh_home>/tui/theme.json`; either
-  write keeps the other.
+  writes `launch` beside `theme` in `<omh_home>/tui/theme.json`, and
+  `/glow` or `omh theme glow` writes `glow` there; each write keeps the
+  others.
 - **Bare `hermes` keeps its own skin.** `display.skin` is yours; OMH reads it
   only for the fallback above and never writes it.
 
