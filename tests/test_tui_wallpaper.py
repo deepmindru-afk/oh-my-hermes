@@ -75,8 +75,7 @@ def ambiguous_wide():
 
 
 ROLES = {  # each bitmap's letters, as its comment in `wallpaper` names them
-    "MOON": "abch", "CLOUD": "abc", "STAR": "sw", "BLOSSOM": "pqc", "PETAL": "pq", "LOGS": "lk", "FLAME": "roy",
-    "SUN": "oyw", "JELLYFISH": "ebwt", "PRISM": "ef",
+    "MOON": "abc", "SPARKLE": "sw", "BLOSSOM": "pqc", "PETAL": "pq", "FLAME": "roy", "SUN": "oyw", "JELLYFISH": "ebwt",
 }
 
 
@@ -153,7 +152,7 @@ class SceneTests(unittest.TestCase):
             frames = art if isinstance(art[0], tuple) else (art,)
             with self.subTest(sprite=name):
                 sizes = {(len(frame), len(frame[0])) for frame in frames}
-                self.assertEqual(len(sizes), 1 if name not in ("STAR", "PETAL", "FLAME") else len(sizes), sizes)
+                self.assertEqual(len(sizes), 1 if name not in ("SPARKLE", "PETAL", "FLAME") else len(sizes), sizes)
                 for frame in frames:
                     self.assertEqual(len({len(line) for line in frame}), 1, frame)
                     letters = {letter for line in frame for letter in line} - {CLEAR}

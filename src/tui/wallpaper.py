@@ -19,19 +19,25 @@ one over the other, drawn with a half block, `▀` in the top pixel's colour
 over the bottom pixel's as background, `▄` for a bottom pixel alone, and for
 two of one colour a space on that colour, which fills the whole cell where a
 block glyph would leave the terminal's line spacing showing as a stripe; a
-pixel left out shows the ground. Nothing else is drawn. The motifs are small bitmaps kept here as data (`Sprite`: rows of
-letters, each letter a colour role a scene maps to one of the look's
-colours, `.` left out), some with frames that make them move: moonlit a
-crescent moon with a pulsing halo, drifting clouds and twinkling stars;
-sakura a cherry branch from the top-right corner with five-petal blossoms
-and falling petals; aurora curtains of light, gradient columns that wave;
-ember a campfire whose flame flickers through three frames, with rising
-sparks; gold a sun whose rays turn, and motes; violet jellyfish drifting up,
-their bells pulsing and tentacles trailing; graphite rain over a puddle
-whose ripples spread; spectrum a prism splitting a beam into the five hues.
-The motifs sit where a working session leaves the screen blank: its right
-side (`RIGHT`), where transcript rows end short of the edge, and for
-sakura's branch the top-right corner.
+pixel left out shows the ground. Nothing else is drawn.
+
+The art follows the brand's pixel-aura short (owner's choice of 2026-10-29):
+an aura (`_aura`) is a mosaic of solid square tiles over an ellipse, dense in
+the middle and scattering out to single tiles, each patch in one of a few
+colours and each tile a shade apart, and four-point sparkles (`_sparkles`,
+`SPARKLE`) grow and fade round the motifs. spectrum is that aura itself, in
+the short's hues (`AURA_HUES`). The other looks draw their motif in the same
+language, from small bitmaps kept here as data (`Sprite`: rows of letters,
+each letter a colour role a scene maps to one of the look's colours, `.` left
+out), some with frames that make them move: moonlit a crescent moon in a
+pixel halo that breathes, soft tile clouds drifting and sparkle stars;
+sakura blossom clusters over a faint pink aura with petals falling; aurora
+ribbons of scattered tiles whose tops wave; ember a flame flickering through
+three frames in a warm glow, with embers rising; gold a sun in a breathing
+glow, sparkles for rays, and motes; violet pastel jellyfish drifting, their
+bells pulsing; graphite a cloud raining into a puddle whose ripples spread.
+The motifs sit low on the right (`BAND`, `RIGHT`), where the launch card and
+a working session's rows leave the screen blank.
 
 It is ambience behind work: never more than `LIT_CEILING` of the screen, no
 pixel past `AMBIENT_CONTRAST` against the ground, and a pixel's colour is
@@ -42,11 +48,13 @@ within a second.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 import math
 
-from .theme import BLACK, DEFAULT_LAUNCH, LAUNCH_PALETTES, LogoPalette, _logo_stops, blend, contrast_ratio, is_light
+from .theme import (
+    BLACK, DEFAULT_LAUNCH, LAUNCH_PALETTES, WHITE, LogoPalette, _logo_stops, blend, contrast_ratio, is_light,
+)
 
 # How often the app paints the scene's changed cells between frames (a turn's frames, every spinner tick, bring it
 # along too): about four times a second keeps the motion visible within a second while an idle screen writes little.
@@ -68,53 +76,49 @@ UPPER, LOWER, FULL = "▀", "▄", " "
 # The rows the motifs keep to, as shares of the screen's: the lower half, over the composer, which is blank under the
 # launch screen's card and, in a working session, at the right ends of the transcript's rows; and the right side
 # (`RIGHT`), where a working session's rows end short of the edge and their tails are blank.
-BAND = (0.5, 0.86)
+BAND = (0.62, 0.9)
 RIGHT = 0.45  # the share of the width the right side starts at
 CLEAR = "."  # a bitmap's pixel left out: the ground shows
+PASTEL = 0.12  # how far every colour is softened toward white first: the pixel aura's pastels (more turns them grey
+# under the contrast cap on a dark ground)
+AURA_TILE = 2  # an aura's tile, in pixels a side: the aura is a mosaic of square tiles, not a speckle
+# The brand's pixel-aura hues (the `oh-my-hermes` pixel-aura short): violet, pink, cyan, mint and periwinkle.
+AURA_HUES = ("#C084FC", "#F472B6", "#67E8F9", "#86EFAC", "#A5B4FC")
+UNDER_DARK = 0.7  # on a dark ground, how far toward black the shade every colour is mixed from sits
 TWO_CLOUD_CELLS = 4000  # moonlit: a screen of this many cells has room for a second cloud beside the moon
 BIG_COLS, BIG_ROWS, BIG_SCALE = 140, 40, 2  # a screen this big draws the motifs' art pixels two pixels square
 
 Sprite = tuple[str, ...]  # a bitmap, top row first, one letter a pixel: a colour role, or `CLEAR`
 
-MOON: Sprite = (  # a crescent moon in a halo; a rim, b body, c shade, h halo
-    "............hh................",
-    ".........hhh..................",
-    "........hh....aa..............",
-    "......hh..aaaaaa..............",
-    ".....hh..aabbba...............",
-    ".....h..abbbba................",
-    "....h..abbbbba................",
-    "...hh.abbbbbba................",
-    "...h.aabbbbbba................",
-    "...h.abbbbbbba................",
-    "..h..abbbbbbba................",
-    "..h..abbbbbbba................",
-    "..h.abbbbbbbbba...............",
-    "..h.abbbbbbbbba...............",
-    "..h..abbbbbbbbba..............",
-    "..h..abbbbbbbbbba.............",
-    "...h.abbbbbbbbbccaa...........",
-    "...h.aabbbbbbbcccccaaaaaa.....",
-    "...hh.abbbbbbcccccccccca......",
-    "....h..abbbbcccccccccca.......",
-    ".....h..abbcccccccccca..h.....",
-    ".....hh..aaccccccccaa..hh.....",
-    "......hh..aaaaccaaaa..hh......",
-    "........hh....aa....hh........",
-    ".........hhh......hhh.........",
-    "............hhhhhh............",
+MOON: Sprite = (  # a clean crescent moon: a rim, b body, c shade
+    "..........aa.........",
+    "......aaaaaa.........",
+    ".....aabbba..........",
+    "....abbbba...........",
+    "...abbbbba...........",
+    "..abbbbbba...........",
+    ".aabbbbbba...........",
+    ".abbbbbbba...........",
+    ".abbbbbbba...........",
+    ".abbbbbbba...........",
+    "abbbbbbbbba..........",
+    "abbbbbbbbba..........",
+    ".abbbbbbbbba.........",
+    ".abbbbbbbbbba........",
+    ".abbbbbbbbbccaa......",
+    ".aabbbbbbbcccccaaaaaa",
+    "..abbbbbbcccccccccca.",
+    "...abbbbcccccccccca..",
+    "....abbcccccccccca...",
+    ".....aaccccccccaa....",
+    "......aaaaccaaaa.....",
+    "..........aa.........",
 )
-CLOUD: Sprite = (  # a lit top edge, b body, c shaded underside
-    "..........aaaa..........",
-    ".......aaabbbbaa........",
-    ".....aabbbbbbbbba.aaa...",
-    "....abbbbbbbbbbbbabbbaa.",
-    "..aabbbbbbbbbbbbbbbbbbba",
-    ".abbbbbbbbbbbbbbbbbbbbba",
-    "abbbbbbbbbbbbbbbbbbbbbbc",
-    ".cccccccccccccccccccccc.",
+SPARKLE: tuple[Sprite, Sprite, Sprite] = (  # a four-point sparkle growing: s arm, w centre
+    ("w",),
+    (".s.", "sws", ".s."),
+    ("..s..", "..s..", "sswss", "..s..", "..s.."),
 )
-STAR: tuple[Sprite, Sprite] = (("s",), (".s.", "sws", ".s."))  # a dim point, then a bright twinkle
 BLOSSOM: Sprite = (  # five petals round a centre: p petal, q petal's shade, c centre
     ".p.p.",
     "ppqpp",
@@ -123,14 +127,6 @@ BLOSSOM: Sprite = (  # five petals round a centre: p petal, q petal's shade, c c
     "..p..",
 )
 PETAL: tuple[Sprite, Sprite] = (("pq",), ("p", "q"))  # a falling petal, turning
-LOGS: Sprite = (  # two crossed logs: l log, k cut end
-    "kl............lk",
-    ".kll........llk.",
-    "...llll..llll...",
-    "......llll......",
-    "...llll..llll...",
-    ".kll........llk.",
-)
 FLAME: tuple[Sprite, Sprite, Sprite] = (  # the fire's three frames: r outer red, o orange, y yellow core
     (
         ".....r......",
@@ -224,19 +220,9 @@ JELLYFISH: tuple[Sprite, Sprite] = (  # its bell open, then pulsed shut: e edge,
         "......t......",
     ),
 )
-PRISM: Sprite = (  # a glass prism: e edge, f faint glass
-    ".......e.......",
-    "......efe......",
-    ".....effffe....",
-    "....effffffe...",
-    "...effffffffe..",
-    "..effffffffffe.",
-    ".effffffffffffe",
-    "eeeeeeeeeeeeeee",
-)
 SPRITES: dict[str, Sprite | tuple[Sprite, ...]] = {
-    "MOON": MOON, "CLOUD": CLOUD, "STAR": STAR, "BLOSSOM": BLOSSOM, "PETAL": PETAL, "LOGS": LOGS, "FLAME": FLAME,
-    "SUN": SUN, "JELLYFISH": JELLYFISH, "PRISM": PRISM,
+    "MOON": MOON, "SPARKLE": SPARKLE, "BLOSSOM": BLOSSOM, "PETAL": PETAL, "FLAME": FLAME, "SUN": SUN,
+    "JELLYFISH": JELLYFISH,
 }
 
 
@@ -291,6 +277,9 @@ class _Canvas:
         self.height = 2 * rows
         self.pixels: dict[tuple[int, int], str] = {}
         self.reach: dict[tuple[str, str], float] = {}  # (colour, under) -> the furthest mix within the cap
+        # What a colour is mixed from: on a dark ground a darker shade of it, so a tile keeps its hue (mixed into a
+        # navy, a pale yellow turns grey; mixed from near black it stays a soft gold), on a light ground the ground.
+        self.under = ground if is_light(ground) else blend(ground, BLACK, UNDER_DARK)
 
     def tone(self, colour: str, strength: float, under: str = "") -> str | None:
         """`colour` mixed from `under` (the ground unless named: a pale colour mixed toward black keeps its hue where
@@ -300,7 +289,7 @@ class _Canvas:
         steps = round(_clamp(strength, 0.0, 1.0) * LEVELS)
         if steps <= 0:
             return None
-        under = under or self.ground
+        under = under or self.under
         reach = self.reach.get((colour, under))
         if reach is None:
             reach = PEAK
@@ -352,146 +341,186 @@ class _Canvas:
         return tuple(cells[at] for at in sorted(cells))
 
 
+def _pastel(colour: str) -> str:
+    """`colour` softened toward white (`PASTEL`), the pixel aura's palette."""
+    return blend(colour, WHITE, PASTEL)
+
+
+def _aura(canvas: _Canvas, centre_y: float, centre_x: float, tall: float, wide: float, colours: Sequence[str],
+          salt: int, breath: float = 1.0, fill: float = 0.85, hollow: float = 0.0) -> None:
+    """A pixel aura (the brand's, after the `oh-my-hermes` pixel-aura short): square tiles of `AURA_TILE` pixels a side
+    scattered over an ellipse `tall` pixel rows by `wide` columns round (`centre_y`,
+    `centre_x`), solid near the middle and thinning out to single tiles at the rim, each patch of it in one of
+    `colours` (`_pastel`) and each tile a shade lighter or darker. Which tiles are lit is fixed by place (`salt`), so
+    the aura only changes where `breath` (its size, near 1) moves the rim; `hollow` leaves the middle out, for a
+    halo."""
+    tile = AURA_TILE
+    reach_y, reach_x = tall / 2 * breath, wide / 2 * breath
+    first_y, first_x = int((centre_y - reach_y) // tile), int((centre_x - reach_x) // tile)
+    for tile_y in range(first_y, int((centre_y + reach_y) // tile) + 1):
+        for tile_x in range(first_x, int((centre_x + reach_x) // tile) + 1):
+            y, x = tile_y * tile, tile_x * tile
+            down, across = (y + tile / 2 - centre_y) / (tall / 2), (x + tile / 2 - centre_x) / (wide / 2)
+            far = down * down + across * across  # the place's own distance: breathing moves only the rim
+            if far >= breath * breath or far < hollow * hollow:
+                continue
+            spot = tile_y * 7919 + tile_x
+            if _noise(spot, salt) > min(1.0, 1.5 * fill * max(1 - far, 0.0) ** 0.8) + 0.06:
+                continue
+            region = (math.atan2(down, across) / TAU + 0.5 + 0.25 * _noise((tile_y // 3) * 977 + tile_x // 4, salt + 1))
+            colour = _pastel(colours[int(region * len(colours)) % len(colours)])
+            tone = canvas.tone(colour, 0.5 + 0.35 * max(1 - far, 0.0) + 0.3 * (_noise(spot, salt + 2) - 0.5))
+            for row in range(tile):
+                for col in range(tile):
+                    canvas.dot(y + row, x + col, tone)
+
+
+def _sparkles(canvas: _Canvas, centre_y: float, centre_x: float, tall: float, wide: float, count: int,
+              colour: str, seconds: float, salt: int) -> None:
+    """`count` four-point sparkles over an area `tall` by `wide` pixels round (`centre_y`, `centre_x`), each growing
+    through `SPARKLE`'s frames and gone again in turn, at its own pace."""
+    colours = {"s": canvas.tone(_pastel(colour), 1.0), "w": canvas.tone(WHITE, 1.0)}
+    scale = canvas.scale()
+    for index in range(count):
+        phase = (seconds / (1.6 + 1.2 * _noise(index, salt)) + _noise(index, salt + 1)) % 1
+        step = int(phase * 6)  # off, small, medium, large, medium, small
+        if step == 0:
+            continue
+        frame = SPARKLE[(0, 0, 1, 2, 1, 0)[step]]
+        y = centre_y + (_noise(index, salt + 2) - 0.5) * tall - len(frame) * scale // 2
+        x = centre_x + (_noise(index, salt + 3) - 0.5) * wide - len(frame[0]) * scale // 2
+        canvas.sprite(y, x, frame, colours, scale)
+
+
 def _moonlit(canvas: _Canvas, palette: LogoPalette, seconds: float) -> None:
-    """A crescent moon high on the right, its halo pulsing; two clouds drifting right across the screen, one across the
-    moon's foot; stars twinkling."""
-    cols, height = canvas.cols, canvas.height
-    stops = _logo_stops(palette)
-    for index in range(_count(cols, canvas.rows, 140)):
-        shine = _wave(seconds, 1.5 + 2 * _noise(index, 3), _noise(index, 4))
-        star = STAR[1] if shine > 0.85 else STAR[0]
-        colours = {"s": canvas.tone(stops[1], 0.35 + 0.5 * shine), "w": canvas.tone(stops[0], 1.0)}
-        canvas.sprite(_noise(index, 2) * height, _noise(index, 1) * cols, star, colours)
-    top, bottom = canvas.band()
-    moonlight = canvas.ground if is_light(canvas.ground) else BLACK  # a pale gold on a dark ground, not a grey
-    moon_top, moon_left = top + 2, cols - len(MOON[0]) - 6
-    pulse = _wave(seconds, 2.4, 0.0)
-    canvas.sprite(moon_top, moon_left, MOON, {
-        "a": canvas.tone(stops[0], 1.0, moonlight), "b": canvas.tone(stops[0], 0.85, moonlight),
-        "c": canvas.tone(stops[0], 0.6, moonlight), "h": canvas.tone(stops[0], 0.2 + 0.35 * pulse, moonlight),
-    })
-    colours = {"a": canvas.tone(stops[1], 0.7), "b": canvas.tone(stops[2], 0.5), "c": canvas.tone(stops[-1], 0.4)}
-    scale = canvas.scale()
-    width = len(CLOUD[0]) * scale
-    for index in range(1 if cols * canvas.rows < TWO_CLOUD_CELLS else 2):
-        span = cols + width
-        left = (_noise(index, 13) * span + seconds * (1.2 + 0.9 * index) * scale) % span - width
-        at = top + (bottom - top - len(CLOUD) * scale) * 0.55
-        if index == 1:
-            at = moon_top + len(MOON) - 6  # across the moon's foot
-        canvas.sprite(at, left, CLOUD, colours, scale)
-
-
-def _sakura(canvas: _Canvas, palette: LogoPalette, seconds: float) -> None:
-    """A cherry branch reaching in from the right edge, two pixels thick, swaying a little, with five-petal
-    blossoms along it, and petals falling from it, swaying and turning as they fall."""
-    cols, height = canvas.cols, canvas.height
-    stops = _logo_stops(palette)
-    root, _bottom = canvas.band()  # the branch comes in from the right edge at the band's top and droops into it
-    reach, drop = min(cols * 0.36, 60.0), _clamp(height * 0.2, 8, 20)
-    sway = math.sin(TAU * seconds / 3.0)
-    bark, knot = canvas.tone(palette.edge, 1.0), canvas.tone(palette.edge, 0.7)
-    scale = canvas.scale()
-    for step in range(int(reach)):
-        share = step / reach
-        y = root + drop * share ** 1.4 + 1.2 * sway * share
-        for thick in range(scale + (1 if share < 0.6 else 0)):
-            canvas.dot(y + thick, cols - 1 - step, bark)
-        if step % 9 == 4:  # a twig
-            for down in range(2 * scale):
-                canvas.dot(y + scale + 1 + down, cols - 2 - step - down // 2, knot)
-    petals = {"p": canvas.tone(stops[0], 1.0), "q": canvas.tone(stops[1], 0.8), "c": canvas.tone(stops[-1], 1.0)}
-    span = len(BLOSSOM) * scale
-    for index in range(7):
-        share = 0.08 + 0.13 * index
-        y = root + drop * share ** 1.4 + 1.2 * sway * share
-        canvas.sprite(y - span / 2 + scale * 2 * (index % 2), cols - 1 - share * reach - span / 2, BLOSSOM, petals,
-                      scale)
-    for index in range(_count(cols, canvas.rows, 120)):
-        fall = 3.5 + 3.0 * _noise(index, 1)
-        y = (_noise(index, 2) * (height + 4) + seconds * fall) % (height + 4) - 2
-        drift = (2 + 2 * _noise(index, 3)) * math.sin(TAU * (seconds / (2 + 2 * _noise(index, 4)) + _noise(index, 5)))
-        x = (cols - _noise(index, 6) * reach * 1.4 - y * 0.4 + drift) % cols
-        colours = {"p": canvas.tone(stops[index % 2], 0.9), "q": canvas.tone(stops[index % 2], 0.6)}
-        canvas.sprite(y, x, _frame(PETAL, seconds, 0.6, _noise(index, 7)), colours)
-
-
-def _aurora(canvas: _Canvas, palette: LogoPalette, seconds: float) -> None:
-    """Curtains of light over the screen's right side: ribbons of pixel columns, three lit and two dark in turn, each
-    column a gradient bright at its top and fading down, the tops waving and the lengths breathing, in the look's
-    green, teal and violet across the screen."""
+    """A clean pixel crescent moon on the right with a pastel pixel halo that breathes, soft pixel clouds drifting,
+    and sparkle stars twinkling."""
     cols = canvas.cols
     stops = _logo_stops(palette)
     top, bottom = canvas.band()
-    reach = (bottom - top) * 0.7
+    scale = canvas.scale()
+    wide, tall = len(MOON[0]), len(MOON)  # one pixel an art pixel: it fits the band at any size
+    moon_top, moon_left = max(top, bottom - tall - 4), cols - wide - 12
+    centre_y, centre_x = moon_top + tall / 2, moon_left + wide / 2
+    _aura(canvas, centre_y, centre_x, tall * 1.6, wide * 1.6, (stops[2], stops[3], stops[1]), 31,
+          breath=1 + 0.05 * math.sin(TAU * seconds / 3), fill=0.4, hollow=0.66)
+    moon = _pastel(stops[0])
+    canvas.sprite(moon_top, moon_left, MOON, {"a": canvas.tone(moon, 1.0), "b": canvas.tone(moon, 0.85),
+                                              "c": canvas.tone(moon, 0.6)})
+    for index in range(1 if cols * canvas.rows < TWO_CLOUD_CELLS else 2):
+        span = cols * (1 - RIGHT) + 40 * scale
+        left = cols * RIGHT + ((0.2 + 0.5 * index) * span + seconds * 0.6) % span - 20 * scale
+        _aura(canvas, bottom - (6 + 10 * index) * scale, left + 10 * scale, 7 * scale, 22 * scale,
+              (stops[3], stops[4], stops[2]), 41 + index, fill=0.8)
+    _sparkles(canvas, (top + bottom) / 2, cols * (0.5 + RIGHT / 2), bottom - top, cols * (1 - RIGHT), 9, stops[0],
+              seconds, 51)
+
+
+def _sakura(canvas: _Canvas, palette: LogoPalette, seconds: float) -> None:
+    """Clusters of cherry blossom on the right, each a soft pink pixel cloud with five-petal blossoms in it, petals
+    falling from them, swaying and turning, and sparkles."""
+    cols, height = canvas.cols, canvas.height
+    stops = _logo_stops(palette)
+    top, bottom = canvas.band()
+    scale = canvas.scale()
+    petals = {"p": canvas.tone(stops[0], 1.0), "q": canvas.tone(stops[0], 0.7), "c": canvas.tone(stops[-1], 1.0)}
+    sway = math.sin(TAU * seconds / 3.0)
+    for index in range(3):
+        centre_y = top + (bottom - top) * (0.2 + 0.25 * index)
+        centre_x = cols - (0.08 + 0.12 * index) * cols * (1 - RIGHT) * 2
+        _aura(canvas, centre_y, centre_x, 14 * scale, 30 * scale, (stops[1], stops[0], stops[1]), 61 + index,
+              breath=1 + 0.04 * sway, fill=0.22)
+        for blossom in range(5):
+            y = centre_y + (_noise(index * 7 + blossom, 62) - 0.5) * 9 * scale - 2 * scale
+            x = centre_x + (blossom - 2) * 6 * scale + (_noise(index * 7 + blossom, 63) - 0.5) * 3 * scale \
+                - 2 * scale + sway
+            canvas.sprite(y, x, BLOSSOM, petals, scale)
+    for index in range(_count(cols, canvas.rows, 140)):
+        fall = 3.5 + 3.0 * _noise(index, 1)
+        y = (_noise(index, 2) * (height + 4) + seconds * fall) % (height + 4) - 2
+        drift = (2 + 2 * _noise(index, 3)) * math.sin(TAU * (seconds / (2 + 2 * _noise(index, 4)) + _noise(index, 5)))
+        x = cols * RIGHT + (_noise(index, 6) * cols * (1 - RIGHT) - y * 0.3 + drift) % (cols * (1 - RIGHT))
+        colours = {"p": canvas.tone(_pastel(stops[index % 2]), 0.9), "q": canvas.tone(_pastel(stops[index % 2]), 0.6)}
+        canvas.sprite(y, x, _frame(PETAL, seconds, 0.6, _noise(index, 7)), colours)
+    _sparkles(canvas, (top + bottom) / 2, cols * (0.5 + RIGHT / 2), bottom - top, cols * (1 - RIGHT), 6, stops[1],
+              seconds, 64)
+
+
+def _aurora(canvas: _Canvas, palette: LogoPalette, seconds: float) -> None:
+    """Pastel pixel ribbons of light over the screen's right side: columns of scattered square pixels, dense at the
+    ribbon's top and thinning out below, their tops waving, in the look's mint, teal and violet; sparkle stars over
+    them."""
+    cols = canvas.cols
+    stops = _logo_stops(palette)
+    top, bottom = canvas.band()
+    reach = (bottom - top) * 0.75
     for col in range(int(cols * RIGHT), cols):
-        if col % 5 >= 3:
-            continue  # the dark gap between two ribbons
         glow = _wave(seconds, 9, col / (cols * 0.6))
-        if glow < 0.2:
+        if glow < 0.25:
             continue
         crest = top + reach * (0.15 + 0.15 * math.sin(TAU * (col / (cols * 0.4) + seconds / 4)))
-        length = reach * (0.35 + 0.35 * _wave(seconds, 6, col / (cols * 0.3)))
-        colour = stops[min(int(((col / cols + seconds / 40) % 1) * len(stops)), len(stops) - 1)]
+        length = reach * (0.4 + 0.3 * glow)
+        colour = _pastel(stops[min(int(((col / cols + seconds / 40) % 1) * len(stops)), len(stops) - 1)])
         for down in range(int(length)):
             fade = 1 - down / length
-            canvas.dot(crest + down, col, canvas.tone(colour, (0.35 + 0.65 * glow) * (0.25 + 0.75 * fade)))
+            if _noise((int(crest) + down) * 7919 + col, 71) > 0.25 + 0.75 * fade:
+                continue  # scattered: thinning out below
+            canvas.dot(crest + down, col, canvas.tone(colour, (0.4 + 0.6 * glow) * (0.35 + 0.65 * fade)))
+    _sparkles(canvas, top + 6, cols * (0.5 + RIGHT / 2), 12, cols * (1 - RIGHT), 7, stops[1], seconds, 72)
 
 
 def _ember(canvas: _Canvas, palette: LogoPalette, seconds: float) -> None:
-    """A campfire low on the right: crossed logs, a flame flickering through three frames over them, and sparks
-    rising from it, fading and reddening as they climb."""
+    """A fire low on the right: a warm pastel pixel glow, a flame flickering through three frames over it, embers
+    rising from it as square pixels, and sparkles."""
     cols = canvas.cols
     stops = _logo_stops(palette)
     _top, bottom = canvas.band()
     scale = canvas.scale()
-    logs_wide, logs_tall = len(LOGS[0]) * scale, len(LOGS) * scale
-    left = int(cols * 0.8) - logs_wide // 2
-    canvas.sprite(bottom - logs_tall, left, LOGS, {"l": canvas.tone(palette.edge, 1.0),
-                                                   "k": canvas.tone(stops[0], 0.6)}, scale)
     flame = _frame(FLAME, seconds, 0.15)
-    colours = {"r": canvas.tone(stops[-1], 0.9), "o": canvas.tone(stops[2], 1.0), "y": canvas.tone(stops[0], 1.0)}
-    canvas.sprite(bottom - logs_tall - (len(flame) - 2) * scale, left + (logs_wide - len(flame[0]) * scale) // 2,
-                  flame, colours, scale)
-    for index in range(_count(cols, canvas.rows, 110)):
+    wide, tall = len(flame[0]) * scale, len(flame) * scale
+    left, flame_top = int(cols * 0.8) - wide // 2, bottom - tall
+    _aura(canvas, bottom - tall * 0.35, left + wide / 2, tall * 1.1, wide * 2.6, (stops[0], stops[1], stops[2]), 81,
+          breath=1 + 0.06 * _wave(seconds, 1.3, 0.0), fill=0.6)
+    colours = {"r": canvas.tone(_pastel(stops[-1]), 0.9), "o": canvas.tone(_pastel(stops[2]), 1.0),
+               "y": canvas.tone(_pastel(stops[0]), 1.0)}
+    canvas.sprite(flame_top, left, flame, colours, scale)
+    for index in range(_count(cols, canvas.rows, 160)):
         height = canvas.height * (0.3 + 0.4 * _noise(index, 1))
         risen = (seconds * (6.0 + 6.0 * _noise(index, 2)) + _noise(index, 3) * height) % height
         share = risen / height
-        x = left + logs_wide / 2 + (_noise(index, 4) - 0.5) * 7 * scale \
+        x = left + wide / 2 + (_noise(index, 4) - 0.5) * wide * 1.4 \
             + 3 * math.sin(TAU * (seconds / 2 + _noise(index, 5))) * share
-        colour = stops[min(1 + int(share * (len(stops) - 1)), len(stops) - 1)]
-        canvas.dot(bottom - logs_tall - 6 * scale - risen, x, canvas.tone(colour, 1 - 0.8 * share))
+        tone = canvas.tone(_pastel(stops[min(1 + int(share * (len(stops) - 1)), len(stops) - 1)]), 1 - 0.7 * share)
+        canvas.sprite(flame_top - risen, x, ("ee", "ee") if scale > 1 else ("e",), {"e": tone})
+    _sparkles(canvas, flame_top - tall, left + wide / 2, tall * 2, wide * 4, 5, stops[0], seconds, 82)
 
 
 def _gold(canvas: _Canvas, palette: LogoPalette, seconds: float) -> None:
-    """A sun high on the right, its rays turning round it in three steps; motes floating across the screen."""
+    """A soft pixel sun on the right: its disc, a warm pastel pixel glow round it that breathes, sparkles twinkling
+    round it as its rays, and motes floating."""
     cols = canvas.cols
     stops = _logo_stops(palette)
     top, bottom = canvas.band()
-    for index in range(_count(cols, canvas.rows, 80)):
-        x = _noise(index, 1) * cols + 3 * math.sin(TAU * (seconds / (5 + 4 * _noise(index, 2)) + _noise(index, 3)))
-        bob = 3 * math.sin(TAU * (seconds / (4 + 4 * _noise(index, 5)) + _noise(index, 6)))
-        y = top + _noise(index, 4) * (bottom - top) + bob
-        shine = _wave(seconds, 1.5 + 2 * _noise(index, 7), _noise(index, 8))
-        canvas.dot(y, x, canvas.tone(stops[1 + index % 3], 0.3 + 0.7 * shine))
     scale = canvas.scale()
     size = len(SUN) * scale
-    sun_top, sun_left = top + 6, cols - size - 16
+    sun_top, sun_left = top + 6 * scale, cols - size - 16
     centre_y, centre_x = sun_top + size / 2, sun_left + size / 2
-    turn = int(seconds / 0.4) % 3 * (math.pi / 12)  # three steps of 15 degrees, then round again
-    ray = canvas.tone(stops[2], 0.8)
-    for index in range(8):
-        angle = turn + index * TAU / 8
-        for step in range(4 * scale):
-            reach = size / 2 + 2 * scale + step
-            canvas.dot(centre_y + reach * math.sin(angle), centre_x + reach * math.cos(angle), ray)
-    canvas.sprite(sun_top, sun_left, SUN, {"o": canvas.tone(stops[2], 1.0), "y": canvas.tone(stops[1], 1.0),
-                                           "w": canvas.tone(stops[0], 1.0)}, scale)
+    for index in range(_count(cols, canvas.rows, 120)):
+        x = cols * RIGHT + _noise(index, 1) * cols * (1 - RIGHT) \
+            + 3 * math.sin(TAU * (seconds / (5 + 4 * _noise(index, 2)) + _noise(index, 3)))
+        y = top + _noise(index, 4) * (bottom - top)
+        canvas.dot(y, x, canvas.tone(_pastel(stops[1 + index % 3]), 0.4 + 0.5 * _wave(seconds, 2, _noise(index, 8))))
+    _aura(canvas, centre_y, centre_x, size * 2.2, size * 2.6, (stops[0], stops[1], stops[2]), 91,
+          breath=1 + 0.05 * math.sin(TAU * seconds / 2.5), fill=0.55, hollow=0.3)
+    canvas.sprite(sun_top, sun_left, SUN, {"o": canvas.tone(_pastel(stops[2]), 1.0),
+                                           "y": canvas.tone(_pastel(stops[1]), 1.0),
+                                           "w": canvas.tone(_pastel(stops[0]), 1.0)}, scale)
+    _sparkles(canvas, centre_y, centre_x, size * 2.6, size * 3.2, 8, stops[0], seconds, 92)
 
 
 def _violet(canvas: _Canvas, palette: LogoPalette, seconds: float) -> None:
-    """Three jellyfish drifting slowly across the screen's right side in the lower half, each bell pulsing between
-    two frames, its tentacles trailing."""
+    """Three pastel pixel jellyfish drifting slowly across the screen's right side in the lower half, each with a
+    soft glow behind its bell, the bell pulsing between two frames and its tentacles trailing; sparkles round them."""
     cols = canvas.cols
     stops = _logo_stops(palette)
     top, bottom = canvas.band()
@@ -501,59 +530,63 @@ def _violet(canvas: _Canvas, palette: LogoPalette, seconds: float) -> None:
         span = cols * (1 - RIGHT) + width
         x = cols * RIGHT + ((index / 3 + 0.1 * _noise(index, 1)) * span + seconds * 0.5) % span - width  # spaced
         y = top + max(bottom - top - tall, 0) * (0.15 + 0.35 * index)
-        colour = stops[(2 * index + 1) % len(stops)]
-        colours = {"e": canvas.tone(colour, 1.0), "b": canvas.tone(colour, 0.65), "w": canvas.tone(stops[0], 1.0),
-                   "t": canvas.tone(colour, 0.5)}
+        colour = _pastel(stops[(2 * index + 1) % len(stops)])
+        _aura(canvas, y + tall * 0.2, x + width / 2, tall * 0.7, width * 1.6, (colour,), 101 + index, fill=0.32,
+              hollow=0.45)
+        colours = {"e": canvas.tone(colour, 1.0), "b": canvas.tone(colour, 0.7),
+                   "w": canvas.tone(_pastel(stops[0]), 1.0), "t": canvas.tone(colour, 0.55)}
         canvas.sprite(y, x, _frame(JELLYFISH, seconds, 1.2, _noise(index, 4)), colours, scale)
+    _sparkles(canvas, (top + bottom) / 2, cols * (0.5 + RIGHT / 2), bottom - top, cols * (1 - RIGHT), 7, stops[0],
+              seconds, 104)
 
 
 def _graphite(canvas: _Canvas, palette: LogoPalette, seconds: float) -> None:
-    """Rain falling into a puddle low on the screen; where a drop lands a ripple spreads, an ellipse of pixels
-    growing on the puddle's line. One drop in six is the look's turquoise."""
+    """A soft grey pixel cloud on the right raining cool pastel streaks into a puddle low on the screen, where each
+    landing drop spreads a pixel ripple; a sparkle now and then. One drop in six is the look's turquoise."""
     cols = canvas.cols
     grey = palette.greys[0] if palette.greys else palette.label
-    _top, puddle = canvas.band()
-    surface = canvas.tone(palette.whites[3] if palette.whites else palette.label, 0.5)
-    for col in range(int(cols * RIGHT * 0.5), cols):
-        if _noise(col, 50) < 0.6:
-            canvas.dot(puddle, col, surface)
-    for index in range(_count(cols, canvas.rows, 160)):
-        fall = 18.0 + 8.0 * _noise(index, 1)
-        drop, travel = divmod(seconds * fall + _noise(index, 2) * (puddle + 12), puddle + 12)
-        col = int(_noise(index * 131 + int(drop), 3) * cols)
-        colour = palette.spark if palette.spark and index % 6 == 0 else grey
-        if travel < puddle:
-            for tail in range(4):
-                canvas.dot(travel - tail, col, canvas.tone(colour, 0.85 - 0.18 * tail))
+    top, puddle = canvas.band()
+    scale = canvas.scale()
+    cloud_y, cloud_x, cloud_wide = top + 6 * scale, cols * (0.5 + RIGHT / 2), cols * (1 - RIGHT) * 0.8
+    _aura(canvas, cloud_y, cloud_x, 10 * scale, cloud_wide, (grey, palette.spark or grey, grey), 111,
+          breath=1 + 0.03 * math.sin(TAU * seconds / 4), fill=0.8)
+    for col in range(int(cloud_x - cloud_wide / 2), int(cloud_x + cloud_wide / 2)):
+        if _noise(col, 50) < 0.5:
+            canvas.dot(puddle, col, canvas.tone(_pastel(grey), 0.45))
+    fall_from = cloud_y + 3 * scale
+    for index in range(_count(cols, canvas.rows, 220)):
+        fall = 14.0 + 6.0 * _noise(index, 1)
+        cycle = puddle - fall_from + 12
+        drop, travel = divmod(seconds * fall + _noise(index, 2) * cycle, cycle)
+        col = int(cloud_x + (_noise(index * 131 + int(drop), 3) - 0.5) * cloud_wide)
+        colour = _pastel(palette.spark if palette.spark and index % 6 == 0 else grey)
+        if fall_from + travel < puddle:
+            for tail in range(3):
+                canvas.dot(fall_from + travel - tail, col, canvas.tone(colour, 0.85 - 0.2 * tail))
         else:
-            ring = (travel - puddle) / 12  # landed: the ripple grows for the rest of the fall's cycle
-            wide, tall = 2 + 8 * ring, 1 + 2 * ring
+            ring = (fall_from + travel - puddle) / 12
             tone = canvas.tone(colour, 0.9 - 0.6 * ring)
             for step in range(16):
                 angle = step * TAU / 16
-                canvas.dot(puddle + tall * math.sin(angle), col + wide * math.cos(angle), tone)
+                canvas.dot(puddle + (1 + 2 * ring) * math.sin(angle), col + (2 + 8 * ring) * math.cos(angle), tone)
+    _sparkles(canvas, (top + puddle) / 2, cloud_x, puddle - top, cloud_wide, 3, palette.spark or grey, seconds, 112)
 
 
 def _spectrum(canvas: _Canvas, palette: LogoPalette, seconds: float) -> None:
-    """A prism on the screen's right side, a beam of light going into it from the left and five rays, one per hue,
-    fanning out of it to the right; pulses of light run along the beam and the rays."""
+    """The brand's pixel aura on the right: a soft cloud of square pixels in its five hues (`AURA_HUES`), patch by
+    patch, solid near its middle and scattering out to single pixels, breathing, with loose pixels round it and
+    four-point sparkles twinkling."""
     cols = canvas.cols
-    stops = _logo_stops(palette)
-    scale = canvas.scale()
     top, bottom = canvas.band()
-    prism_top, prism_left = top + (bottom - top) * 0.15, cols * 0.62
-    canvas.sprite(prism_top, prism_left, PRISM, {"e": canvas.tone(palette.label, 1.0),
-                                                 "f": canvas.tone(palette.label, 0.3)}, scale)
-    middle = prism_top + len(PRISM) * scale * 0.6
-    enter, leave = int(prism_left + 3 * scale), prism_left + (len(PRISM[0]) - 4) * scale
-    pulse = seconds * 10
-    for col in range(int(cols * RIGHT * 0.8), enter):
-        canvas.dot(middle, col, canvas.tone(palette.label, 1.0 if (col - pulse) % 15 < 2 else 0.4))
-    for hue in range(len(stops)):
-        slope = (hue - (len(stops) - 1) / 2) * 0.12  # pixel rows per column: the fan opens a few rows each way
-        for step in range(int(cols - leave)):
-            bright = 1.0 if (step - pulse) % 17 < 2 else 0.45
-            canvas.dot(middle + slope * step, leave + step, canvas.tone(stops[hue], bright))
+    wide = min(cols * (1 - RIGHT) * 0.8, 70.0)
+    centre_y, centre_x = (top + bottom) / 2, cols * (0.5 + RIGHT / 2)
+    _aura(canvas, centre_y, centre_x, min(wide * 0.5, (bottom - top) * 0.95), wide, AURA_HUES, 121,
+          breath=1 + 0.05 * math.sin(TAU * seconds / 3), fill=0.85)
+    for index in range(_count(cols, canvas.rows, 160)):  # loose pixels round it
+        y = centre_y + (_noise(index, 122) - 0.5) * (bottom - top) * 1.3
+        x = centre_x + (_noise(index, 123) - 0.5) * wide * 1.6
+        canvas.sprite(y, x, ("pp", "pp"), {"p": canvas.tone(_pastel(AURA_HUES[index % len(AURA_HUES)]), 0.7)})
+    _sparkles(canvas, centre_y, centre_x, (bottom - top) * 1.2, wide * 1.5, 9, AURA_HUES[2], seconds, 124)
 
 
 SCENES: dict[str, Callable[[_Canvas, LogoPalette, float], None]] = {

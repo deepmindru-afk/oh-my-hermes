@@ -873,17 +873,18 @@ run and approval decision stays Hermes'; the screen is OMH's.
   saved.
 - Each launch look has a living wallpaper: the TUI sets the terminal's
   background to the look's own colour (OSC 11) while it runs and keeps a
-  scene moving in the screen's blank cells, drawn as pixel art with half
-  blocks, two pixels to a cell (`▀` over a background, `▄`, and a space on
-  a background where both pixels match; nothing else is drawn). moonlit
-  is deep navy with a crescent moon whose halo pulses, drifting clouds and
-  twinkling stars; sakura a dusky plum with a cherry branch of five-petal
-  blossoms from the top-right corner and petals falling; aurora deep teal
-  with curtains of light that wave; ember a dark warm brown with a campfire
-  whose flame flickers and sparks rising; gold a sun whose rays turn, and
-  motes; violet jellyfish drifting with pulsing bells and trailing
-  tentacles; graphite rain over a puddle whose ripples spread; spectrum a
-  prism splitting a beam into five hues. A terminal with a
+  scene moving in the screen's blank cells, drawn as pixel art in the
+  brand's pixel-aura style: half blocks, two square pixels to a cell (`▀`
+  over a background, `▄`, and a space on a background where both pixels
+  match; nothing else is drawn), solid square tiles that scatter out to
+  single ones, and four-point `+` sparkles that grow and fade. spectrum is
+  the pixel aura itself; moonlit is deep navy with a crescent moon in a
+  pixel halo, soft tile clouds and sparkle stars; sakura a dusky plum with
+  blossom clusters and falling petals; aurora deep teal with ribbons of
+  scattered tiles; ember a dark warm brown with a flame flickering in a
+  warm glow and rising embers; gold a sun in a breathing glow; violet
+  pastel jellyfish with pulsing bells; graphite a cloud raining into a
+  rippling puddle. A terminal with a
   light background gets each look's pale ground instead.
   The theme is measured against that ground, and every word and mark also
   keeps its floor against the terminal's own background, which the rows
