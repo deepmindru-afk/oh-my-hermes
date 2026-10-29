@@ -15,9 +15,10 @@ Two small, explicit steps, no shell parser:
   opened it through its closing line; neither is read for what it runs.
 - A command is risky only when a program it runs (its first word after any
   `NAME=value` assignments, the first word of a pipe stage, or the word after
-  `sudo`, `env` or `xargs` and their options) matches a row of `RISKS`. Words
-  are read quote-aware, so text inside quotes, or an argument to `echo` or
-  `grep`, never matches.
+  `sudo`, `env` or `xargs` and their options) matches a row of `RISKS`, or
+  when a pipe stage runs a shell after one that downloads (`curl … | sh`).
+  Words are read quote-aware, so text inside quotes, or an argument to `echo`
+  or `grep`, never matches.
 
 `RISKS` is far narrower than Hermes' own table, so what it does not find is
 not safe. `Segment.foldable` is a closed allowlist instead: a command may
@@ -26,13 +27,15 @@ fold out of sight only when every program it runs reads and changes nothing
 in it runs more than its words say (a substitution, a background job, a
 here-document, an open quote, a function or alias the line defines, an
 assignment in front of a program, git's `-c`) or reads as a risk inside
-quotes (Hermes' patterns are not quote-aware). Everything else is listed.
+quotes (Hermes' patterns are not quote-aware). Everything else is listed,
+and so is a command that decides what a listed one after it acts on: a
+directory change or a variable assignment (`_sets_state`).
 """
 
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 # Words that run the program after them; their options that take a value consume the next word.
 _RUNNERS = {"sudo": frozenset("ugCDhprtUT"), "env": frozenset("uCS"), "xargs": frozenset("InPLsdEa")}
@@ -41,6 +44,13 @@ _GIT_VALUE_OPTIONS = frozenset(("-C", "-c", "--git-dir", "--work-tree", "--names
 # The programs a command may run and still fold out of sight: they read, print or move the shell, and change
 # nothing. git folds only on `_git_folds`, gh only on `GH_READ_ONLY`.
 FOLDABLE = frozenset(("cd", "pushd", "popd", "echo", "printf", "ls", "pwd", "true", ":", "wc", "grep", "head"))
+# The `FOLDABLE` programs that move the shell, so a later command acts somewhere else; they fold only with nothing
+# listed after them (`_sets_state`).
+_MOVES = frozenset(("cd", "pushd", "popd"))
+# The programs that download, and the shells that run what is piped into them (hermes-agent bf0203a794
+# tools/approval_detection.py:157-158 `_SHELL_NAMES`).
+_FETCHERS = frozenset(("curl", "wget"))
+_SHELLS = frozenset(("bash", "sh", "zsh", "ksh", "dash"))
 GH_READ_ONLY = frozenset((
     ("pr", "view"), ("pr", "list"), ("pr", "checks"), ("pr", "status"), ("pr", "diff"), ("issue", "view"),
     ("issue", "list"), ("run", "view"), ("run", "list"), ("run", "watch"), ("repo", "view"), ("auth", "status"),
@@ -278,6 +288,20 @@ def _rm(args: list[str]) -> list[str]:
     return ["deletes in root path"] if any(path.startswith("/") for path in operands) else []
 
 
+def _chmod(args: list[str]) -> list[str]:
+    """Whether the mode lets others write: an octal mode whose last digit has the write bit (`777`, `666`), or a
+    symbolic clause for `o` or `a` that adds or sets `w` (`o+w`, `a+rwx`)."""
+    _, _, rest = _options(args)
+    mode = rest[0] if rest else ""
+    if mode.isdigit():
+        return ["makes files world-writable"] if int(mode[-1]) in (2, 3, 6, 7) else []
+    for clause in mode.split(","):
+        who, op, perms = clause.partition("+") if "+" in clause else clause.partition("=")
+        if op and "w" in perms and set(who) & {"o", "a"}:
+            return ["makes files world-writable"]
+    return []
+
+
 def _git(args: list[str]) -> list[str]:
     index = 0
     while index < len(args) and args[index].startswith("-"):
@@ -308,7 +332,9 @@ def _git(args: list[str]) -> list[str]:
 
 
 # The closed table: a program's name, and what reads its arguments for the risks it names.
-RISKS: dict[str, Callable[[list[str]], list[str]]] = {"rm": _rm, "git": _git}
+RISKS: dict[str, Callable[[list[str]], list[str]]] = {"rm": _rm, "git": _git, "chmod": _chmod}
+# What a pipe stage running a shell (`_SHELLS`) after one that downloads (`_FETCHERS`) is named: it runs the download.
+PIPE_TO_SHELL = "pipes a download into a shell"
 # Hermes' own descriptions of the same risks where its wording differs from OMH's (tools/approval_detection.py,
 # hermes-agent bf0203a794), so a risk Hermes already named is not named again in other words.
 HERMES_NAMES = {
@@ -335,16 +361,28 @@ HERMES_NAMES = {
     ),
     "hard reset": ("git reset --hard (destroys uncommitted changes)",),
     "deletes untracked files": ("git clean with force (deletes untracked files)",),
+    # tools/approval_detection.py:287-288 (`chmod` with 777, 666, o+w or a+w) and :313 (`curl` or `wget` piped to
+    # a shell).
+    "makes files world-writable": (
+        "world/other-writable permissions",
+        "recursive world/other-writable (long flag)",
+    ),
+    PIPE_TO_SHELL: ("pipe remote content to shell",),
 }
 
 
 def segment_risks(segment: str) -> tuple[str, ...]:
-    """The risks of the programs `segment` runs, in table order within each, once each."""
+    """The risks of the programs `segment` runs, in table order within each, once each; a shell a download is piped
+    into is `PIPE_TO_SHELL`."""
     found: list[str] = []
+    fetched = False
     for stage in _stages(segment):
         words = _program(stage)
-        check = RISKS.get(words[0].rsplit("/", 1)[-1]) if words else None
-        found.extend(risk for risk in (check(words[1:]) if check else []) if risk not in found)
+        program = words[0].rsplit("/", 1)[-1] if words else ""
+        check = RISKS.get(program)
+        risks = [*(check(words[1:]) if check else []), *([PIPE_TO_SHELL] if fetched and program in _SHELLS else [])]
+        found.extend(risk for risk in risks if risk not in found)
+        fetched = fetched or program in _FETCHERS
     return tuple(found)
 
 
@@ -428,6 +466,20 @@ def _foldable(read: str) -> bool:
     return all(_program_folds(stage) and not _writes(stage) for stage in stages)
 
 
+def _sets_state(read: str) -> bool:
+    """Whether the command `read` decides what a later command acts on: it moves the shell (`_MOVES`) or sets a
+    variable (`T=/`, `printf -v T /`, `${T:=/}`)."""
+    if "${" in read and "=" in read:
+        return True
+    for stage in _stages(read):
+        program = stage[0].rsplit("/", 1)[-1]
+        if program in _MOVES or all(_is_assignment(word) for word in stage):
+            return True
+        if program == "printf" and any(word.startswith("-v") for word in stage[1:]):
+            return True
+    return False
+
+
 def _defined(scanned: list[tuple[str, str, bool]]) -> set[str]:
     """The names the line defines as a function (`f() {`, `function f`) or an alias (`alias f=…`)."""
     names: set[str] = set()
@@ -444,12 +496,19 @@ def _defined(scanned: list[tuple[str, str, bool]]) -> set[str]:
 
 def segments(command: str) -> list[Segment]:
     """Each command of `command` (`split_commands`) with its first program, its risks and whether it may fold (a call
-    to a function or alias the line defines never does)."""
+    to a function or alias the line defines never does, nor a directory change or an assignment with a command
+    listed after it: `cd ~` and `T=/` decide what `rm -rf "$T"/*` deletes)."""
     scanned = _scan(command)
     defined = _defined(scanned)
-    return [Segment(text, _head(read), segment_risks(read),
-                    closed and _foldable(read) and not {word for stage in _stages(read) for word in stage} & defined)
-            for text, read, closed in scanned]
+    found = [Segment(text, _head(read), segment_risks(read),
+                     closed and _foldable(read) and not {word for stage in _stages(read) for word in stage} & defined)
+             for text, read, closed in scanned]
+    listed = False  # a command after this one is listed
+    for index in range(len(found) - 1, -1, -1):
+        if listed and found[index].foldable and _sets_state(scanned[index][1]):
+            found[index] = replace(found[index], foldable=False)
+        listed = listed or not found[index].foldable
+    return found
 
 
 def _wordings(risk: str) -> set[str]:

@@ -6,6 +6,17 @@ All notable changes will be documented here.
 
 ![Sprite Forge patch notes](https://raw.githubusercontent.com/rlaope/oh-my-hermes/main/assets/omh-sprite-forge-patch-notes.png)
 
+- **An approval no longer folds away the `cd` or the assignment that aims a
+  risky command, and it marks a download piped into a shell and a
+  world-writable `chmod`.** `cd ~ && …; rm -rf ./*` and `T=/; …; rm -rf
+  "$T"/*` used to show only the `▲ rm` row with the `cd` or `T=/` inside
+  `+ N other commands`; a directory change (`cd`, `pushd`, `popd`) or a
+  variable assignment (`T=/`, `printf -v`, `${T:=/}`) now stays listed
+  whenever a listed command comes after it, and `echo`-like noise still
+  folds. `curl … | sh` (any of Hermes' shells, through `sudo` or a path) and
+  `chmod` with a mode that lets others write (`777`, `666`, `o+w`, `a+w`)
+  now get their own `▲` row, the cases Hermes' approval table flags.
+
 - **A light goes round the OMH TUI's screen while a turn runs.** It runs
   along the terminal's whole edge, clockwise, once every four seconds, with
   a round head and a trail in the launch look's logo colours that fades
