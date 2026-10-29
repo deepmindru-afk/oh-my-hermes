@@ -55,6 +55,20 @@ update, so no screen between the two shows. A region made with a `lead` (a
 full redraw's erase) starts its first write with it, inside the same update,
 so the erased screen never shows on its own either.
 
+The working glow's frame (`edge_glow`): a region made with a `margin` draws
+every row that many columns in from the screen's left edge, and one made with
+a `footer` keeps a blank row of its own under the caller's rows. The caller
+lays its rows out for a screen that much smaller (`App._edged`), and every
+row count it passes in or gets back is of its own rows, the footer left out.
+Those keep the screen's first and last columns and its last row free, and a
+frame passed to `render` (`edge`) is painted there, and on the screen's top
+row, over what is drawn, while the region's last row is the screen's last
+row and every row above it is one this region flushed (so the top row can be
+painted back). Before a write that can scroll the screen (a flush, a frame
+that grows) and when the frame goes, the frame is taken off again: the top
+row is painted back from what was flushed there and the edge cells are
+blanked, so nothing of the frame reaches the scrollback.
+
 Precondition: the region is never taller than the terminal. Cursor-up stops
 at the top of the screen, so a taller region would lose its relative
 bookkeeping; the layout's height budget guarantees this.
@@ -79,8 +93,10 @@ allows.
 
 from __future__ import annotations
 
+from collections import deque
 from collections.abc import Callable, Sequence
 
+from .edge_glow import Edge
 from .escapes import strip_escapes
 from .style import CSI, SGR_RESET, Line, Span, is_fill
 from .width import is_unpainted, line_width, truncate_line
@@ -89,6 +105,7 @@ CARRIAGE_RETURN = "\r"
 NEWLINE = "\r\n"
 ERASE_TO_LINE_END = f"{CSI}K"
 ERASE_BELOW = f"{CSI}J"
+ERASE_LINE = f"{CSI}2K"
 HIDE_CURSOR = f"{CSI}?25l"
 SHOW_CURSOR = f"{CSI}?25h"
 AUTOWRAP_OFF = f"{CSI}?7l"
@@ -100,6 +117,7 @@ CLEAR_SCREEN_AND_SCROLLBACK = f"{CSI}H{CSI}2J{ERASE_SCROLLBACK}"
 # One synchronized update: the terminal holds the screen until the end mark, then shows the frame at once.
 SYNC_BEGIN = f"{CSI}?2026h"
 SYNC_END = f"{CSI}?2026l"
+FLUSHED_KEPT = 512  # flushed rows kept to paint the screen's top row back under the edge frame (more than any screen)
 
 
 def cursor_up(rows: int) -> str:
@@ -139,6 +157,11 @@ def cursor_forward(cols: int) -> str:
     return f"{CSI}{cols}C" if cols > 0 else ""
 
 
+def cursor_at(row: int, col: int) -> str:
+    """CUP: the cursor to 0-based screen row `row`, column `col`."""
+    return f"{CSI}{row + 1};{col + 1}H"
+
+
 def _without_controls(line: Line) -> Line:
     """The last guard before bytes reach the terminal: no escape sequence, control or bidi control in span text.
 
@@ -176,8 +199,14 @@ def paint_line(line: Line, width: int) -> str:
 class LiveRegion:
     def __init__(
         self, write: Callable[[str], None], at_top: bool = False, start_row: int | None = None, lead: str = "",
+        margin: int = 0, footer: bool = False,
     ) -> None:
         self._write = write
+        self._margin = margin  # columns every row is drawn in from the screen's left edge
+        self._footer = int(footer)  # a blank row of the region's own under the caller's rows
+        self._above: deque[str] = deque(maxlen=FLUSHED_KEPT)  # painted bytes of the rows flushed, the last last
+        self._framed_at: tuple[int, int] | None = None  # (cols, rows) of the screen the edge frame is painted on
+        self._frame_cells: dict[tuple[int, int], str] = {}  # (row, col) -> the painted bytes of the frame there
         self._lead = lead  # written first, in the first write's synchronized update
         self._rows: list[str] = []  # painted bytes of each row the region holds
         self._row = 0  # hardware cursor row, relative to the region's top
@@ -194,8 +223,8 @@ class LiveRegion:
 
     @property
     def height(self) -> int:
-        """Rows the region holds on screen now (0 before the first frame and after `clear`)."""
-        return len(self._rows)
+        """The caller's rows the region holds on screen now (0 before the first frame and after `clear`)."""
+        return max(len(self._rows) - self._footer, 0)
 
     @property
     def caret_hidden(self) -> bool:
@@ -213,14 +242,22 @@ class LiveRegion:
     def top_row(self, screen_rows: int) -> int | None:
         """The 0-based screen row the region's top row is on, or None where that is not certain.
 
-        `screen_rows` is the terminal's height, the same since the region was made.
+        `screen_rows` is the terminal's height less the footer, the same since the region was made.
         """
-        highest, lowest = self._top_rows(screen_rows, self._shift, self._floor)
+        return self._top(screen_rows + self._footer)
+
+    def _top(self, rows: int) -> int | None:
+        highest, lowest = self._top_rows(rows, self._shift, self._floor)
         return highest if highest == lowest else None
 
     def last_row(self, screen_rows: int) -> int | None:
-        """The 0-based screen row the region's last row is on, or None where that is not certain or it holds none."""
-        top = self.top_row(screen_rows)
+        """The 0-based screen row the caller's last row is on, or None where that is not certain or it holds none."""
+        last = self._last(screen_rows + self._footer)
+        return None if last is None or len(self._rows) <= self._footer else last - self._footer
+
+    def _last(self, rows: int) -> int | None:
+        """The screen row the region's own last row (the footer, if any) is on, on a screen `rows` tall."""
+        top = self._top(rows)
         return None if top is None or not self._rows else top + len(self._rows) - 1
 
     def rows_above(self, screen_rows: int, flushed: int = 0, height: int = 0) -> int:
@@ -233,8 +270,8 @@ class LiveRegion:
         if flushed:
             shift, floor = self._flushed(shift, floor, flushed)
         if height:
-            floor = self._framed(floor, height)
-        return self._top_rows(screen_rows, shift, floor)[0]
+            floor = self._framed(floor, height + self._footer)
+        return self._top_rows(screen_rows + self._footer, shift, floor)[0]
 
     @staticmethod
     def _flushed(shift: int, floor: int | None, lines: int) -> tuple[int, int]:
@@ -247,12 +284,12 @@ class LiveRegion:
         return height if floor is None else max(floor, height)
 
     def _move_to(self, row: int, ops: list[str]) -> None:
-        """Cursor to column 0 of region row `row`, which must already exist on screen."""
+        """Cursor to the region's first column (`margin`) of region row `row`, which must already exist on screen."""
         if row < self._row:
             ops.append(cursor_up(self._row - row))
         elif row > self._row:
             ops.append(cursor_down(row - self._row))
-        ops.append(CARRIAGE_RETURN)
+        ops.append(CARRIAGE_RETURN + cursor_forward(self._margin))
         self._row = row
 
     def _insert_rows(self, lines: Sequence[Line], screen_rows: int | None, ops: list[str]) -> None:
@@ -266,7 +303,7 @@ class LiveRegion:
         end as before.
         """
         count = len(lines) - len(self._lines)
-        last = self.last_row(screen_rows) if screen_rows is not None and self._rows and count > 0 else None
+        last = self._last(screen_rows) if screen_rows is not None and self._rows and count > 0 else None
         if last is None or last + count > screen_rows - 1:
             return
         at = _insert_point(self._lines, lines)
@@ -330,7 +367,7 @@ class LiveRegion:
             return "", False
         park: list[str] = []
         self._move_to(target[0], park)
-        park.append(cursor_forward(target[1]))
+        park.append(cursor_forward(target[1]))  # from the region's first column
         self._parked = target
         if not painted:
             return "".join(park) + ((HIDE_CURSOR if hidden else SHOW_CURSOR) if toggled else ""), False
@@ -345,29 +382,111 @@ class LiveRegion:
 
     def render(
         self, lines: Sequence[Line], cursor: tuple[int, int] | None, width: int, flush: Sequence[Line] = (),
-        screen_rows: int | None = None,
+        screen_rows: int | None = None, edge: Edge | None = None,
     ) -> None:
         """Show `lines` as the region and park the cursor at `cursor` = (row, col) within it; None hides it.
 
         `flush` is flushed above the region first, in the same write: its lines
         cover the top rows of the region on screen, and `lines` are drawn from
-        the row under the last of them. `screen_rows`, the terminal's height,
-        lets rows added inside the region be inserted rather than paint every
-        row under them again (`_insert_rows`).
+        the row under the last of them. `screen_rows`, the terminal's height
+        less the footer, lets rows added inside the region be inserted rather
+        than paint every row under them again (`_insert_rows`), and places the
+        edge frame `edge`, painted over the screen's edge where it may be
+        (see the module docstring); None takes a painted one off.
         """
-        ops = self._flush(flush, width) if flush else []
-        self._send(*self._compose(lines, cursor, width, ops, screen_rows))
+        rows = None if screen_rows is None else screen_rows + self._footer
+        if self._footer:
+            lines = (*lines, ())
+        grows = len(lines) > len(self._rows)
+        ops = self._unframe() if flush or grows or edge is None or (edge.cols, rows) != self._framed_at else []
+        if flush:
+            ops += self._flush(flush, width)
+        written, painted = self._compose(lines, cursor, width, ops, rows)
+        if edge is not None and rows is not None:
+            framing = self._frame(edge, rows, full=painted)
+            if framing:
+                written, painted = written + framing, True
+        self._send(written, painted)
 
     def flush_above(self, lines: Sequence[Line], width: int) -> None:
         """Print `lines` permanently above the region, then draw the region again beneath them.
 
         The lines are written over the region's top rows; the region moves
         down by as many rows, scrolling the screen where it reaches the end,
-        and once they scroll off the screen they are ordinary scrollback.
+        and once they scroll off the screen they are ordinary scrollback. An
+        edge frame is taken off first.
         """
         frame = self._lines
-        ops = self._flush(lines, width)
+        ops = self._unframe() + self._flush(lines, width)
         self._send(*self._compose(frame, self._cursor, width, ops))
+
+    def _frameable(self, rows: int) -> int | None:
+        """The region's top row where an edge frame may be painted on a screen `rows` tall: the region's last row is
+        the screen's last, and every row above its top is one it flushed. None elsewhere."""
+        top, last = self._top(rows), self._last(rows)
+        if top is None or last != rows - 1 or top > len(self._above):
+            return None
+        return top
+
+    def _frame(self, edge: Edge, rows: int, full: bool) -> str:
+        """The bytes that paint `edge` over a screen `rows` tall, then park the cursor where the frame left it: every
+        cell when `full` (the frame just written may have erased some), else the cells that changed. "" where no
+        frame may be painted or nothing changed."""
+        top = self._frameable(rows)
+        if top is None or len(edge.left) != rows - 2:
+            return self._unframe_now()
+        cells = {(0, 0): paint_line(edge.top, edge.cols), (rows - 1, 0): paint_line(edge.bottom, edge.cols)}
+        for row, (left, right) in enumerate(zip(edge.left, edge.right, strict=True), start=1):
+            cells[row, 0] = paint_line(left, 1)
+            cells[row, edge.cols - 1] = paint_line(right, 1)
+        if (edge.cols, rows) != self._framed_at:
+            full = True
+        ops = [cursor_at(*at) + cells[at] for at in cells if full or self._frame_cells.get(at) != cells[at]]
+        self._framed_at, self._frame_cells = (edge.cols, rows), cells
+        if not ops:
+            return ""
+        parked = self._parked or (self._row, 0)
+        self._row = parked[0]
+        back = cursor_at(top + parked[0], self._margin + parked[1])
+        shown = "" if self._hidden else SHOW_CURSOR
+        return "".join([HIDE_CURSOR, AUTOWRAP_OFF, *ops, AUTOWRAP_ON, back, shown])
+
+    def _unframe(self) -> list[str]:
+        """The bytes that take a painted edge frame off, queued before a write: the top row painted back from what is
+        there under it, the side cells blanked, the footer erased; the cursor then back on the region's row."""
+        if self._framed_at is None:
+            return []
+        cols, rows = self._framed_at
+        self._framed_at, self._frame_cells = None, {}
+        top = self._top(rows)
+        if top is None:
+            return []
+        under = self._rows[0] if top == 0 and self._rows else self._above[-top] if 0 < top <= len(self._above) else ""
+        ops = [cursor_at(0, 0), ERASE_LINE, cursor_forward(self._margin), under]
+        for row in range(1, rows - 1):
+            ops += [cursor_at(row, 0), " ", cursor_at(row, cols - 1), " "]
+        ops += [cursor_at(rows - 1, 0), ERASE_LINE, cursor_at(top + self._row, self._margin)]
+        self._parked = None
+        return [AUTOWRAP_OFF, *ops, AUTOWRAP_ON]
+
+    def _unframe_now(self) -> str:
+        """`_unframe`'s bytes, with the cursor parked again where the region left it."""
+        ops = self._unframe()
+        if not ops:
+            return ""
+        parked = self._cursor_target()
+        park: list[str] = []
+        self._move_to(parked[0], park)
+        park.append(cursor_forward(parked[1]))
+        self._parked = parked
+        return "".join([HIDE_CURSOR, *ops, *park, "" if self._hidden else SHOW_CURSOR])
+
+    def _cursor_target(self) -> tuple[int, int]:
+        """Where the last frame parked the cursor, within the region."""
+        last = max(len(self._rows), 1) - 1
+        cursor = self._cursor
+        width = self._width or 1
+        return (last, 0) if cursor is None else (min(max(cursor[0], 0), last), min(max(cursor[1], 0), width - 1))
 
     def _flush(self, lines: Sequence[Line], width: int) -> list[str]:
         """The bytes that write `lines` from the region's top row down, unwritten; the region then starts under them.
@@ -379,9 +498,11 @@ class LiveRegion:
         width = max(width, 1)
         ops: list[str] = []
         self._move_to(0, ops)
-        for line in lines:
-            ops.append(paint_line(line, width))
+        for index, line in enumerate(lines):
+            painted = paint_line(line, width)
+            ops.append(painted if index == 0 else cursor_forward(self._margin) + painted)
             ops.append(NEWLINE)
+            self._above.append(painted)
         # The cursor now sits on the row below the last flushed line: the new top.
         self._row = 0
         self._parked = None
@@ -397,7 +518,7 @@ class LiveRegion:
             self._write(lead)
         if not self._rows and self._parked == (0, 0):
             return
-        ops: list[str] = []
+        ops: list[str] = self._unframe()
         self._move_to(0, ops)
         ops.append(ERASE_BELOW)
         self._write("".join(ops))

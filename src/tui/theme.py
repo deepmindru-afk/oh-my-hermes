@@ -274,6 +274,11 @@ class Theme:
     catch_mark: tuple[Style, ...] = ()  # a catch row's `✦ OMH`, cell by cell, bold, through the launch look's logo
     catch_words: Style = Style()  # what a catch row says: the launch look's label colour (`with_catch_colours`);
     # `build_theme` sets both from the default launch look, so no built theme leaves them unpainted
+    # The working glow round the screen while a turn runs (`edge_glow`): the launch look's logo colours stepped once
+    # round a ring, first back to first (`with_catch_colours`), and the colour they are mixed into toward their dim
+    # ends: its `bg` where the terminal reported it, so the glow may paint cells' backgrounds, else its `fg`, a guess.
+    glow_ring: tuple[Style, ...] = ()
+    glow_surface: Style = Style()
     # An approval's highlighted choice, bold in its tone (deny `error`, an allow `ok`, always `warn`, the tell row
     # `muted`) on a band of that tone mixed into the background (`PICK_BAND_SHARE`); no band when no background was
     # reported. `build_theme` paints all four.
@@ -502,6 +507,8 @@ def launch_palette(name: str, surface: str) -> LogoPalette:
 CATCH_MARK = "✦ OMH"
 # The cells of a catch row's mark (`CATCH_MARK`) the logo's colours are stepped across.
 CATCH_MARK_CELLS = 5
+# The colours the working glow's ring is stepped through (`Theme.glow_ring`, owner request 2026-10-28).
+GLOW_RING_STEPS = 36
 
 
 def _logo_stops(palette: LogoPalette) -> list[str]:
@@ -517,10 +524,21 @@ def _logo_stops(palette: LogoPalette) -> list[str]:
 def with_catch_colours(theme: Theme, skin: SkinTheme, background: str | None, look: str) -> Theme:
     """`theme` with a catch row's colours from launch look `look` (owner's pick of 2026-10-28): the `✦ OMH` mark
     stepped through the logo's colours (`CATCH_MARK_CELLS`), the words in the look's label colour, so the row reads
-    as OMH's own and changes with `/theme`."""
-    palette = launch_palette(look, surface_for(skin, background))
-    mark = tuple(Style(fg=colour, bold=True) for colour in _gradient(_logo_stops(palette), CATCH_MARK_CELLS))
-    return replace(theme, catch_mark=mark, catch_words=Style(fg=palette.label))
+    as OMH's own and changes with `/theme`. The working glow (`glow_ring`) takes the same logo colours, round a
+    ring that comes back to its first, mixed into the background toward its dim ends."""
+    surface = surface_for(skin, background)
+    palette = launch_palette(look, surface)
+    stops = _logo_stops(palette)
+    mark = tuple(Style(fg=colour, bold=True) for colour in _gradient(stops, CATCH_MARK_CELLS))
+    ring = tuple(Style(fg=colour) for colour in _gradient([*stops, stops[0]], GLOW_RING_STEPS + 1)[:-1])
+    reported = surface == background
+    return replace(theme, catch_mark=mark, catch_words=Style(fg=palette.label), glow_ring=ring,
+                   glow_surface=Style(bg=surface) if reported else Style(fg=surface))
+
+
+def blend(start: str, end: str, share: float) -> str:
+    """`#rrggbb` `start` moved `share` (0 to 1) of the way to `end`."""
+    return _mix(start, end, share)
 
 
 def with_prompt_band(theme: Theme, skin: SkinTheme, background: str | None, look: str) -> Theme:

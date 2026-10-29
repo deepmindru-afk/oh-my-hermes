@@ -6,6 +6,18 @@ All notable changes will be documented here.
 
 ![Sprite Forge patch notes](https://raw.githubusercontent.com/rlaope/oh-my-hermes/main/assets/omh-sprite-forge-patch-notes.png)
 
+- **A light goes round the OMH TUI's screen while a turn runs.** It runs
+  along the terminal's whole edge, clockwise, once every four seconds, with
+  a round head and a trail in the launch look's logo colours that fades
+  out; nothing else of the edge is drawn, and it is gone when the turn
+  ends. It moves by the clock and repaints the edge every 0.05 s, so it
+  glides round corners instead of stepping. It needs the truecolor depth
+  with motion on; `OMH_TUI_GLOW=0` turns it off. To keep the edge free, the
+  TUI draws its rows one column in from each side and keeps the screen's
+  last row blank, whether a turn runs or not, so nothing moves as the light
+  comes and goes. The light is taken off before anything scrolls, so none
+  of it reaches the scrollback.
+
 - **Gemini 4 Argon replaces Gemini 3.1 Pro in the shipped chains.** Google
   made Argon generally available on 2026-10-13. Every slot 3.1 Pro held now
   names `gemini-4-argon` at the same effort: `writing` and `google-search`

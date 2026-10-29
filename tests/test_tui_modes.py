@@ -115,7 +115,9 @@ class RecordingClient:
 
 def make_app(*, busy: bool = False, rows: int = 24, cols: int = 80, **options: object) -> tuple[App, RecordingClient]:
     client = RecordingClient()
-    app = App(ScriptedTerminal(rows, cols), client, options.pop("environ", {}), poller=FakePoller(), **options)  # type: ignore[arg-type]
+    # The working glow's margin moves every row; its own tests turn it on.
+    environ = {"OMH_TUI_GLOW": "0", **options.pop("environ", {})}  # type: ignore[dict-item]
+    app = App(ScriptedTerminal(rows, cols), client, environ, poller=FakePoller(), **options)  # type: ignore[arg-type]
     app.sid = SID
     app.turn_pending = busy
     app.launch_layout = False  # a session past its launch; the launch's full-screen frame is OpeningTests' (real loop)
