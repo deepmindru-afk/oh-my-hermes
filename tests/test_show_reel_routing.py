@@ -347,6 +347,18 @@ class ShowReelAdmissionTests(unittest.TestCase):
             "ロゴのイントロアニメーションを作って",
             "飛行機が飛ぶ仕組みを説明する動画を作って",
             "新機能の紹介動画を作成してください",
+            # Recall follow-up shapes, each closed.
+            "make me an explainer video on how TLS handshakes work",
+            "make us a logo intro animation for our podcast",
+            "make a 10 second logo intro animation for oh-my-hermes",
+            "make a motion graphics piece about ocean currents",
+            "create a kinetic typography piece about focus",
+            "make a 3D scene of a mountain lake at sunrise",
+            "복리 개념 설명하는 영상 만들어줘",
+            "우주 탐사 역사 설명하는 영상 만들어줘",
+            "30초짜리 세로형 설명 영상 만들어줘",
+            "30秒の縦型解説動画を作って",
+            "DNSの仕組みを説明する20秒の動画を作って",
         ):
             with self.subTest(message=message):
                 self.assertTrue(show_reel_request_admitted(message))
@@ -434,6 +446,34 @@ class ShowReelAdmissionTests(unittest.TestCase):
             "30秒の縦型動画を作ってください",
             "この動画をショート動画に作って",
             "説明動画を作って？",
+            # Recall follow-up: the name slot takes only a coined three-part name
+            # after a logo genre, and my/our with a show directly.
+            "make a logo intro for staging",
+            "make a logo intro animation for production",
+            "make an intro animation for login",
+            "make an intro animation for ios",
+            "make a logo intro for real-time",
+            "make a logo intro for up-to-date",
+            "make a logo intro for the oh-my-hermes settings page",
+            "make a logo intro for oh-my-hermes and post it to slack",
+            "make a channel intro for our slack channel",
+            "make a podcast intro for our team channel",
+            "make a title intro for our support podcast",
+            "make a title intro for the README",
+            "make a youtube intro video for my app",
+            # A beneficiary leaves every other refusal in place.
+            "make me a video on loom",
+            "make me a confetti animation for the checkout page",
+            "make me an explainer video on the outage",
+            "make me a looping logo intro for the stream",
+            # One-word KO/JA fault topics, and a format beside a fault.
+            "서버다운 설명하는 영상 만들어줘",
+            "다운타임 설명하는 영상 만들어줘",
+            "롤백 설명하는 영상 만들어줘",
+            "サーバーダウンを説明する動画を作って",
+            "30秒の縦型の不具合解説動画を作って",
+            "앱 화면 구조 설명하는 영상 만들어줘",
+            "30秒の解説アニメーションを作って",
         ):
             with self.subTest(message=message):
                 self.assertFalse(show_reel_request_admitted(message))
