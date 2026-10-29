@@ -512,6 +512,19 @@ ROUTING_PRECISION_CASES: tuple[RoutingPrecisionCase, ...] = (
     # A logo animation on an app surface (launch, splash) is UI work.
     RoutingPrecisionCase("show-reel-idea-ja-app-launch-logo", "A Japanese logo animation at app launch is UI work", "アプリ起動時のロゴアニメーションを作って", "answer_clarification", "", "show-reel"),
     RoutingPrecisionCase("show-reel-idea-ja-splash-logo", "A Japanese splash-screen logo animation is UI work", "スプラッシュ画面のロゴアニメーションを作って", "answer_clarification", "", "show-reel"),
+    # Recall follow-up: the name slot, the beneficiary and the one-word fault leak stay closed.
+    RoutingPrecisionCase("show-reel-recall-name-staging", "A bare word after a logo intro is not a name", "make a logo intro for staging", "answer_clarification", "", "show-reel"),
+    RoutingPrecisionCase("show-reel-recall-name-login", "An intro animation for a login flow is UI work", "make an intro animation for login", "answer_clarification", "", "show-reel"),
+    RoutingPrecisionCase("show-reel-recall-name-slack-channel", "A channel intro for a chat channel is not a show", "make a channel intro for our slack channel", "answer_clarification", "", "show-reel"),
+    RoutingPrecisionCase("show-reel-recall-name-team-channel", "A podcast intro for a team channel is not a show", "make a podcast intro for our team channel", "answer_clarification", "", "show-reel"),
+    RoutingPrecisionCase("show-reel-recall-me-loom", "A video on Loom made for me is still a recording", "make me a video on loom", "answer_clarification", "", "show-reel"),
+    RoutingPrecisionCase("show-reel-recall-ja-one-word-fault", "A one-word Japanese fault before 説明 is a fault report", "サーバーダウンを説明する動画を作って", "answer_clarification", "", "show-reel"),
+    # The recall review's round: a kebab id is no name, a bare 3D scene with a renderer is no film, a
+    # chain after an intro is no occasion, and a leading format opens no Japanese topic.
+    RoutingPrecisionCase("show-reel-recall-kebab-id", "A kebab id after a logo intro is a component, not a brand", "make a logo intro for nav-bar-item", "answer_clarification", "", "show-reel"),
+    RoutingPrecisionCase("show-reel-recall-3d-scene-shaders", "A 3D scene with shaders is a render target, not a film", "make a 3d scene with shaders", "answer_clarification", "", "show-reel"),
+    RoutingPrecisionCase("show-reel-recall-intro-chain", "Two nouns after an intro name a stream, not an occasion", "make a podcast intro for our team stream", "answer_clarification", "", "show-reel"),
+    RoutingPrecisionCase("show-reel-recall-ja-head-format", "A leading format opens no Japanese explainer topic", "縦型の設定画面の紹介動画を作って", "answer_clarification", "", "show-reel"),
     # Engine-entry approvals (#1638). Accepting something is the most common
     # thing a person says in the seconds after a planning workflow finishes,
     # and the corpus had no sentence of this shape at all -- 235 negative
@@ -9389,6 +9402,13 @@ ROUTING_INTERVENTION_CASES: tuple[RoutingInterventionCase, ...] = (
     RoutingInterventionCase("show-reel-idea-owner-saas-launch-post", "Posting a launch video to a SaaS tool is a connector action", "post the launch video to our saas tool", "dispatch", "connector-operator", "prepare_connector_operator_card", "connector_operator"),
     RoutingInterventionCase("show-reel-idea-owner-saas-send", "Sending a demo video to a SaaS channel is a connector action", "send the demo video to the saas workspace channel", "dispatch", "connector-operator", "prepare_connector_operator_card", "connector_operator"),
     RoutingInterventionCase("show-reel-idea-owner-pitch-deck", "An animation for a pitch deck is a material", "create an animation for the pitch deck", "dispatch", "materials-package", "prepare_material_package", "materials_package"),
+    # Recall follow-up: closed shapes that reach the idea-video lane.
+    RoutingInterventionCase("show-reel-recall-me-explainer", "A beneficiary before an explainer video keeps the request", "make me an explainer video on how TLS handshakes work", "dispatch", "show-reel", "prepare_show_reel", "show_reel"),
+    RoutingInterventionCase("show-reel-recall-coined-name", "A logo intro for this product's own name is a brand intro", "make a 10 second logo intro animation for oh-my-hermes", "dispatch", "show-reel", "prepare_show_reel", "show_reel"),
+    RoutingInterventionCase("show-reel-recall-motion-graphics-piece", "A motion graphics piece about a subject is an authored video", "make a motion graphics piece about ocean currents", "dispatch", "show-reel", "prepare_show_reel", "show_reel"),
+    RoutingInterventionCase("show-reel-recall-3d-scene", "A 3D scene of a subject is an authored video", "make a 3D scene of a mountain lake at sunrise", "dispatch", "show-reel", "prepare_show_reel", "show_reel"),
+    RoutingInterventionCase("show-reel-recall-ko-concept-frame", "A Korean concept explainer of one subject word", "복리 개념 설명하는 영상 만들어줘", "dispatch", "show-reel", "prepare_show_reel", "show_reel"),
+    RoutingInterventionCase("show-reel-recall-ja-format-explainer", "A Japanese format beside an explainer genre", "30秒の縦型解説動画を作って", "dispatch", "show-reel", "prepare_show_reel", "show_reel"),
     # Acknowledgement-only chatter in the adapter's own backfill shape leaves a
     # closed form whole (`show_reel_cues.backfill_is_inert`); the request
     # carries the sender prefix Hermes writes in a shared channel.

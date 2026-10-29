@@ -25,11 +25,11 @@ The art follows the brand's pixel-aura short (owner's choice of 2026-10-29):
 an aura (`_aura`) is a mosaic of solid square tiles over an ellipse, dense in
 the middle and scattering out to single tiles, each patch in one of a few
 colours and each tile a shade apart, and four-point sparkles (`_sparkles`,
-`SPARKLE`) grow and fade round the motifs. spectrum is that aura itself, in
-the short's hues (`AURA_HUES`). The other looks draw their motif in the same
-language, from small bitmaps kept here as data (`Sprite`: rows of letters,
-each letter a colour role a scene maps to one of the look's colours, `.` left
-out), some with frames that make them move: moonlit a crescent moon in a
+`SPARKLE`) grow and fade round the motifs. The default look, spectrum, keeps
+only its ground and draws no scene (owner's choice of 2026-10-30). The other
+looks draw their motif in this language, from small bitmaps kept here as
+data (`Sprite`: rows of letters, each letter a colour role a scene maps to one
+of the look's colours, `.` left out), some with frames that make them move: moonlit a crescent moon in a
 pixel halo that breathes, soft tile clouds drifting and sparkle stars;
 sakura blossom clusters over a faint pink aura with petals falling; aurora
 ribbons of scattered tiles whose tops wave; ember a flame flickering through
@@ -53,7 +53,7 @@ from dataclasses import dataclass
 import math
 
 from .theme import (
-    BLACK, DEFAULT_LAUNCH, LAUNCH_PALETTES, WHITE, LogoPalette, _logo_stops, blend, contrast_ratio, is_light,
+    BLACK, LAUNCH_PALETTES, WHITE, LogoPalette, _logo_stops, blend, contrast_ratio, is_light,
 )
 
 # How often the app paints the scene's changed cells between frames (a turn's frames, every spinner tick, bring it
@@ -83,7 +83,6 @@ PASTEL = 0.12  # how far every colour is softened toward white first: the pixel 
 # under the contrast cap on a dark ground)
 AURA_TILE = 2  # an aura's tile, in pixels a side: the aura is a mosaic of square tiles, not a speckle
 # The brand's pixel-aura hues (the `oh-my-hermes` pixel-aura short): violet, pink, cyan, mint and periwinkle.
-AURA_HUES = ("#C084FC", "#F472B6", "#67E8F9", "#86EFAC", "#A5B4FC")
 UNDER_DARK = 0.7
 AURORA_FROM = 0.35  # aurora: the share of the width its curtains start at, wider than the other motifs
 AURORA_LEAST = 0.5  # aurora: the dimmest a curtain's column gets, so every column of it shows  # on a dark ground, how far toward black the shade every colour is mixed from sits
@@ -581,37 +580,19 @@ def _graphite(canvas: _Canvas, palette: LogoPalette, seconds: float) -> None:
     _sparkles(canvas, (top + puddle) / 2, cloud_x, puddle - top, cloud_wide, 3, palette.spark or grey, seconds, 112)
 
 
-def _spectrum(canvas: _Canvas, palette: LogoPalette, seconds: float) -> None:
-    """The brand's pixel aura on the right: a soft cloud of square pixels in its five hues (`AURA_HUES`), patch by
-    patch, solid near its middle and scattering out to single pixels, breathing, with loose pixels round it and
-    four-point sparkles twinkling."""
-    cols = canvas.cols
-    top, bottom = canvas.band()
-    wide = min(cols * (1 - RIGHT) * 0.8, 70.0)
-    centre_y, centre_x = (top + bottom) / 2, cols * (0.5 + RIGHT / 2)
-    _aura(canvas, centre_y, centre_x, min(wide * 0.5, (bottom - top) * 0.95), wide, AURA_HUES, 121,
-          breath=1 + 0.05 * math.sin(TAU * seconds / 3), fill=0.85)
-    for index in range(_count(cols, canvas.rows, 160)):  # loose pixels round it
-        y = centre_y + (_noise(index, 122) - 0.5) * (bottom - top) * 1.3
-        x = centre_x + (_noise(index, 123) - 0.5) * wide * 1.6
-        canvas.sprite(y, x, ("pp", "pp"), {"p": canvas.tone(_pastel(AURA_HUES[index % len(AURA_HUES)]), 0.7)})
-    _sparkles(canvas, centre_y, centre_x, (bottom - top) * 1.2, wide * 1.5, 9, AURA_HUES[2], seconds, 124)
-
-
 SCENES: dict[str, Callable[[_Canvas, LogoPalette, float], None]] = {
-    "spectrum": _spectrum, "violet": _violet, "gold": _gold, "graphite": _graphite,
+    "violet": _violet, "gold": _gold, "graphite": _graphite,
     "sakura": _sakura, "moonlit": _moonlit, "aurora": _aurora, "ember": _ember,
 }
 
 
 def scene(look: str, cols: int, rows: int, seconds: float, light: bool) -> tuple[Cell, ...]:
     """Every lit cell of launch look `look`'s scene on a `cols` by `rows` screen at clock time `seconds`, in its
-    light set on a light terminal; the default look's for an unknown name, none on a screen under `MIN_COLS` by
-    `MIN_ROWS`. The same arguments give the same cells."""
-    if cols < MIN_COLS or rows < MIN_ROWS:
+    light set on a light terminal; none for the default look (it has no scene) or an unknown name, which takes the
+    default look, nor on a screen under `MIN_COLS` by `MIN_ROWS`. The same arguments give the same cells."""
+    if cols < MIN_COLS or rows < MIN_ROWS or look not in SCENES:
         return ()
-    name = look if look in SCENES else DEFAULT_LAUNCH
-    palette = LAUNCH_PALETTES[name][1 if light else 0]
+    palette = LAUNCH_PALETTES[look][1 if light else 0]
     canvas = _Canvas(cols, rows, palette.ground, seconds)
-    SCENES[name](canvas, palette, seconds)
+    SCENES[look](canvas, palette, seconds)
     return canvas.cells()
