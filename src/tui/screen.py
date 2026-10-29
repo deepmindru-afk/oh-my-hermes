@@ -74,20 +74,26 @@ row is painted back from what was flushed there and the edge cells are
 blanked, so nothing of the frame reaches the scrollback.
 
 The living wallpaper (`wallpaper`): a frame passed `ambient` cells paints the
-ones that fall on a blank cell, with absolute moves as the edge frame is: the
-caller's rows that are wholly blank, and the footer and the rows under the
-region. A row with text never gets a glyph, not even in its tail, so a
-selection across it copies only its text and a wallpaper tick never repaints
-a row someone may be selecting. A row above the region's top, one it flushed,
-only where the caller asks (`ambient_above`: the launch screen's logo and
-card, never a transcript), and then `TEXT_GAP` cells past its text. With a
-footer, never the edge frame's cells. A frame that repaints or erases a row
-takes that row's cells with it; between frames `paint_ambient` writes only the
-cells that changed. Before a write that can scroll the screen or move rows (a
-flush, a frame that grows), the cells the scroll would carry into the
-scrollback are blanked first and the rest are moved with the screen
-(`_carry`); a new width or `clear` blanks them all, so none reaches the
-scrollback.
+ones that fall on a blank cell, with absolute moves as the edge frame is: a
+wholly blank row whole, and on a row with text its tail, from `TEXT_GAP`
+cells past the text (a terminal that draws an ambiguous-width glyph two
+cells wide would otherwise push it over the row's last character); never a
+band's row, whose background runs to the edge, nor the tail of a row the last
+two frames both painted again (a spinner's). That holds for the caller's
+rows, the footer and the rows under the region, and, where the caller asks
+(`ambient_above`), the rows above its top that it flushed, so the wallpaper
+stays in view over a screen full of transcript (owner's choice of
+2026-10-29). Two costs come with that, and the owner took them: a selection
+across several rows copies the glyphs in their tails along with the text,
+and a tick that repaints a cell under a selection may end it on terminals
+that clear a selection when its cells change. Turning the wallpaper off
+(`/wallpaper off`) removes both. With a footer, never the edge frame's
+cells. A frame that repaints or erases a row takes that row's cells with it;
+between frames `paint_ambient` writes only the cells that changed. Before a
+write that can scroll the screen or move rows (a flush, a frame that grows),
+the cells the scroll would carry into the scrollback are blanked first and
+the rest are moved with the screen (`_carry`); a new width or `clear` blanks
+them all, so none reaches the scrollback.
 
 Precondition: the region is never taller than the terminal. Cursor-up stops
 at the top of the screen, so a taller region would lose its relative
@@ -202,9 +208,9 @@ def _is_blank(line: Line) -> bool:
 
 
 def _blank_from(line: Line, width: int, margin: int) -> int | None:
-    """Where the wallpaper may start on a flushed row (`ambient_above`): at the margin on a blank row, `TEXT_GAP` cells
-    past the text on one with text (a terminal that draws an ambiguous-width glyph two cells wide would otherwise
-    push the glyph over the row's last character), never on a band's row (None)."""
+    """Where the wallpaper may start on a row: at the margin on a blank row, `TEXT_GAP` cells past the text on one with
+    text (a terminal that draws an ambiguous-width glyph two cells wide would otherwise push the glyph over the
+    row's last character), never on a band's row (None)."""
     if line and is_fill(line[-1]):
         return None
     if _is_blank(line):
@@ -453,8 +459,8 @@ class LiveRegion:
         (see the module docstring); None takes a painted one off. `ambient`
         is the living wallpaper's cells, painted on the screen's blank cells
         (`_papering`), on the rows this region flushed above it too where
-        `ambient_above` says (the launch screen's logo and card, never a
-        transcript a person may copy from); None takes painted ones off.
+        `ambient_above` says (the app asks whenever the wallpaper shows); None
+        takes painted ones off.
         """
         rows = None if screen_rows is None else screen_rows + self._footer
         self._ambient_above = ambient_above
@@ -607,12 +613,11 @@ class LiveRegion:
 
     def _blank_starts(self, rows: int) -> dict[int, int]:
         """Screen row -> the first column of its blank cells, for the rows the wallpaper may paint on a screen `rows`
-        tall: each of the caller's rows that is wholly blank (a row with text keeps its tail clear, so a selection
-        across it copies no glyph and a tick never repaints a row someone may be selecting), but not one the last two
-        frames both painted again, and the region's footer and the rows under the region; above the region only
-        where `ambient_above` was asked, the tails of the rows it flushed there, `TEXT_GAP` cells past their text.
-        With a footer (the working glow's frame) the screen's top and last rows stay the frame's. Empty where the
-        region's place is not certain."""
+        tall (`_blank_from`): each of the caller's rows, whole where it is blank and from `TEXT_GAP` cells past its
+        text where it has some, but not one the last two frames both painted again, and the region's footer and the
+        rows under the region; above the region only where `ambient_above` was asked, the rows it flushed there, by
+        the same rule. With a footer (the working glow's frame) the screen's top and last rows stay the frame's.
+        Empty where the region's place is not certain."""
         top, width = self._top(rows), self._width
         if top is None or width is None or not self._rows:
             return {}
@@ -624,8 +629,9 @@ class LiveRegion:
                 if start is not None:
                     starts[row] = start
         for index, line in enumerate(self._lines[:caller]):
-            if index not in self._busy_rows and _is_blank(line):
-                starts[top + index] = self._margin
+            start = None if index in self._busy_rows else _blank_from(line, width, self._margin)
+            if start is not None:
+                starts[top + index] = start
         for row in range(top + caller, rows):
             starts[row] = self._margin
         if self._cursor is not None and not self._hidden:

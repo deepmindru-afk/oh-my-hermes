@@ -24,9 +24,9 @@ across the screen; ember a campfire near the bottom with flames flickering
 and sparks rising; gold a large sun whose rays turn, and motes; violet large
 soft bokeh drifting; graphite rain over a puddle that ripples where drops
 land; spectrum a prism with a beam of light going in and fanning out into
-the five hues. The motifs sit where the launch screen is blank: the band between the card
-and the composer (`BAND`), and for sakura's branch the top-right corner
-beside the logo.
+the five hues. The motifs sit where a working session leaves the screen blank:
+its right side (`RIGHT`), where transcript rows end short of the edge, and
+for sakura's branch the top-right corner.
 
 It is ambience behind work: never more than `LIT_CEILING` of the screen, no
 cell past `AMBIENT_CONTRAST` against the ground, and a cell's colour is
@@ -59,7 +59,10 @@ MIN_COLS, MIN_ROWS = 80, 24  # a screen smaller than this has no scene (its grou
 TAU = 2 * math.pi
 BODY = "%t;:"  # a motif's body: dense characters, as the reference draws its clouds
 SHIMMER_SECONDS = 2.5  # a body cell keeps its character about this long, then takes another
-BAND = (0.5, 0.86)  # the launch screen's blank band, between the card and the composer, as shares of the rows
+# The rows the motifs keep to, as shares of the screen's: under the top rows and over the composer. The motifs keep to
+# the screen's right side (`RIGHT`), where a working session's rows end short of the edge and their tails are blank.
+BAND = (0.06, 0.8)
+RIGHT = 0.45  # the share of the width the right side starts at
 
 
 @dataclass(frozen=True)
@@ -129,7 +132,7 @@ class _Canvas:
         self.put(row, col, char, colour, strength, under)
 
     def band(self) -> tuple[int, int]:
-        """The rows of the launch screen's blank band (`BAND`), first and last."""
+        """The rows the motifs keep to (`BAND`), first and last."""
         return int(self.rows * BAND[0]), int(self.rows * BAND[1])
 
 
@@ -150,7 +153,7 @@ def _blob(canvas: _Canvas, top: float, left: float, wide: float, tall: float, co
 
 
 def _moonlit(canvas: _Canvas, palette: LogoPalette, seconds: float) -> None:
-    """A big crescent moon at the right of the blank band, its glow pulsing; clouds drifting right across the band, one
+    """A big crescent moon high on the right, its glow pulsing; clouds drifting right across the screen, one
     across the moon's foot; stars twinkling."""
     cols, rows = canvas.cols, canvas.rows
     stops = _logo_stops(palette)
@@ -159,7 +162,7 @@ def _moonlit(canvas: _Canvas, palette: LogoPalette, seconds: float) -> None:
         char = "*" if shine > 0.8 else "+" if shine > 0.5 else "."
         canvas.put(_noise(index, 2) * rows, _noise(index, 1) * cols, char, stops[1], 0.3 + 0.7 * shine)
     top, bottom = canvas.band()
-    radius = _clamp((bottom - top) * 0.3, 2.5, 5.0)  # in rows; a cell is half as wide as it is tall
+    radius = _clamp(rows * 0.11, 2.5, 5.0)  # in rows; a cell is half as wide as it is tall
     centre_row, centre_col = top + radius + 0.5, cols - 2 * radius - 8
     moonlight = canvas.ground if is_light(canvas.ground) else BLACK  # a pale gold on a dark ground, not a grey
     pulse = _wave(seconds, 2.4, 0.0)
@@ -218,13 +221,14 @@ def _sakura(canvas: _Canvas, palette: LogoPalette, seconds: float) -> None:
 
 
 def _aurora(canvas: _Canvas, palette: LogoPalette, seconds: float) -> None:
-    """Tall curtains of light across the blank band, their tops waving and their length breathing, bright at the top
-    and fading down, in the look's green, teal and violet across the screen; a strand in every other column."""
+    """Tall curtains of light across the screen's right side, their tops waving and their length breathing, bright at
+    the top and fading down, in the look's green, teal and violet across the screen; a strand in every other
+    column."""
     cols = canvas.cols
     stops = _logo_stops(palette)
     top, bottom = canvas.band()
-    reach = bottom - top
-    for col in range(0, cols, 2):
+    reach = (bottom - top) * 0.8
+    for col in range(int(cols * RIGHT) // 2 * 2, cols, 2):
         glow = _wave(seconds, 9, col / (cols * 0.6))
         if glow < 0.2:
             continue
@@ -238,12 +242,12 @@ def _aurora(canvas: _Canvas, palette: LogoPalette, seconds: float) -> None:
 
 
 def _ember(canvas: _Canvas, palette: LogoPalette, seconds: float) -> None:
-    """A campfire near the bottom of the blank band: logs, flames flickering over them, and sparks rising from it and
+    """A campfire low on the right, over the composer: logs, flames flickering over them, and sparks rising from it and
     fading as they climb."""
     cols, rows = canvas.cols, canvas.rows
     stops = _logo_stops(palette)
     _top, bottom = canvas.band()
-    centre, wide = cols * 0.74, _clamp(cols * 0.14, 10, 22)
+    centre, wide = cols * 0.8, _clamp(cols * 0.14, 10, 22)
     tall = _clamp(rows * 0.26, 5, 11)
     for across in range(int(-wide / 2), int(wide / 2) + 1):
         canvas.put(bottom, centre + across, "=" if across % 3 else "#", palette.edge, 1.0)
@@ -271,8 +275,8 @@ def _ember(canvas: _Canvas, palette: LogoPalette, seconds: float) -> None:
 
 
 def _gold(canvas: _Canvas, palette: LogoPalette, seconds: float) -> None:
-    """A large sun at the right of the blank band, its body glinting and its rays turning slowly round it; motes
-    floating across the band."""
+    """A large sun high on the right, its body glinting and its rays turning slowly round it; motes
+    floating across the screen."""
     cols, rows = canvas.cols, canvas.rows
     stops = _logo_stops(palette)
     top, bottom = canvas.band()
@@ -283,8 +287,8 @@ def _gold(canvas: _Canvas, palette: LogoPalette, seconds: float) -> None:
         shine = _wave(seconds, 1.5 + 2 * _noise(index, 7), _noise(index, 8))
         char = "*" if shine > 0.75 else "+" if shine > 0.45 else "."
         canvas.put(row, col, char, stops[1 + index % 3], 0.4 + 0.6 * shine)
-    radius = _clamp((bottom - top) * 0.22, 2.0, 4.0)
-    centre_row, centre_col = top + radius + 2.5, cols - 2 * radius - 16
+    radius = _clamp(rows * 0.09, 2.0, 4.0)
+    centre_row, centre_col = top + radius + 1.5, cols - 2 * radius - 16
     for row in range(int(centre_row - radius) - 1, int(centre_row + radius) + 2):
         for col in range(int(centre_col - 2 * radius) - 2, int(centre_col + 2 * radius) + 3):
             if math.hypot(row + 0.5 - centre_row, (col + 0.5 - centre_col) / 2) <= radius:
@@ -306,15 +310,16 @@ def _ray_glyph(angle: float) -> int:
 
 
 def _violet(canvas: _Canvas, palette: LogoPalette, seconds: float) -> None:
-    """Four large, soft out-of-focus lights drifting right across the blank band and bobbing, each a ring with a
-    sparse glow inside, breathing."""
+    """Four large, soft out-of-focus lights drifting right across the screen's right side and bobbing, each a ring with
+    a sparse glow inside, breathing."""
     cols, rows = canvas.cols, canvas.rows
     stops = _logo_stops(palette)
     top, bottom = canvas.band()
     for index in range(4):
         radius = _clamp(rows * (0.07 + 0.03 * _noise(index, 1)), 2.0, 5.0)
-        span = cols + 4 * radius
-        centre_col = (_noise(index, 2) * span + seconds * (0.9 + 0.5 * _noise(index, 3))) % span - 2 * radius
+        span = cols * (1 - RIGHT) + 4 * radius
+        centre_col = cols * RIGHT + (_noise(index, 2) * span + seconds * (0.9 + 0.5 * _noise(index, 3))) % span \
+            - 2 * radius
         centre_row = top + radius + (bottom - top - 2 * radius) * _noise(index, 4) \
             + math.sin(TAU * (seconds / 4 + _noise(index, 5)))
         breath = 0.55 + 0.45 * _wave(seconds, 3 + 2 * _noise(index, 6), _noise(index, 7))
@@ -329,7 +334,7 @@ def _violet(canvas: _Canvas, palette: LogoPalette, seconds: float) -> None:
 
 
 def _graphite(canvas: _Canvas, palette: LogoPalette, seconds: float) -> None:
-    """Rain falling into a puddle near the bottom of the blank band; where a drop lands a ripple spreads along the
+    """Rain falling into a puddle low on the screen, over the composer; where a drop lands a ripple spreads along the
     puddle's line. One drop in six is the look's turquoise."""
     cols, rows = canvas.cols, canvas.rows
     grey = palette.greys[0] if palette.greys else palette.label
@@ -353,13 +358,13 @@ def _graphite(canvas: _Canvas, palette: LogoPalette, seconds: float) -> None:
 
 
 def _spectrum(canvas: _Canvas, palette: LogoPalette, seconds: float) -> None:
-    """A prism in the blank band with a beam of light going in from the left and fanning out of it into the five
-    hues to the right; pulses of light run along the beam and the rays."""
-    cols = canvas.cols
+    """A prism on the screen's right side with a beam of light going in from the left and fanning out of it into the
+    five hues to the right; pulses of light run along the beam and the rays."""
+    cols, rows = canvas.cols, canvas.rows
     stops = _logo_stops(palette)
     top, bottom = canvas.band()
-    tall = _clamp((bottom - top) * 0.8, 4, 10)
-    apex_row, apex_col = top + (bottom - top - tall) / 2, cols * 0.34
+    tall = _clamp(rows * 0.3, 4, 10)
+    apex_row, apex_col = rows * 0.42, cols * 0.66  # low enough for the launch screen's blank band too
     middle = apex_row + tall * 0.6
     for down in range(int(tall) + 1):
         half = down * 1.1
@@ -372,11 +377,11 @@ def _spectrum(canvas: _Canvas, palette: LogoPalette, seconds: float) -> None:
                 canvas.put(apex_row + down, apex_col + across, ".", palette.label, 0.35)
     pulse = seconds * 8  # columns a second the light runs along the beam and the rays
     enter = int(apex_col - (middle - apex_row) * 1.1)
-    for col in range(0, enter):
+    for col in range(int(cols * RIGHT * 0.8), enter):
         canvas.put(middle, col, "=" if (col - pulse) % 21 < 2 else "-", palette.label, 0.8)
     leave = apex_col + (middle - apex_row) * 1.1
     for hue in range(len(stops)):
-        slope = (hue - (len(stops) - 1) / 2) * 0.045  # rows per column: the fan opens to about the band's height
+        slope = (hue - (len(stops) - 1) / 2) * 0.045  # rows per column: the fan opens to a few rows each way
         for step in range(int(cols - leave)):
             char = "=" if (step - pulse) % 23 < 2 else "-"
             canvas.put(middle + slope * step, leave + step, char, stops[hue], 0.9 - 0.3 * step / (cols - leave))

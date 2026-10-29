@@ -6457,9 +6457,10 @@ class App(ModesMixin, AgentViewMixin):
         # Flushed before the frame, the lines cover the region's top rows, where the lines leaving
         # the tail were drawn (a settled tool group is those same rows, moved above the region), and
         # the frame is drawn under them. Flush and frame are one write, so no screen between them shows.
-        # The wallpaper paints the launch screen's logo and card rows too, never a transcript's (`ambient_above`).
+        # The wallpaper paints the blank tails of the rows above the region too, the transcript's included, so it stays
+        # in view over a full session (owner's choice of 2026-10-29; `screen` names what that costs a selection).
         self.region.render(frame.lines, frame.cursor, cols, flush=stable, screen_rows=rows, edge=self._edge(),
-                           ambient=self._ambient(), ambient_above=self.card_state == CARD_LIVE)
+                           ambient=self._ambient(), ambient_above=True)
         self.ambient_at = self.clock()
         self.frame_budget = frame.budget
         self.frame_busy = busy

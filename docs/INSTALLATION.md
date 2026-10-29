@@ -890,12 +890,15 @@ run and approval decision stays Hermes'; the screen is OMH's.
   through the `/theme` picker only changes the background, and Esc puts
   the look in use back with nothing printed again. A `/theme light` or
   `/theme dark` that holds the wallpaper off says so and names
-  `/theme auto`. The scene is
-  drawn only on rows that are wholly blank: the rows under a short session,
-  the launch screen's empty area, and two cells past the end of the logo
-  and card rows while the launch card shows. A row with text never gets a
-  glyph, so a selection copies only text, and nothing reaches the
-  scrollback (a cell a scroll would carry there is taken off first). At
+  `/theme auto`. The scene is drawn on blank cells only, never over text
+  or a band: blank rows whole, and on a row with text (the transcript's
+  rows too) its tail, two cells past the text, so the motifs, which keep to
+  the screen's right side, stay in view over a full session. Two costs come
+  with that: a selection across several rows copies the glyphs in their
+  tails along with the text, and a repaint under a selection may end it on
+  terminals that clear a selection when its cells change; `/wallpaper off`
+  removes both. Nothing reaches the scrollback (a cell a scroll would carry
+  there is taken off first). At
   most a sixth of the screen is lit, and no cell is brighter than 3:1
   against the ground. Between frames it repaints only the cells that
   changed, every 0.25 s, not while the composer holds text (so typing and

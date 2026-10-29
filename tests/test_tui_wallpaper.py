@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import random
 import tempfile
 import unittest
 from unittest import mock
@@ -26,7 +27,7 @@ from omh.skin_pack import (
 from omh.tui import app as app_module
 from omh.tui.gateway import Event
 from omh.tui.keys import CHAR, DOWN, ENTER, ESCAPE, Key
-from omh.tui.screen import LiveRegion
+from omh.tui.screen import TEXT_GAP, LiveRegion
 from omh.tui.style import TRUECOLOR, Span, Style
 from omh.tui.terminal import background_restore, background_set
 from omh.tui.theme import (
@@ -132,8 +133,8 @@ class GroundContrastTests(unittest.TestCase):
             for look in LAUNCH_PRESETS:
                 for light in (False, True):
                     ground = look_ground(look, light)
-                    theme = readable_on(with_launch_look(with_prompt_band(build_theme(skin, ground), skin, ground, look),
-                                                         skin, ground, look), skin, ground)
+                    banded = with_prompt_band(build_theme(skin, ground), skin, ground, look)
+                    theme = readable_on(with_launch_look(banded, skin, ground, look), skin, ground)
                     inks = [(role, getattr(theme, role).fg, TEXT_CONTRAST) for role in TEXT_ROLES]
                     inks += [(role, getattr(theme, role).fg, EDGE_CONTRAST) for role in GLYPH_ROLES]
                     inks += [("catch_words", theme.catch_words.fg, TEXT_CONTRAST)]
@@ -162,15 +163,18 @@ class RegionTests(unittest.TestCase):
         screen, region = self.region()
         region.render(self.LINES, (2, 7), 40, screen_rows=12, ambient=everywhere("", 40, 12, 0, False))
         lines = screen.lines()
-        self.assertEqual(lines[0], "first row of text", "a row with text keeps its tail clear: a selection copies text")
+        # A row with text gets its tail from TEXT_GAP cells past the text (owner's choice: the wallpaper stays in view
+        # over a full session); a terminal that draws an ambiguous-width glyph wide cannot push it over the text.
+        self.assertEqual(lines[0], "first row of text" + " " * TEXT_GAP + MARK * (40 - 17 - TEXT_GAP))
         self.assertNotIn(MARK, lines[1], "a band's background runs to the edge: no blank cell on it")
-        self.assertEqual(lines[2], "> typed")
+        self.assertEqual(lines[2], "> typed" + " " * TEXT_GAP + MARK * (40 - 7 - TEXT_GAP), "past the caret too")
         self.assertEqual(lines[3:5], [MARK * 40] * 2, "rows that are wholly blank, empty or spaces")
-        self.assertNotIn(MARK, lines[5], "spaces on a band show the band")
+        self.assertEqual(lines[5], "  " + " " * TEXT_GAP + MARK * (40 - 2 - TEXT_GAP), "spaces on a band show the band")
         self.assertTrue(all(line == MARK * 40 for line in lines[6:]), "the rows under the region")
         self.assertEqual(screen.cursor, (2, 7))
 
     def test_a_row_that_gets_text_takes_its_cells_back_and_a_shrink_clears_them(self) -> None:
+        # (A row painted again in two frames running, a spinner's, keeps nothing in its tail until it is still.)
         screen, region = self.region()
         ambient = everywhere("", 40, 12, 0, False)
         region.render(self.LINES, (2, 7), 40, screen_rows=12, ambient=ambient)
@@ -228,6 +232,52 @@ class RegionTests(unittest.TestCase):
                 self.assertEqual(screen.line(1), "card row" + ("  " + MARK * 30 if above else ""))
                 region.render([(Span("> "),)], (0, 2), 40, screen_rows=12, ambient=ambient)
                 self.assertEqual(screen.line(0), "logo row", "taken off once no longer asked")
+
+    def test_random_frames_never_cover_text_or_reach_the_scrollback(self) -> None:
+        # Seeded random frames, flushes, inserted rows, ticks and starting places, with and without the glow's margin
+        # and the rows above painted: the screen with the glyph taken out is the plain run's, no glyph is in the
+        # scrollback, and every glyph on screen is one the region tracks (after the review's fuzz).
+        for seed in range(40):
+            rnd = random.Random(seed)
+            rows, cols = rnd.choice([(8, 30), (12, 40), (20, 60)])
+            footer = rnd.random() < 0.5
+            margin = int(footer)
+            start = rnd.choice(["top", "row", "none"])
+            place = {"at_top": True} if start == "top" else {"start_row": rnd.randrange(rows)} if start == "row" else {}
+            painted, plain = VTScreen(rows, cols), VTScreen(rows, cols)
+            if start != "top":
+                shell = "shell\r\n" * rnd.randrange(rows) if start == "none" else f"\x1b[{place['start_row'] + 1};1H"
+                for screen in (painted, plain):
+                    screen.feed(shell)
+            regions = [LiveRegion(screen.feed, margin=margin, footer=footer, **place) for screen in (painted, plain)]
+            width, screen_rows = cols - 2 * margin, rows - footer
+            lines: list = []
+            for step in range(50):
+                ambient = tuple(Cell(r, c, MARK, "#445566") for r in range(rows) for c in range(cols)
+                                if rnd.random() < 0.7)
+                if rnd.random() < 0.15:
+                    regions[0].paint_ambient(ambient, screen_rows)
+                else:
+                    if rnd.random() < 0.4 or not lines:
+                        lines = [(Span("x" * rnd.randrange(width)),) if rnd.random() < 0.85 else
+                                 (Span("band", Style(bg="#334455")), Span("", Style(bg="#334455")))
+                                 for _ in range(rnd.randint(1, screen_rows - 1))]
+                    elif rnd.random() < 0.5 and len(lines) < screen_rows - 1:
+                        at = rnd.randrange(len(lines) + 1)
+                        lines = lines[:at] + [(Span(f"ins{step}"),)] + lines[at:]
+                    flush = [(Span(f"f{step}-{i}" + "y" * rnd.randrange(width // 2)),)
+                             for i in range(rnd.choice([0, 0, 1, 2, 5]))]
+                    cursor = None if rnd.random() < 0.2 else (rnd.randrange(len(lines)), rnd.randrange(width))
+                    regions[0].render(lines, cursor, width, flush=flush, screen_rows=screen_rows, ambient=ambient,
+                                      ambient_above=rnd.random() < 0.7)
+                    regions[1].render(lines, cursor, width, flush=flush, screen_rows=screen_rows)
+                where = f"seed {seed} step {step}"
+                self.assertEqual([line.replace(MARK, " ").rstrip() for line in painted.lines()],
+                                 [line.rstrip() for line in plain.lines()], where)
+                self.assertFalse(any(MARK in line for line in painted.scrollback), where)
+                marks = {(row, col) for row in range(rows) for col, char in enumerate(painted.line(row))
+                         if char == MARK}
+                self.assertEqual(marks, set(regions[0]._paper), where)
 
     def test_clearing_the_region_takes_the_cells_above_it_off_too(self) -> None:
         # Exit from the launch screen (nothing to flush) and Ctrl+Z only clear the region: the cells beside the logo
@@ -371,8 +421,11 @@ class AppWallpaperTests(unittest.TestCase):
                     self.assertFalse(any(MARK in line for line in screen.scrollback))
                 top = app.region.top_row(app.size[1])
                 self.assertIsNotNone(top)
-                for row in range(top):  # rows above the region are the transcript's, on their way to the scrollback
-                    self.assertNotIn(MARK, screen.line(row), f"row {row}")
+                for row in range(top):  # the transcript's rows above the region: glyphs only past their text
+                    text = screen.line(row).split(MARK)[0]
+                    if MARK in screen.line(row) and text.strip():
+                        self.assertTrue(text.endswith(" " * TEXT_GAP), f"row {row}: {screen.line(row)!r}")
+                self.assertTrue(any(MARK in screen.line(row) for row in range(top)), "the tails above are painted")
                 if glow == "1":
                     edges = [screen.line(row).ljust(60)[col] for row in range(20) for col in (0, 59)]
                     self.assertNotIn(MARK, edges, "the glow's columns stay its own")
@@ -455,7 +508,7 @@ class AppWallpaperTests(unittest.TestCase):
                 app._render_when_due()
             self.assertEqual(len(app.terminal.writes), before, "no tick moves the cursor away from an IME's pre-edit")
 
-    def test_the_launch_screen_is_painted_round_its_logo_and_a_transcript_is_not(self) -> None:
+    def test_the_launch_screen_and_the_transcript_are_painted_past_their_text(self) -> None:
         from test_tui_app import FakePoller, ScriptedTerminal
         from test_tui_launch_card import SKILLS, StartClient
         from test_tui_modes import SID
@@ -480,7 +533,9 @@ class AppWallpaperTests(unittest.TestCase):
             app.transcript.apply(Event("message.complete", SID, {"text": "an answer someone may copy"}))
             app._render()
             top = app.region.top_row(app.size[1])
-            self.assertFalse(any(MARK in screen.line(row) for row in range(top)), "the transcript is never painted")
+            answer = next(row for row in range(top) if "an answer someone may copy" in screen.line(row))
+            self.assertIn("an answer someone may copy" + " " * TEXT_GAP + MARK, screen.line(answer),
+                          "the transcript's tail, past the gap (owner's choice; /wallpaper off keeps it clean)")
 
     def test_theme_light_or_dark_against_the_terminal_holds_the_ground_off(self) -> None:
         # The terminal's own foreground is picked for its own background; a ground of the other lightness would leave
