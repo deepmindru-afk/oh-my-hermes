@@ -159,6 +159,17 @@ class SceneTests(unittest.TestCase):
                     self.assertLessEqual(letters, set(ROLES[name]), (name, letters))
                     self.assertLessEqual(len(letters), 5, "three to five colours a motif")
 
+    def test_aurora_reads_in_a_short_launch_band(self) -> None:
+        # On the README's launch screen aurora's card (a box per section) ends about two thirds down (row 31 of 48
+        # at 180x48, measured with the README runner's skills), leaving the band's lower rows only. The curtains fill
+        # the band whole, so at least a fifth of those rows' cells are lit at any moment (before: about an eighth).
+        for cols, rows in ((180, 48), (160, 60)):
+            first, last = round(rows * 0.66), rows - 6  # under the card, over the composer
+            for seconds in (0.0, 3.0, 7.0, 11.0):
+                lit = sum(1 for cell in scene("aurora", cols, rows, seconds, False) if first <= cell.row <= last)
+                with self.subTest(size=(cols, rows), seconds=seconds):
+                    self.assertGreaterEqual(lit, 0.2 * (last - first + 1) * cols)
+
     def test_the_motifs_move(self) -> None:
         # Each frame-animated motif shows another frame within a second, and every scene changes within a second.
         for look in LAUNCH_PRESETS:

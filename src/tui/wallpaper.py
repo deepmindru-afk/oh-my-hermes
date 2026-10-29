@@ -84,7 +84,9 @@ PASTEL = 0.12  # how far every colour is softened toward white first: the pixel 
 AURA_TILE = 2  # an aura's tile, in pixels a side: the aura is a mosaic of square tiles, not a speckle
 # The brand's pixel-aura hues (the `oh-my-hermes` pixel-aura short): violet, pink, cyan, mint and periwinkle.
 AURA_HUES = ("#C084FC", "#F472B6", "#67E8F9", "#86EFAC", "#A5B4FC")
-UNDER_DARK = 0.7  # on a dark ground, how far toward black the shade every colour is mixed from sits
+UNDER_DARK = 0.7
+AURORA_FROM = 0.35  # aurora: the share of the width its curtains start at, wider than the other motifs
+AURORA_LEAST = 0.5  # aurora: the dimmest a curtain's column gets, so every column of it shows  # on a dark ground, how far toward black the shade every colour is mixed from sits
 TWO_CLOUD_CELLS = 4000  # moonlit: a screen of this many cells has room for a second cloud beside the moon
 BIG_COLS, BIG_ROWS, BIG_SCALE = 140, 40, 2  # a screen this big draws the motifs' art pixels two pixels square
 
@@ -447,26 +449,33 @@ def _sakura(canvas: _Canvas, palette: LogoPalette, seconds: float) -> None:
 
 
 def _aurora(canvas: _Canvas, palette: LogoPalette, seconds: float) -> None:
-    """Pastel pixel ribbons of light over the screen's right side: columns of scattered square pixels, dense at the
-    ribbon's top and thinning out below, their tops waving, in the look's mint, teal and violet; sparkle stars over
-    them."""
+    """Curtains of light across the band's whole width and height, in the aura's tiles: ribbons of tile columns (four
+    lit, one dark in turn), dense under a waving crest near the band's top and thinning out to its bottom, each
+    column at least half lit (`AURORA_LEAST`), in the look's mint, teal and violet; sparkle stars along the top.
+    Filling the band whole, the curtains read in a short band too: the launch screen's card for aurora, a box per
+    section, leaves only the band's lower rows blank on a short screen."""
     cols = canvas.cols
     stops = _logo_stops(palette)
     top, bottom = canvas.band()
-    reach = (bottom - top) * 0.75
-    for col in range(int(cols * RIGHT), cols):
-        glow = _wave(seconds, 9, col / (cols * 0.6))
-        if glow < 0.25:
-            continue
-        crest = top + reach * (0.15 + 0.15 * math.sin(TAU * (col / (cols * 0.4) + seconds / 7)))
-        length = reach * (0.4 + 0.3 * glow)
-        colour = _pastel(stops[min(int(((col / cols + seconds / 40) % 1) * len(stops)), len(stops) - 1)])
-        for down in range(int(length)):
-            fade = 1 - down / length
-            if _noise((int(crest) + down) * 7919 + col, 71) > 0.25 + 0.75 * fade:
+    tall = bottom - top
+    tile = AURA_TILE
+    for tile_x in range(int(cols * AURORA_FROM) // tile, cols // tile + 1):
+        if tile_x % 5 == 4:
+            continue  # the dark fold between two ribbons
+        x = tile_x * tile
+        glow = AURORA_LEAST + (1 - AURORA_LEAST) * (0.5 + 0.5 * math.sin(TAU * x / (cols * 0.35)))
+        crest = top + tall * 0.12 * (1 + math.sin(TAU * (x / (cols * 0.4) + seconds / 7)))
+        colour = _pastel(stops[min(int(x / cols * len(stops)), len(stops) - 1)])
+        for tile_y in range(int(crest) // tile, bottom // tile + 1):
+            y = tile_y * tile
+            fade = _clamp(1 - (y - crest) / max(bottom - crest, 1), 0.0, 1.0)
+            if _noise(tile_y * 7919 + tile_x, 71) > 0.3 + 0.65 * fade:
                 continue  # scattered: thinning out below
-            canvas.dot(crest + down, col, canvas.tone(colour, (0.4 + 0.6 * glow) * (0.35 + 0.65 * fade)))
-    _sparkles(canvas, top + 6, cols * (0.5 + RIGHT / 2), 12, cols * (1 - RIGHT), 7, stops[1], seconds, 72)
+            tone = canvas.tone(colour, glow * (0.45 + 0.55 * fade))
+            for row in range(tile):
+                for col in range(tile):
+                    canvas.dot(y + row, x + col, tone)
+    _sparkles(canvas, top + 4, cols * (0.5 + AURORA_FROM / 2), 10, cols * (1 - AURORA_FROM), 7, stops[1], seconds, 72)
 
 
 def _ember(canvas: _Canvas, palette: LogoPalette, seconds: float) -> None:
