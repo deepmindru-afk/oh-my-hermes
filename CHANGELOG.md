@@ -6,6 +6,14 @@ All notable changes will be documented here.
 
 ![Sprite Forge patch notes](https://raw.githubusercontent.com/rlaope/oh-my-hermes/main/assets/omh-sprite-forge-patch-notes.png)
 
+- **Copying from the pager after an emoji copies the right text.** The
+  pager's drag, double click and highlight counted columns by code point
+  while the row is painted by glyph, so after a ZWJ family, a skin-tone or
+  VS16 emoji the cells under the pointer were the wrong ones (a double click
+  on the next word copied nothing) and the highlight could change style
+  inside one emoji, breaking it. They now count by glyph, as do the recall
+  glint and the running box's aura in `/dag`.
+
 - **A light goes round the OMH TUI's screen while a turn runs.** It runs
   along the terminal's whole edge, clockwise, once every four seconds, with
   a round head and a trail in the launch look's logo colours that fades

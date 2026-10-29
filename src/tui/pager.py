@@ -23,7 +23,7 @@ lines a notch (never a highlight: the bot board's list keeps its row). A drag
 selects the cells it passes over, shown reversed, and its release hands back
 their text to copy: the cells of `gutter` spans (a block's rail, a reply's
 margin) left out of both, each row's trailing spaces and the empty rows at
-either end dropped; a wide character is in when either of its cells is. A
+either end dropped; a wide glyph is in when either of its cells is. A
 double click picks the word under it and a triple click the row, and hands
 back that; a click counts toward them only after a plain click on the same
 cell (released where it was pressed, with no motion) ended less than
@@ -46,7 +46,7 @@ from .keys import (
 from .screen import HIDE_CURSOR, SYNC_BEGIN, SYNC_END, paint_line
 from .style import CSI, Line, Span
 from .theme import Theme
-from .width import cell_width
+from .width import cluster_width, clusters
 
 ALT_SCREEN_ON = f"{CSI}?1049h"
 ALT_SCREEN_OFF = f"{CSI}?1049l"
@@ -251,17 +251,17 @@ class Pager:
 
 
 def _cells(line: Line) -> list[tuple[int, int, str, bool]]:
-    """Each character of `line` with the first and last column it covers (a wide one two, a zero-width one its base's)
-    and whether it is a gutter's."""
+    """Each grapheme cluster of `line` (`width.clusters`, measured as the row is painted) with the first and last column
+    it covers (a wide one two, a zero-width one its base's) and whether it is a gutter's."""
     cells: list[tuple[int, int, str, bool]] = []
     at = 0
     for span in line:
-        for char in span.text:
-            width = cell_width(char)
+        for cluster in clusters(span.text):
+            width = cluster_width(cluster)
             if width == 0 and cells:
-                cells.append((cells[-1][0], cells[-1][1], char, span.style.gutter))
+                cells.append((cells[-1][0], cells[-1][1], cluster, span.style.gutter))
                 continue
-            cells.append((at, at + max(width, 1) - 1, char, span.style.gutter))
+            cells.append((at, at + max(width, 1) - 1, cluster, span.style.gutter))
             at += width
     return cells
 
@@ -273,7 +273,7 @@ def _word_at(line: Line, column: int) -> tuple[int, int] | None:
 
     def in_word(index: int) -> bool:
         _start, _end, char, gutter = cells[index]
-        return not gutter and (char.isalnum() or char in WORD_PUNCTUATION)
+        return not gutter and (char[0].isalnum() or char in WORD_PUNCTUATION)  # a cluster: its base decides
 
     index = next((index for index, (start, end, _char, _gutter) in enumerate(cells) if start <= column <= end), None)
     if index is None or not in_word(index):
@@ -287,21 +287,22 @@ def _word_at(line: Line, column: int) -> tuple[int, int] | None:
 
 
 def _reversed(line: Line, low: int, high: int) -> Line:
-    """`line` with the characters on columns `low` to `high` (a wide one when either of its cells is) drawn reversed, a
-    selection's highlight; gutter cells keep their look, as the copy leaves them out."""
+    """`line` with the clusters on columns `low` to `high` (a wide one when either of its cells is) drawn reversed, a
+    selection's highlight, never one style change inside a cluster; gutter cells keep their look, as the copy leaves
+    them out."""
     spans: list[Span] = []
     cells = iter(_cells(line))
     for span in line:
         if not span.text:
             spans.append(span)  # a fill: the row's background to its edge
-        for char in span.text:
-            start, end, _char, _gutter = next(cells)
+        for cluster in clusters(span.text):
+            start, end, _cluster, _gutter = next(cells)
             lit = start <= high and end >= low and not span.style.gutter
             style = replace(span.style, reverse=not span.style.reverse) if lit else span.style
             if spans and spans[-1].text and spans[-1].style == style:
-                spans[-1] = Span(spans[-1].text + char, style)
+                spans[-1] = Span(spans[-1].text + cluster, style)
             else:
-                spans.append(Span(char, style))
+                spans.append(Span(cluster, style))
     return tuple(spans)
 
 
