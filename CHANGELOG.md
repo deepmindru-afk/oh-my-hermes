@@ -6,6 +6,20 @@ All notable changes will be documented here.
 
 ![Sprite Forge patch notes](https://raw.githubusercontent.com/rlaope/oh-my-hermes/main/assets/omh-sprite-forge-patch-notes.png)
 
+- **A game now passes visual QA only when it boots, answers input and keeps
+  running, and a scene is looked at after every change that affects what
+  renders.** While building, `frontend` captures the affected surface (for a
+  3D or canvas scene the default camera and each declared preset) and reads
+  the capture before the next change; a change not looked at is not done,
+  and the final 1440/768/375 loop still runs. `visual-qa` gains
+  `references/playable-check.md`: a game or interactive scene passes when
+  the booted first frame is not blank or one flat colour, the frame after
+  the declared input differs where the input should move something, idle
+  frames seconds apart differ (background-only animation does not count),
+  and the console shows zero errors across boot and input. A missing capture
+  is BLOCK, reading code never passes, and a run with no WebGL context is
+  recorded as `environment: no_webgl` instead of being judged a blank frame.
+
 - **A Kimi main session now gets a short execution calibration of its own.**
   The new `omh.main-calibration` system-prompt section renders once at session
   start (no per-turn cost) for a main session whose model resolves to the Kimi

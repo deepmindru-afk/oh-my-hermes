@@ -202,7 +202,9 @@ class AiJobSearchContextBudgetTests(unittest.TestCase):
         # Then show-reel's idea-video lane (its Idea Videos section and the
         # bundled `manim-video`/`ascii-video` boundary); only show-reel moves,
         # and reverting it reproduces c68f1cca2df78a15c4822345f421b1aab01c43d8f4ae0944accb41065bef384c.
-        self.assertEqual(_digest(legacy_hashes), 'd95a932bee5465e280ea09653a5f741813f0dcadf0fa17f6e76dddfc45789a72')
+        # Then frontend's observe-each-change quality-bar line; only frontend moves.
+        # Then visual-qa's playable-check quality-bar line; only visual-qa moves, and its portable shadow pin is re-read.
+        self.assertEqual(_digest(legacy_hashes), '40cbc6d62e8eed6bf90ff03c3362ecf8bb6030ca055ceddc11150752cd84987f')
         legacy = _skill_context_cost_profile('full', legacy_templates, refs)
         current = _skill_context_cost_profile('full', templates, refs)
         # Main's search guidance adds 305; repro-audit's mandatory rails 1,943.
