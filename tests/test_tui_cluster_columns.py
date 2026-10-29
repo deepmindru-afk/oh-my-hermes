@@ -18,8 +18,10 @@ import unittest
 from dataclasses import replace
 
 from _vt_screen import VTScreen
+from test_tui_bot_board import NOW, bots
 from test_tui_modes import drawn, make_app
 from omh.plugin_bundle.omh.delegation_view import Segment
+from omh.tui import bot_board, subagents
 from omh.tui.keys import BUTTON_LEFT, Mouse
 from omh.tui.pager import Pager, _reversed
 from omh.tui.panels import _aura_box
@@ -39,6 +41,14 @@ LEADS = {
     "flag": "🇰🇷",  # two regional indicators, one glyph
 }
 KITTY = {"TERM": "xterm-kitty"}
+# A cluster of two or more code points whose first is not in the rest of the page, for a cut to fall inside.
+CUT_LEADS = {
+    "zwj family": "👨\u200d👩\u200d👧",
+    "skin tone": "👍🏻",
+    "flag": "🇰🇷",
+    "combining mark": "z\u0301",
+    "decomposed hangul": "\u1112\u1161\u11ab",
+}
 
 
 def nfc(text: str) -> str:
@@ -89,10 +99,10 @@ class PagerSelectionTests(unittest.TestCase):
                 width = cluster_width(nfc(lead))
                 pager = Pager("log", [(Span(f"{lead} x"),)])
                 pager.frame(40, 10, DEFAULT_THEME)
-                self.assertEqual(drag(pager, 1, width + 1), nfc(lead))  # its cells and the space after it
+                self.assertEqual(drag(pager, 1, width + 1), lead)  # its cells and the space after it, as written
                 pager = Pager("log", [(Span(f"{lead} x"),)])
                 pager.frame(40, 10, DEFAULT_THEME)
-                self.assertEqual(drag(pager, width, width + 2), f"{nfc(lead)} x")  # from its last cell on
+                self.assertEqual(drag(pager, width, width + 2), f"{lead} x")  # from its last cell on
 
     def test_the_highlight_reverses_a_whole_cluster_and_moves_no_column(self) -> None:
         plain = Style()
@@ -100,7 +110,7 @@ class PagerSelectionTests(unittest.TestCase):
         for name, lead in LEADS.items():
             with self.subTest(lead=name):
                 line = (Span(f"{lead} x"),)
-                self.assertEqual(_reversed(line, 0, 0), (Span(nfc(lead), lit), Span(" x", plain)))
+                self.assertEqual(_reversed(line, 0, 0), (Span(lead, lit), Span(" x", plain)))
                 pager = Pager("log", [line])
                 pager.frame(40, 10, DEFAULT_THEME)
                 pager.handle_mouse(Mouse(BUTTON_LEFT, 1, 1), 10, 0.0)
@@ -111,6 +121,38 @@ class PagerSelectionTests(unittest.TestCase):
                 self.assertEqual(screen.line(0), f"{nfc(lead)} x")
                 self.assertEqual([7 in screen.attrs_at(0, column) for column in range(width + 2)],
                                  [True] * width + [False, False])
+
+    def test_a_copy_hands_back_the_code_points_it_was_given_not_their_nfc_form(self) -> None:
+        # A decomposed macOS path pasted into a shell or grep must match the file it names, byte for byte.
+        for word in ("cafe\u0301", "\u1112\u1161\u11ab\u1100\u1173\u11af", "re\u0301sume\u0301.txt"):
+            with self.subTest(word=word):
+                pager = Pager("log", [(Span(f"open {word} now"),)])
+                pager.frame(40, 10, DEFAULT_THEME)
+                x = line_width((Span("open "),)) + 2
+                click(pager, x, 0.0)
+                self.assertEqual(click(pager, x, 0.1), word)
+                pager = Pager("log", [(Span(f"open {word} now"),)])
+                pager.frame(40, 10, DEFAULT_THEME)
+                self.assertEqual(drag(pager, 1, 40), f"open {word} now")
+                self.assertEqual(text_of(_reversed((Span(word),), 0, 99)), word)
+
+    def test_the_logs_pager_copies_a_decomposed_path_as_written(self) -> None:
+        now = [100.0]
+        app, client = make_app(rows=12, cols=60, environ=KITTY, clock=lambda: now[0])
+        app.pbcopy = lambda text: False  # type: ignore[method-assign]  # never the real clipboard
+        path = "/Users/me/cafe\u0301/notes.txt"
+        client.stderr_tail = lambda: [f"read {path} ok"]  # type: ignore[attr-defined]
+        app._logs("")
+        drawn(app)
+        screen = app.terminal.screen  # type: ignore[attr-defined]
+        y = next(index for index, line in enumerate(screen.lines()) if "notes" in line)
+        x = screen.line(y).index("/Users") + 2
+        for _ in range(2):
+            app._on_input(Mouse(BUTTON_LEFT, x, y + 1))
+            app._on_input(Mouse(BUTTON_LEFT, x, y + 1, pressed=False))
+            now[0] += 0.1
+        sent = [text.removeprefix("52;c;") for text in screen.osc if text.startswith("52;c;")]
+        self.assertEqual([base64.b64decode(text.rstrip("\x07")).decode("utf-8") for text in sent], [path])
 
     def test_the_app_copies_the_word_after_a_zwj_family_with_the_clipboard_stubbed(self) -> None:
         now = [100.0]
@@ -131,6 +173,30 @@ class PagerSelectionTests(unittest.TestCase):
         sent = [text.removeprefix("52;c;") for text in screen.osc if text.startswith("52;c;")]
         self.assertEqual([base64.b64decode(text.rstrip("\x07")).decode("utf-8") for text in sent], ["target"])
         self.assertEqual(handed, [])
+
+
+class ClusterCutTests(unittest.TestCase):
+    """A cut by character count (a log row, a payload field, a bot's message) ends between two clusters."""
+
+    def test_a_log_row_and_a_payload_field_are_cut_before_the_cluster_the_limit_falls_in(self) -> None:
+        for name, lead in CUT_LEADS.items():
+            with self.subTest(lead=name):
+                text = "a" * 9 + lead + " tail"  # the limit, 10, falls inside `lead`
+                self.assertEqual(subagents._cut(text, 10), "a" * 9 + subagents.CUT_MARK)
+                self.assertEqual(subagents._one_line(text, 10), "a" * 9 + subagents.CUT_MARK)
+                # A row is painted NFC (`wrap_line`) whether cut or not, so the cut keeps the painted form.
+                self.assertEqual(subagents._cut(text, 9 + len(lead)), "a" * 9 + nfc(lead) + subagents.CUT_MARK)
+                self.assertEqual(subagents._cut(text, len(text)), text)
+
+    def test_a_bots_message_is_cut_before_the_cluster_the_limit_falls_in(self) -> None:
+        for name, lead in CUT_LEADS.items():
+            with self.subTest(lead=name):
+                text = "a" * (bot_board.MESSAGE_SHOWN_CHARS - 1) + lead + " tail"
+                snapshot = bot_board.BoardSnapshot(bot_board.BoardView("p", "s1"), bots(), (),
+                                                   messages=(bot_board.MessageRow("user", text, NOW),), read_at=NOW)
+                page = "".join(text_of(line) for line in bot_board.message_lines(snapshot, None, NOW, 200, DEFAULT_THEME))
+                self.assertIn("a…", page)
+                self.assertNotIn(lead[0], page, "no piece of the cluster is left before the cut")
 
 
 class ClusterStyleTests(unittest.TestCase):

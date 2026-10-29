@@ -39,6 +39,7 @@ from __future__ import annotations
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field, replace
 from typing import ClassVar
+import unicodedata
 
 from .keys import (
     BUTTON_LEFT, CHAR, DOWN, END, ESCAPE, HOME, PAGE_DOWN, PAGE_UP, UP, WHEEL_DOWN, WHEEL_UP, Key, Mouse, Paste,
@@ -250,14 +251,34 @@ class Pager:
         parts.append(_move_to(row) + painted)
 
 
+def _source_clusters(text: str) -> list[tuple[str, str]]:
+    """Each cluster `text` is painted as (`width.clusters`, which is NFC), with the code points of `text` it was made
+    from: a copy hands back the text as it was written, so a decomposed (NFD) macOS path still matches its file."""
+    painted = clusters(text)
+    if unicodedata.is_normalized("NFC", text):
+        return [(cluster, cluster) for cluster in painted]
+    units: list[tuple[str, str]] = []
+    at = 0
+    for cluster in painted:
+        end = at + 1
+        while end <= len(text) and unicodedata.normalize("NFC", text[at:end]) != cluster:
+            end += 1
+        if end > len(text):  # no run of the source composes to it: copy what is painted
+            return [(cluster, cluster) for cluster in painted]
+        units.append((cluster, text[at:end]))
+        at = end
+    return units
+
+
 def _cells(line: Line) -> list[tuple[int, int, str, bool]]:
-    """Each grapheme cluster of `line` (`width.clusters`, measured as the row is painted) with the first and last column
-    it covers (a wide one two, a zero-width one its base's) and whether it is a gutter's."""
+    """Each grapheme cluster of `line` (`width.clusters`, measured as the row is painted) in the line's own code points,
+    with the first and last column it covers (a wide one two, a zero-width one its base's) and whether it is a
+    gutter's."""
     cells: list[tuple[int, int, str, bool]] = []
     at = 0
     for span in line:
-        for cluster in clusters(span.text):
-            width = cluster_width(cluster)
+        for painted, cluster in _source_clusters(span.text):
+            width = cluster_width(painted)
             if width == 0 and cells:
                 cells.append((cells[-1][0], cells[-1][1], cluster, span.style.gutter))
                 continue
@@ -295,7 +316,7 @@ def _reversed(line: Line, low: int, high: int) -> Line:
     for span in line:
         if not span.text:
             spans.append(span)  # a fill: the row's background to its edge
-        for cluster in clusters(span.text):
+        for _painted, cluster in _source_clusters(span.text):
             start, end, _cluster, _gutter = next(cells)
             lit = start <= high and end >= low and not span.style.gutter
             style = replace(span.style, reverse=not span.style.reverse) if lit else span.style
