@@ -347,14 +347,24 @@ def _channel(value: int) -> float:
     return srgb / 12.92 if srgb <= 0.03928 else ((srgb + 0.055) / 1.055) ** 2.4
 
 
+_CHANNELS = tuple(_channel(value) for value in range(256))  # every 8-bit channel's linear light, worked out once
+
+
 def contrast_ratio(first: str, second: str) -> float:
     """WCAG 2 contrast between two `#rrggbb` colours, 1.0 to 21.0; 1.0 when either is not a plain hex."""
     rgbs = [hex_to_rgb(first), hex_to_rgb(second)]
     if rgbs[0] is None or rgbs[1] is None:
         return 1.0
-    lighter, darker = sorted(
-        (0.2126 * _channel(r) + 0.7152 * _channel(g) + 0.0722 * _channel(b) for r, g, b in rgbs), reverse=True
-    )
+    return _ratio(_luminance(rgbs[0]), _luminance(rgbs[1]))
+
+
+def _luminance(rgb: tuple[int, int, int]) -> float:
+    r, g, b = rgb
+    return 0.2126 * _CHANNELS[r] + 0.7152 * _CHANNELS[g] + 0.0722 * _CHANNELS[b]
+
+
+def _ratio(first: float, second: float) -> float:
+    lighter, darker = (first, second) if first >= second else (second, first)
     return (lighter + 0.05) / (darker + 0.05)
 
 
@@ -365,6 +375,7 @@ def _mix(start: str, end: str, share: float) -> str:
     return "#" + "".join(f"{round(a + (b - a) * share):02X}" for a, b in zip(one, two, strict=True))
 
 
+@lru_cache(maxsize=4096)
 def _lifted(colour: str, toward: str, background: str, minimum: float) -> str:
     """`colour` moved toward `toward` in twentieths until it reaches `minimum` against `background`, and on from
     `toward` to pure black or white, whichever reads better there, where `toward` itself falls short.
@@ -372,14 +383,27 @@ def _lifted(colour: str, toward: str, background: str, minimum: float) -> str:
     `toward` is the palette's ink on a dark background (`banner_text`), not white. On a mid grey just dark enough
     to take light text, a tinted ink such as crimson's #FFEDE6 reaches only 4.36:1 on #707070, while white reaches
     4.95:1. The better of black and white always reaches 4.58:1 or more, so no `minimum` up to that is out of reach.
+
+    Each step is `_mix` measured by `contrast_ratio`, on channels parsed once rather than per step: a launch logo
+    lifts some 600 glyph colours in one paint. Cached, as a theme and every later paint ask the same again.
     """
-    end = BLACK if is_light(background) else WHITE
-    for start, target in ((colour, toward), (toward, end)):
+    back = hex_to_rgb(background)
+    floor = None if back is None else _luminance(back)
+    for start, target in ((colour, toward), (toward, None)):
+        if target is None:  # asked only once `toward` falls short
+            target = BLACK if is_light(background) else WHITE
+        one, two = hex_to_rgb(start), hex_to_rgb(target)
+        if one is None or two is None:  # `_mix` gives `start` back at every step
+            if contrast_ratio(start, background) >= minimum:
+                return start
+            continue
         for step in range(_LIFT_STEPS + 1):
-            candidate = _mix(start, target, step / _LIFT_STEPS)
-            if contrast_ratio(candidate, background) >= minimum:
-                return candidate
-    return end
+            share = step / _LIFT_STEPS
+            rgb = (round(one[0] + (two[0] - one[0]) * share), round(one[1] + (two[1] - one[1]) * share),
+                   round(one[2] + (two[2] - one[2]) * share))
+            if (1.0 if floor is None else _ratio(_luminance(rgb), floor)) >= minimum:
+                return "#" + "".join(f"{value:02X}" for value in rgb)
+    return BLACK if is_light(background) else WHITE
 
 
 def _palette(skin: SkinTheme) -> dict[str, str]:

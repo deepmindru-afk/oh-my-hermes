@@ -426,3 +426,43 @@ class MidGreyContrastTests(unittest.TestCase):
                 self.assertGreaterEqual(contrast_ratio(lifted, background), TEXT_CONTRAST)
                 self.assertGreater(contrast_ratio(lifted, "#FFFFFF"), contrast_ratio(toward, "#FFFFFF"), "darker")
                 self.assertLess(contrast_ratio(lifted, BLACK), contrast_ratio(toward, BLACK), "toward black")
+
+
+class LiftCostTests(unittest.TestCase):
+    """The lift answers what its stepwise definition does, and a repaint of the launch logo asks for no lift again
+    (QA P1: the logo lifted some 600 glyph colours on every paint, re-parsing each hex at every step)."""
+
+    def test_the_lift_is_the_stepwise_mix_it_names(self) -> None:
+        from omh.tui.theme import BLACK, EDGE_CONTRAST, WHITE, _lifted, _mix
+
+        def stepwise(colour: str, toward: str, background: str, minimum: float) -> str:
+            end = BLACK if is_light(background) else WHITE
+            for start, target in ((colour, toward), (toward, end)):
+                for step in range(21):
+                    candidate = _mix(start, target, step / 20)
+                    if hex_to_rgb(candidate) is not None and contrast(candidate, background) >= minimum:
+                        return candidate
+            return end
+
+        greys = [f"#{value:02X}{value:02X}{value:02X}" for value in range(0, 256, 17)]
+        tints = ["#F778BA", "#d58cf0", "#4A4F66", "#C5DE70", "#FFEDE6", "#707070"]
+        for colour in greys + tints:
+            for background in greys[::3] + ["#1E1E2E", "#FDF6E3"]:
+                for toward in ("#FFEDE6", BLACK, WHITE):
+                    for minimum in (EDGE_CONTRAST, TEXT_CONTRAST):
+                        self.assertEqual(_lifted(colour, toward, background, minimum),
+                                         stepwise(colour, toward, background, minimum),
+                                         (colour, toward, background, minimum))
+
+    def test_a_second_logo_paint_lifts_nothing_again(self) -> None:
+        from omh.skin_pack import default_theme
+        from omh.tui.theme import _lifted, launch_palette, logo_lines
+
+        skin = default_theme()
+        for preset in LAUNCH_PRESETS:
+            with self.subTest(preset=preset):
+                palette = launch_palette(preset, surface_for(skin, "#1E1E1E"))
+                first = logo_lines(skin, "#1E1E1E", palette)
+                misses = _lifted.cache_info().misses
+                self.assertEqual(logo_lines(skin, "#1E1E1E", palette), first)
+                self.assertEqual(_lifted.cache_info().misses, misses)

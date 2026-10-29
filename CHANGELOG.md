@@ -19,6 +19,16 @@ All notable changes will be documented here.
   tab as spaces and no longer lets a colour code in stderr shift the columns a
   click or a drag lands on.
 
+- **The second Ctrl+C of the OMH TUI exits, and the launch, a resize and the import cost less.** After a
+  Ctrl+C interrupts a turn, the queued prompt it puts back in the composer no longer eats the second press:
+  that press exits as the info line says, with Shift or Alt held too, and only while the line says so; after
+  an interrupt it says so over an open steer, rewind or tell as well. What the
+  composer holds is not kept on exit; prompts already sent or queued are in Hermes' history, where Up finds
+  them, and a submit still waiting on its pasted image keeps the press from exiting. The launch logo's contrast lift
+  parses each colour once and is cached (first paint about 12.6 -> 10.3 ms, same bytes); a full redraw
+  prints the rows it measured instead of rendering the kept blocks twice (a long session's settled resize
+  about 270 -> 205 ms); and the bot board's module loads when the board opens, not with the TUI.
+
 - **The OMH TUI has eight launch looks, and a look now tints the chrome.**
   `/theme` adds `sakura` (pastel pink, sky blue and cream), `moonlit`
   (moonlight yellow and silver over navy), `aurora` (emerald and teal into
