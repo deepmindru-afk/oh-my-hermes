@@ -15,12 +15,12 @@ import unittest
 
 from _tui_lines import lines_text
 from test_tui_app import info_row_of
-from test_tui_choice_ui import armed
+from test_tui_choice_ui import armed, press
 from test_tui_modes import SID, answer, drawn, make_app, notices, type_text
-from test_tui_questions import COLOUR
-from omh.tui.app import EXIT_CONFIRM_SECONDS, EXIT_HINT, INTERRUPTING, QUEUE_HELD_HINT, QueuedLine, queue_lines
+from test_tui_questions import COLOUR, TELL_APPROVAL
+from omh.tui.app import EXIT_CONFIRM_SECONDS, EXIT_HINT, INTERRUPTING, QUEUE_HELD_HINT, QueuedLine, Rewind, queue_lines
 from omh.tui.gateway import Event
-from omh.tui.keys import CHAR, ENTER, ESCAPE, UP, Key
+from omh.tui.keys import CHAR, DOWN, ENTER, ESCAPE, UP, Key
 from omh.tui.theme import DEFAULT_THEME
 from omh.tui.transcript import NOTICE_ERROR
 
@@ -211,7 +211,7 @@ class CtrlCExitTests(unittest.TestCase):
         now[0] += 0.6
         app._on_input(CTRL_C)
         self.assertEqual(app.exit_code, 0)
-        self.assertEqual(app.composer.text, "a queued prompt")  # left as it was; the session can be resumed
+        self.assertEqual(app.composer.text, "a queued prompt")  # not cleared; what was queued is in history too
         self.assertEqual(submitted(client), [])
 
     def test_the_armed_second_press_exits_over_a_draft_when_idle_too(self) -> None:
@@ -235,3 +235,40 @@ class CtrlCExitTests(unittest.TestCase):
         app._on_input(CTRL_C)
         self.assertIsNone(app.exit_code)
         self.assertEqual(app.composer.text, "")
+
+    def test_any_ctrl_c_the_composer_takes_exits_once_armed(self) -> None:
+        # The composer takes Ctrl+C with Shift or Alt held as Ctrl+C: the armed press must too, not clear the text.
+        for key in (Key(CHAR, "c", ctrl=True, shift=True), Key(CHAR, "c", ctrl=True, alt=True)):
+            with self.subTest(key=key):
+                now = [100.0]
+                app, _client = make_app(clock=lambda: now[0])
+                app._on_input(CTRL_C)
+                type_text(app, "kept")
+                now[0] += 0.5
+                app._on_input(key)
+                self.assertEqual(app.exit_code, 0)
+                self.assertEqual(app.composer.text, "kept")
+
+    def test_no_exit_while_the_info_line_names_a_rewind_or_a_tell_instead(self) -> None:
+        now = [100.0]
+        app, _client = make_app(clock=lambda: now[0])
+        app._on_input(CTRL_C)
+        app.rewind = Rewind(row_id=7, ordinal=2, before=())
+        app._set_composer("picked prompt")
+        self.assertNotIn(EXIT_HINT, info_row_of(drawn(app)))
+        now[0] += 0.5
+        app._on_input(CTRL_C)
+        self.assertIsNone(app.exit_code)
+
+        app, _client = make_app(busy=True, clock=lambda: now[0])
+        app._on_input(CTRL_C)  # interrupts and arms
+        app._on_server_request(TELL_APPROVAL)
+        armed(app)
+        press(app, *[Key(DOWN)] * 3, Key(ENTER))  # the tell row: a field of its own
+        self.assertIsNotNone(app.tell_draft)
+        self.assertNotIn(EXIT_HINT, info_row_of(drawn(app)))
+        app._on_input(CTRL_C)  # on the empty field
+        self.assertIsNone(app.exit_code)
+        type_text(app, "go left")
+        app._on_input(CTRL_C)
+        self.assertIsNone(app.exit_code)

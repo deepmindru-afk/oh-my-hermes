@@ -377,7 +377,6 @@ NEWLINE_KEYS = ("⏎ sends · \\⏎, alt+⏎ or ctrl+j adds a line", "\\⏎ or a
 # else it adds a line.
 STEER_FALLBACK_KEY = Key(CHAR, "j", ctrl=True)
 SEND_NOW_KEY = Key(ENTER, ctrl=True)
-EXIT_KEY = Key(CHAR, "c", ctrl=True)  # interrupts or clears; while an exit is armed, leaves
 # A composer line that starts with this is the person's own shell command (`shell.exec`), never a prompt.
 SHELL_PREFIX = "!"
 SHELL_USAGE = "Usage: !<command> runs it in Hermes' shell (30 s at most); its output is not sent to the model."
@@ -3190,10 +3189,13 @@ class App(ModesMixin, AgentViewMixin):
         ):
             self._send_queued_now()
             return
-        # The second Ctrl+C the info line names leaves even over text: the queue an interrupt gives back lands in the
-        # composer between the presses, and clearing it there would lose it. It stays, for a resumed session.
-        if self.slot is None and event == EXIT_KEY and self.composer.text and self.exit_armed_at is not None and (
-            self.clock() - self.exit_armed_at <= EXIT_CONFIRM_SECONDS
+        # The second Ctrl+C leaves even over text while the info line names it (`_exit_said`): the queue an interrupt
+        # gives back lands in the composer between the presses, and clearing it there would leave the TUI open. Any
+        # Ctrl+C the composer would take (Shift or Alt too) counts. What the composer holds is not kept on exit; what
+        # was sent or queued is in Hermes' history, where Up finds it. A submit held for its paste is not left
+        # behind: with one held the press clears the draft as ever, and the held submit still goes.
+        if isinstance(event, Key) and event.name == CHAR and event.ctrl and event.char == "c" and (
+            self.composer.text and not self.held_submits and self._exit_said()
         ):
             self.exit_code = 0
             return
@@ -3428,6 +3430,16 @@ class App(ModesMixin, AgentViewMixin):
         else:
             self._rewind("")
         return True
+
+    def _exit_said(self) -> bool:
+        """Whether the info line says `EXIT_HINT` now: an exit armed inside its window, and nothing the line names
+        before it open (a question, a picker, the agent list or tree, a steer, a rewind, a tell)."""
+        return (
+            self.exit_armed_at is not None and self.clock() - self.exit_armed_at <= EXIT_CONFIRM_SECONDS
+            and self.slot is None and not self._picker_keys() and self.list_selected is None
+            and self.tree_selected is None and self.roster.agents.get(self.agent_steer or "") is None
+            and self.rewind is None and self.tell_draft is None
+        )
 
     def _expire_exit(self) -> None:
         """Forget a first Ctrl+C once the second can no longer exit, so the info line stops naming it."""
@@ -3961,7 +3973,7 @@ class App(ModesMixin, AgentViewMixin):
         if not self._busy() and self._give_back_held():
             self.dirty = True  # a submit held for its paste comes back, as Esc gives it; this press arms no exit
             return
-        if self.exit_armed_at is not None and now - self.exit_armed_at <= EXIT_CONFIRM_SECONDS:
+        if self._exit_said():  # only while the info line says so: a steer, rewind or tell names its own keys first
             self.exit_code = 0
             return
         if self._busy():
@@ -6339,7 +6351,7 @@ class App(ModesMixin, AgentViewMixin):
             say, say_style = tuple(form.format(ordinal=self.rewind.ordinal) for form in REWIND_SAY), self.theme.warn
         elif self.tell_draft is not None:
             say, say_style = TELL_SAY, self.theme.muted
-        elif self.exit_armed_at is not None and self.clock() - self.exit_armed_at <= EXIT_CONFIRM_SECONDS:
+        elif self._exit_said():
             say = EXIT_HINT
         elif armed is not None and self.clock() - armed[1] <= DOUBLE_ESCAPE_SECONDS:
             say = ESCAPE_AGAIN.format(armed[0])

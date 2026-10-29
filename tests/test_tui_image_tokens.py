@@ -475,6 +475,20 @@ class GateTests(ImageTestCase):
         self.hermes.admit()
         self.assertEqual(self.hermes.turns, [("describe the second paragraph", [])])
 
+    def test_an_armed_ctrl_c_over_a_new_draft_does_not_exit_past_a_held_submit(self) -> None:
+        self.app._on_input(ctrl("c"))  # on the empty composer: arms the exit
+        self.assertIsNotNone(self.app.exit_armed_at)
+        type_text(self.app, "describe this")
+        self.app._on_input(CTRL_V)
+        self.app._on_input(Key(ENTER))  # held for its paste
+        type_text(self.app, "next")
+        self.app._on_input(ctrl("c"))
+        self.assertIsNone(self.app.exit_code)
+        self.assertEqual(self.shown(), "")  # the draft is cleared, as any Ctrl+C over a draft
+        self.hermes.pump()
+        self.hermes.admit()
+        self.assertEqual([text for text, _files in self.hermes.turns], ["describe this [Image #1]"])
+
     def test_ctrl_c_with_no_turn_running_gives_a_held_submit_back_and_arms_no_exit(self) -> None:
         type_text(self.app, "describe this")
         self.app._on_input(CTRL_V)
