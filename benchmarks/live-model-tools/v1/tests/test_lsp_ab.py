@@ -225,3 +225,37 @@ class PinnedCorpusTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestEnvTests(unittest.TestCase):
+    def test_test_env_imports_workspace_package_and_pytest(self) -> None:
+        import shutil
+        import subprocess
+        import tempfile
+        from pathlib import Path
+
+        import runner
+
+        if shutil.which("uv") is None:
+            self.skipTest("uv not on PATH")
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "workspace/src/benchapp").mkdir(parents=True)
+            (root / "workspace/src/benchapp/__init__.py").write_text("VALUE = 7\n", encoding="utf-8")
+            python = runner._test_env(root, root / "workspace")
+            out = subprocess.run([str(python), "-c", "import benchapp, pytest; print(benchapp.VALUE)"],
+                                 capture_output=True, text=True, check=True).stdout.strip()
+            self.assertEqual(out, "7")
+            self.assertFalse((root / "workspace" / "testenv").exists())
+
+    def test_live_task_names_interpreter_only_when_given(self) -> None:
+        from pathlib import Path
+
+        import runner
+
+        plain = runner._live_task("Do it.")
+        self.assertNotIn("pytest", plain)
+        named = runner._live_task("Do it.", Path("/x/bin/python"))
+        self.assertIn("/x/bin/python -m pytest -q", named)
+        self.assertTrue(named.startswith("Do it.\n\n"))
+        self.assertTrue(named.endswith(plain[len("Do it.\n\n"):]))

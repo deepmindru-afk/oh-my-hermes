@@ -63,6 +63,12 @@ def main(argv: list[str] | None = None) -> int:
             help="Run `git init -q` in the materialized workspace before the trial (Hermes LSP needs a git worktree).",
         )
         command.add_argument(
+            "--test-env",
+            action="store_true",
+            help="Give the live session a ready test interpreter (pytest + workspace src/ on sys.path) and name it "
+            "in the task, so neither arm spends turns installing packages.",
+        )
+        command.add_argument(
             "--extra-model",
             action="append",
             default=None,
@@ -139,6 +145,7 @@ def main(argv: list[str] | None = None) -> int:
                 edit_surface=args.edit_surface,
                 edit_directive=args.edit_directive,
                 git_init_workspace=args.git_init_workspace,
+                test_env=args.test_env,
             )
         else:
             result = run_matrix(
@@ -155,6 +162,7 @@ def main(argv: list[str] | None = None) -> int:
                 edit_surface=args.edit_surface,
                 edit_directive=args.edit_directive,
                 git_init_workspace=args.git_init_workspace,
+                test_env=args.test_env,
                 max_paid_calls=args.max_paid_calls,
                 templates=args.templates.split(",") if args.templates else None,
             )
