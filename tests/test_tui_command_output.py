@@ -23,7 +23,7 @@ from omh.tui.gateway import Event, Response
 from omh.tui.keys import DOWN, ENTER, TAB, UP, Key
 from omh.tui.theme import DEFAULT_THEME as THEME
 from omh.tui.transcript import (
-    NOTICE_INFO, NOTICE_WARN, OUTPUT_PREVIEW_ROWS, CommandBlock, NoticeBlock, UserBlock, block_rows,
+    NOTICE_INFO, NOTICE_WARN, OUTPUT_MARKED, OUTPUT_PREVIEW_ROWS, CommandBlock, NoticeBlock, UserBlock, block_rows,
 )
 
 
@@ -81,17 +81,47 @@ class CommandEchoTests(unittest.TestCase):
         self.assertIn("  ❯ /usage", screen)
         self.assertIn("    ⎿  Session cost: $0.01", screen)
 
-    def test_hermes_markdown_in_a_reply_is_drawn_styled_and_other_output_stays_as_written(self) -> None:
-        # Found live: `/title Alpha Work` printed `Session title set: **Alpha Work**` (Hermes' `gateway.title.set_to`
-        # is written for a chat, in Markdown).
+    def test_the_title_reply_draws_its_templates_bold_and_keeps_the_title_as_written(self) -> None:
+        # Found live: `/title Alpha Work` printed `Session title set: **Alpha Work**`: Hermes' `gateway.title.set_to`
+        # template marks the title for a chat.
+        for title in ("Alpha Work", "fix __init__ import of *.py"):
+            app, client = make_app()
+            send(app, f"/title {title}")
+            answer(app, client, {"output": f"✏️ Session title set: **{title}**"})
+            self.assertIn(f"    ⎿  ✏️ Session title set: {title}", drawn(app))
+            (row,) = [row for row in block_rows(last(app), 80, THEME) if "title set" in line_text(row)]
+            self.assertEqual([span.text for span in row if span.style.bold], [title])
         app, client = make_app()
-        send(app, "/title Alpha Work")
-        answer(app, client, {"output": "✏️ Session title set: **Alpha Work**"})
-        self.assertIn("    ⎿  ✏️ Session title set: Alpha Work", drawn(app))
-        (row,) = [row for row in block_rows(last(app), 80, THEME) if "title set" in line_text(row)]
-        self.assertEqual([span.text for span in row if span.style.bold], ["Alpha Work"])
-        shell = CommandBlock("! grep -c x", [("f(**args, **kwargs)", NOTICE_INFO)], done=True)  # not Hermes' reply
-        self.assertIn("f(**args, **kwargs)", lines_text(block_rows(shell, 80, THEME))[-1])
+        send(app, "/title")
+        answer(app, client, {"output": "📌 Session: `abc_1`\nTitle: **beta notes**"})
+        self.assertEqual(drawn(app)[1:3], ["    ⎿  📌 Session: abc_1", "       Title: beta notes"])
+
+    def test_any_other_hermes_reply_is_data_and_stays_as_written(self) -> None:
+        # Review of #2389: drawing every reply as Markdown ate `__init__`, `*.py`, `2*3*4` and a Windows path's `\\`.
+        replies = (
+            ("/gitst", " M src/__init__.py\n M tests/__init__.py\n?? docs/*.md"),  # a quick command's `git status`
+            ("/context", "[You #1] rename my_var to __my_var__ in src/*.py and tests/*.py\n[Hermes #2] Done: 2*3*4 files"),
+            ("/status", "Path: C:\\Users\\me\\.hermes\\sessions\\abc.jsonl"),
+            ("/tools", 'ignore: ["*.pyc", "*.log"] and [You #1](draft)'),
+        )
+        for command, output in replies:
+            app, client = make_app()
+            send(app, command)
+            if command == "/gitst":
+                app._on_response(Response(1, None, {"code": 4018, "message": "not a slash.exec command"}))
+                answer(app, client, {"type": "exec", "output": output})
+            else:
+                answer(app, client, {"output": output})
+            self.assertEqual(last(app).parts, [(output, NOTICE_INFO)])
+            rows = lines_text(block_rows(last(app), 120, THEME))[1:]
+            self.assertEqual([row[7:] for row in rows], output.split("\n"), command)
+            self.assertFalse(any(span.style.bold for row in block_rows(last(app), 120, THEME) for span in row))
+
+    def test_only_the_title_reply_is_read_for_marks_not_omhs_own_words_under_its_echo(self) -> None:
+        block = CommandBlock("/title Alpha", [("kept **as** written", NOTICE_INFO), ("set: **Alpha**", OUTPUT_MARKED)])
+        rows = block_rows(block, 80, THEME)
+        self.assertEqual(lines_text(rows)[1:], ["    ⎿  kept **as** written", "       set: Alpha"])
+        self.assertEqual([span.text for row in rows for span in row if span.style.bold], ["Alpha"])
 
     def test_long_output_stays_in_the_transcript_and_no_pager_opens(self) -> None:
         app, client = make_app(rows=24, cols=80)

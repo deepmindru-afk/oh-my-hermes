@@ -22,10 +22,12 @@ from omh.tui.gateway import Event
 from omh.tui.style import Line, Span
 from omh.tui.theme import DEFAULT_THEME as THEME
 from omh.tui.transcript import (
+    STEER_QUEUED,
     GUTTER,
     OUTPUT_PREVIEW_ROWS,
     AssistantBlock,
     CommandBlock,
+    SteerBlock,
     ThinkingBlock,
     ToolGroup,
     ToolRow,
@@ -899,6 +901,72 @@ class ToolDraftTests(LoopTestCase):
         taken = self.end_turn(3.0, "interrupted")
         self.assertEqual(taken[0], "  ▪ terminal(sleep 60)")
         self.assertEqual(taken[-1], "  ✻ 3s · 1 tool")
+
+
+class SteeredReplyTests(unittest.TestCase):
+    """A steer Hermes reads before another model call splits a reply that made no tool call (no `message.interim`
+    between): `message.complete` carries the last call's text only, and nothing that streamed is ever dropped."""
+
+    def setUp(self) -> None:
+        self.transcript = Transcript(clock=FakeClock())
+
+    def step(self, event: Event | None = None) -> None:
+        if event is not None:
+            self.transcript.apply(event)
+
+    def replies(self) -> list[object]:
+        return [(type(block).__name__[0], getattr(block, "text", "")) for block in self.transcript.blocks
+                if isinstance(block, (AssistantBlock, SteerBlock, CommandBlock))]
+
+    def steer(self, text: str, answered: bool = True) -> SteerBlock:
+        block = self.transcript.add_steer(text)
+        if answered:
+            self.transcript.steer_answered(block, STEER_QUEUED)
+        self.step()
+        return block
+
+    def test_a_final_hermes_added_to_still_splits_where_the_last_call_began(self) -> None:
+        # Review of #2389: a footer (turn_finalizer's file-mutation note) made the final no suffix of the stream.
+        self.step(ev("message.start"))
+        self.step(ev("message.delta", text="First."))
+        self.steer("s1")
+        self.step(ev("message.delta", text="Second."))
+        self.step(ev("message.complete", text="Second.\n\nWarning: 1 edit failed", status="complete"))
+        self.assertEqual(self.replies(), [("A", "First."), ("S", "s1"), ("A", "Second.\n\nWarning: 1 edit failed")])
+
+    def test_a_final_not_found_in_the_stream_leaves_the_stream_as_it_was(self) -> None:
+        self.step(ev("message.start"))
+        self.step(ev("message.delta", text="First.\n\n"))
+        self.steer("s1")
+        self.step(ev("message.delta", text="Second  line."))
+        self.step(ev("message.complete", text="Second line.", status="complete"))
+        self.assertEqual(self.replies()[0], ("A", "First.\n\nSecond  line."))
+
+    def test_a_steer_answered_after_the_turn_ended_still_keeps_the_first_reply(self) -> None:
+        self.step(ev("message.start"))
+        self.step(ev("message.delta", text="First."))
+        block = self.steer("s1", answered=False)
+        self.step(ev("message.delta", text="Second."))
+        self.step(ev("message.complete", text="Second.", status="complete"))
+        self.transcript.steer_answered(block, STEER_QUEUED)
+        self.step()
+        self.assertEqual(self.replies(), [("A", "First."), ("A", "Second."), ("S", "s1")])
+
+    def test_what_came_during_the_last_call_waits_under_it(self) -> None:
+        # Review of #2389: a second steer Hermes hands to the next turn, and a command echo, both rose above it.
+        self.step(ev("message.start"))
+        self.step(ev("message.delta", text="First."))
+        self.steer("s1")
+        self.step(ev("message.delta", text="Sec"))
+        self.steer("s2")
+        echo = self.transcript.add_command("/usage")
+        self.transcript.add_output("cost $1")
+        self.transcript.close_command(echo)
+        self.step(ev("message.delta", text="ond."))
+        self.step(ev("message.complete", text="Second.", status="complete"))
+        self.transcript.add_turn_summary(3.0, None)
+        self.step()
+        self.assertEqual(self.replies(), [("A", "First."), ("S", "s1"), ("A", "Second."), ("S", "s2"), ("C", "")])
 
 
 class TurnEndTests(LoopTestCase):

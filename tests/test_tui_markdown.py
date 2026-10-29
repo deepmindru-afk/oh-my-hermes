@@ -447,6 +447,7 @@ GROWTH = (
     "word ", "token ", "a", "b ", "  ", " ", "**", "*", "_", "__", "`", "``", "[", "]", "(", ")", "\\", "x_y ",
     "한국어 ", "가", "\u1161", "e\u0301 ", "\u0301", "👍🏽 ", FAMILY + " ", "🇰🇷", "/", "https://x.example/a/b ",
     "verylongwordwithoutanyspacesatall" * 2, "-", "1.", "#", ">", "|", "\t", "\x1b[31m", "\x07", "\u202e", ". ",
+    "x\u200d ", "\u200d",
 )
 PROSE = ("word ", "to", "ken ", "and ", "**b** ", "`c` ", "[l](u) ", "_i_ ")
 
@@ -470,6 +471,39 @@ class GrowingLineTests(unittest.TestCase):
                                  THEME), (seed, step, drawn_at, line))
                 cuts += memo.cut > 0
         self.assertGreater(cuts, 1000)  # the cut is what the equality is about: most steps draw past one
+
+    def test_a_space_a_zwj_joins_is_no_place_to_cut(self) -> None:
+        # Review of #2389: the space after `x‍` is one cluster with it, so the word after it opens no row of its own.
+        memo, line = GrowingLine(), "one two x\u200d __s "
+        for grown in (line, line + "t_"):
+            self.assertEqual(render_growing(grown, MarkdownState(), 12, THEME, memo), render_line(grown, MarkdownState(),
+                             12, THEME))
+
+    def test_a_line_that_cannot_be_cut_does_no_more_work_than_render_line(self) -> None:
+        # Review of #2389: an early open mark kept the cut still and the bookkeeping made each frame dearer.
+        for opening in ("use the ` key ", "an **open one ", "a [link without end ", "*.py "):
+            line, memo = opening + "token " * 200, GrowingLine()
+            for grown in (line, line + "more ", line + "more and more "):
+                calls: dict[str, list[int]] = {}
+                for name in ("_code_span", "_emphasis", "_link", "wrap_line"):
+                    real = getattr(markdown, name)
+                    calls[name] = [0, 0]
+
+                    def counting(*args: object, _real: object = real, _name: str = name) -> object:
+                        calls[_name][which] += 1
+                        return _real(*args)  # type: ignore[operator]
+
+                    patch(f"omh.tui.markdown.{name}", counting).start()
+                try:
+                    which = 0
+                    render_line(grown, MarkdownState(), 60, THEME)
+                    which = 1
+                    render_growing(grown, MarkdownState(), 60, THEME, memo)
+                finally:
+                    patch.stopall()
+                self.assertEqual(memo.cut, 0, opening)
+                for name, (by_line, by_growing) in calls.items():
+                    self.assertLessEqual(by_growing, by_line, (opening, name))
 
     def test_a_long_streamed_paragraph_wraps_only_its_last_rows(self) -> None:
         wrapped: list[int] = []
