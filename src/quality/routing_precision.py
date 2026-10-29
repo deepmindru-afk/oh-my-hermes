@@ -509,6 +509,9 @@ ROUTING_PRECISION_CASES: tuple[RoutingPrecisionCase, ...] = (
     RoutingPrecisionCase("show-reel-idea-recording-loom", "A video on Loom is a screen recording", "make a video on loom", "answer_clarification", "", "show-reel"),
     RoutingPrecisionCase("show-reel-idea-recording-laptop", "A video on a laptop of a flow is a screen recording", "make a video on my laptop of the signup flow", "answer_clarification", "", "show-reel"),
     RoutingPrecisionCase("show-reel-idea-recording-standup", "A video of a standup is a recording", "make a video of the standup meeting", "answer_clarification", "", "show-reel"),
+    # A logo animation on an app surface (launch, splash) is UI work.
+    RoutingPrecisionCase("show-reel-idea-ja-app-launch-logo", "A Japanese logo animation at app launch is UI work", "アプリ起動時のロゴアニメーションを作って", "answer_clarification", "", "show-reel"),
+    RoutingPrecisionCase("show-reel-idea-ja-splash-logo", "A Japanese splash-screen logo animation is UI work", "スプラッシュ画面のロゴアニメーションを作って", "answer_clarification", "", "show-reel"),
     # Engine-entry approvals (#1638). Accepting something is the most common
     # thing a person says in the seconds after a planning workflow finishes,
     # and the corpus had no sentence of this shape at all -- 235 negative

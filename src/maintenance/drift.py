@@ -940,7 +940,9 @@ def count_metrics() -> tuple[CountMetric, ...]:
             # Its second review's families: five UI effects, five loop phrasings
             # (two Japanese), five faults named as events (one Japanese) and
             # three recordings (+18).
-            expected=1294,
+            # Its third review: a Japanese logo animation at app launch and on a
+            # splash screen, which are UI work (+2).
+            expected=1296,
             # The one reviewed test pin. Every other test compares its payload
             # against build_routing_precision_demo() rather than a literal.
             sites=("tests/test_routing_precision.py",),

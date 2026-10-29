@@ -659,6 +659,16 @@ def _japanese_span_admitted(span: str, noun: str) -> bool:
     return _JA_EXPLAINER.fullmatch(span) is not None
 
 
+# A logo or an animation placed on an app surface (a splash, a loading or launch
+# screen, an app icon) is UI work: "앱 스플래시 로고 애니메이션", "アプリのロゴアニメーション".
+_NATIVE_APP_SURFACES = tuple(_fold(noun) for noun in (
+    "앱", "어플", "스플래시", "로딩", "런치", "화면", "아이콘",
+    "アプリ", "スプラッシュ", "ローディング", "起動", "画面", "アイコン",
+))
+_NATIVE_LOGO_WORDS = tuple(_fold(word) for word in ("로고", "인트로", "ロゴ", "イントロ"))
+_NATIVE_ANIMATION_NOUNS = _folded("애니메이션", "인트로", "アニメーション")
+
+
 def _native_authored(sentence: str) -> bool:
     """A Korean or Japanese request to author a video, read verb-last."""
     for pattern, admitted in ((_KO_NATIVE_AUTHORED, _korean_span_admitted), (_JA_NATIVE_AUTHORED, _japanese_span_admitted)):
@@ -668,6 +678,9 @@ def _native_authored(sentence: str) -> bool:
         span = match.group("span").strip()
         noun = re.sub(r"\s+", "", match.group("noun"))
         if any(stem in span for stem in _NATIVE_REFUSED) or any(media in span for media in _NATIVE_MEDIA):
+            return False
+        logo_or_animation = noun in _NATIVE_ANIMATION_NOUNS or any(word in span for word in _NATIVE_LOGO_WORDS)
+        if logo_or_animation and any(surface in span for surface in _NATIVE_APP_SURFACES):
             return False
         return admitted(span, noun)
     return False

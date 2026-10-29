@@ -376,6 +376,14 @@ class ShowReelAdmissionTests(unittest.TestCase):
             "우주 배경 3D 애니메이션 만들어주세요",
             "宇宙の3Dアニメーションを作って",
             "アプリの起動アニメーションを作って",
+            # A logo animation on an app surface (splash, loading, launch, icon).
+            "앱 스플래시 로고 애니메이션 만들어줘",
+            "앱 아이콘 로고 애니메이션 만들어줘",
+            "어플 런치 로고 애니메이션 만들어줘",
+            "アプリのロゴアニメーションを作って",
+            "スプラッシュ画面のロゴアニメーションを作って",
+            "make an app splash logo animation",
+            "make a logo animation for the app launch screen",
             # Decks and slides are materials.
             "create an animation for the pitch deck",
             "make an animation for my keynote slides",
