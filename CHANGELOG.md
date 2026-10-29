@@ -18,6 +18,34 @@ All notable changes will be documented here.
   (`Interrupted child alpha.`); and `/title X` shows the title bold instead
   of `**X**`.
 
+- **An approval no longer folds away the `cd` or the assignment that aims a
+  risky command, and it marks a download piped into a shell and a
+  world-writable `chmod`.** `cd ~ && …; rm -rf ./*` and `T=/; …; rm -rf
+  "$T"/*` used to show only the `▲ rm` row with the `cd` or `T=/` inside
+  `+ N other commands`; a directory change (`cd`, `pushd`, `popd`) or a
+  variable assignment (`T=/`, `printf -v`, `${T:=/}`) now stays listed
+  whenever a listed command comes after it, and `echo`-like noise still
+  folds. When rows run short and Hermes named a risk OMH found, the
+  spacing and the rule go first, then the rows fold step by step, the
+  last one before each risky command going last, then every row that is
+  not risky: a `▲` row is never cut while another command's row shows,
+  and at the same number of `▲` rows no command that may change something
+  is hidden where the slot used to show it. When Hermes named none,
+  nothing folds and the slot lists and cuts from the end as before, risky
+  rows too. A quoted here-document body (`<<'EOF'`) inside `$(…)`, such
+  as a commit or PR body, is read as text; an unquoted one's `$(…)` and
+  backticks are read for what they run, a `<<` inside `$((…))` is a
+  shift, and a here-string (`<<<`) or a nested subshell (`((cd a; rm -rf
+  b); ls)`) hides nothing after it. A download run as a script
+  (`curl … | sh`, `bash <(curl …)`,
+  `eval "$(curl …)"`, `sh -c "$(wget -qO- …)"`, and inside a `-c` script,
+  a substitution or after `then`), decoded text piped into a shell
+  (`base64 -d | sh`, `xxd -r`, `echo | tr`, `openssl … -d`), `find
+  -delete` or `-exec rm`, and `chmod` with a mode that lets others write
+  (`777`, `666`, `o+w`, `a+w`) now get their own `▲` row, the cases
+  Hermes' approval table flags; `echo "$(curl …)"`, `x=$(curl …)`,
+  `diff <(curl a) <(curl b)` and `find … -print` do not.
+
 - **Each OMH TUI launch look now has a living wallpaper: its own background
   colour and a scene that keeps moving.** While the TUI runs it sets the
   terminal's background to the look's colour with OSC 11 and puts the
