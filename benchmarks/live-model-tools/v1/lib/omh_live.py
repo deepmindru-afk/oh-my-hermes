@@ -631,6 +631,9 @@ def _current_session_environment(workspace: Path, edit_surface: str = "patch") -
     """
     environment = dict(os.environ)
     environment["TERMINAL_CWD"] = str(workspace)
+    # An opt-in flag inherited from the caller's shell must not reach the other arm.
+    environment.pop("OMH_HASHLINE_TOOLS", None)
+    environment.pop("OMH_LSP_TOOLS", None)
     if edit_surface == "hashline":
         environment["OMH_HASHLINE_TOOLS"] = "1"
     elif edit_surface == "lsp":

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+from unittest import mock
 import json
 from pathlib import Path
 import subprocess
@@ -57,6 +59,9 @@ class LspSurfaceTests(unittest.TestCase):
         self.assertEqual(lsp, [item if item != "{}" else "file,terminal,omh-lsp" for item in expected])
 
     def test_lsp_env_flag(self) -> None:
+        with mock.patch.dict(os.environ, {"OMH_LSP_TOOLS": "1", "OMH_HASHLINE_TOOLS": "1"}):
+            self.assertNotIn("OMH_LSP_TOOLS", _current_session_environment(Path("w"), "patch"))
+            self.assertNotIn("OMH_HASHLINE_TOOLS", _current_session_environment(Path("w"), "lsp"))
         self.assertEqual(_current_session_environment(Path("w"), "lsp").get("OMH_LSP_TOOLS"), "1")
         self.assertNotIn("OMH_LSP_TOOLS", _current_session_environment(Path("w"), "patch"))
         self.assertNotIn("OMH_LSP_TOOLS", _current_session_environment(Path("w"), "hashline"))
