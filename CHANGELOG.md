@@ -6,6 +6,16 @@ All notable changes will be documented here.
 
 ![Sprite Forge patch notes](https://raw.githubusercontent.com/rlaope/oh-my-hermes/main/assets/omh-sprite-forge-patch-notes.png)
 
+- **A Kimi main session now gets a short execution calibration of its own.**
+  The new `omh.main-calibration` system-prompt section renders once at session
+  start (no per-turn cost) for a main session whose model resolves to the Kimi
+  family: decide minor choices and note them, ask only before irreversible or
+  externally visible actions, call the obvious tool instead of describing it,
+  read the request's verb (explain or check answers, build or fix does the
+  work), and bound repeated searches. Delegated children (`platform ==
+  "subagent"`) get nothing from it and keep `omh.child-calibration`; every
+  other family renders nothing until an A/B shows it needs a block.
+
 - **The OMH TUI's background-process row shows for a local session.** A
   local session's process is recorded under its route,
   `agent:<namespace>:local:dm:<stored id>`, which the row never matched,
