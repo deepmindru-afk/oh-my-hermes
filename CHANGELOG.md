@@ -6,6 +6,11 @@ All notable changes will be documented here.
 
 ![Sprite Forge patch notes](https://raw.githubusercontent.com/rlaope/oh-my-hermes/main/assets/omh-sprite-forge-patch-notes.png)
 
+- **The default look, spectrum, keeps its background colour and draws no
+  picture.** Its pixel aura is gone: the wallpaper still sets spectrum's
+  ground, and the other seven looks keep their scenes. An idle screen on
+  spectrum no longer wakes four times a second to paint nothing.
+
 - **The living wallpaper is pixel art, in the brand's pixel-aura style.**
   The scenes drew their motifs in characters (`%t;:`, rings of `O`), which
   read as broken text. Every scene is now drawn in half blocks, two square

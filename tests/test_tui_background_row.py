@@ -1168,6 +1168,7 @@ class WallpaperTickTests(unittest.TestCase):
         with patch.object(app_module, "scene", moving):
             app, _client = make_app(rows=42, cols=150, clock=clock, wall_clock=wall, environ=WALLPAPER_ON)
             app.adopt_background(ANSWERED)
+            app.launch_look = "moonlit"  # a look with a scene: the default keeps only its ground and never ticks
             app.region = app._new_region(at_top=True)
             app.stored_id = STORED
             snapshot = HudSnapshot(STORED, {}, 0.0, {}, (process(),))
