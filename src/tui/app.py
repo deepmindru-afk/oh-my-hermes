@@ -120,12 +120,14 @@ from ..skin_pack import (
     SkinTheme,
     default_theme,
     effective_theme,
+    read_glow_choice,
     read_launch_choice,
     skin_colors,
     theme_for_name,
     theme_for_skin_name,
     theme_names,
     theme_store_path,
+    write_glow_choice,
     write_launch_choice,
 )
 from . import gateway_contract as contract
@@ -530,6 +532,12 @@ CARD_KEPT = "kept"
 LAUNCH_UNKNOWN_NOTICE = "The launch look {name!r} saved in {path} is not one OMH has; spectrum is used."
 LAUNCH_NO_NAME_NOTICE = "No theme or launch look named {name}. Themes: {themes}. Launch looks: {looks}."
 LAUNCH_KEPT_NOTICE = "Launch look {name}, kept in {path}."
+GLOW_KEPT_NOTICE = "Working glow {state}, kept in {path}."
+GLOW_SESSION_NOTICE = "Working glow {state} for this session; there is no OMH home to keep it in."
+GLOW_SAVE_FAILED_NOTICE = "Working glow {state} for this session; it could not be saved to {path}: {error}"
+GLOW_ENV_NOTICE = "Working glow kept {state}; OMH_TUI_GLOW=0 holds it off in this terminal."
+GLOW_UNAVAILABLE_NOTICE = "Working glow kept {state}; it shows only with motion on, at truecolor, on a screen 20×8 or larger."
+GLOW_USAGE_NOTICE = "Use /glow on or /glow off; /glow alone switches it."
 LAUNCH_SESSION_NOTICE = "Launch look {name} for this session; there is no OMH home to keep it in."
 LAUNCH_SAVE_FAILED_NOTICE = "Launch look {name} for this session; it could not be saved to {path}: {error}"
 LAUNCH_SWATCH_STEPS = 6  # the colours a look's swatch shows in the /theme picker
@@ -677,8 +685,8 @@ BELL = "\a"
 QUESTION_ALERT_CHARS = 80  # the most of what Hermes asks that a question's notification says
 BELL_ENV = "OMH_TUI_BELL"
 BELL_OFF = "0"
-# The working glow round the screen (`edge_glow`) is on wherever it can move; OMH_TUI_GLOW=0 turns it off, and with it
-# the margin and the blank last row it keeps.
+# The working glow round the screen (`edge_glow`) is on wherever it can move; `/glow off` (kept under the OMH home) or
+# OMH_TUI_GLOW=0 turns it off, and with it the margin and the blank last row it keeps.
 GLOW_ENV = "OMH_TUI_GLOW"
 GLOW_OFF = "0"
 # A turn that ran this long ends with the terminal's attention signal (`attention_sequence`).
@@ -1594,6 +1602,7 @@ class App(ModesMixin, AgentViewMixin):
         self.interrupt_armed: str | None = None  # the agent a first `x` in the list asked about
         self.agent_steer: str | None = None  # the agent `s` picked: the next line sent is its steer
         self.decoder = KeyDecoder(clock)
+        self.glow = self._saved_glow()  # the working glow is wanted (`/glow`); `_edged` says whether it can show
         self._take_size()
         self.region = self._new_region()
         self.sid = ""
@@ -5049,6 +5058,7 @@ class App(ModesMixin, AgentViewMixin):
             "bots": self._bots,
             "copy": self._copy,
             "theme": self._theme,
+            "glow": self._glow,
             "omh-model": self._omh_model,
             "reload-skills": self._reload_skills,
             "topup": self._topup,
@@ -6047,12 +6057,54 @@ class App(ModesMixin, AgentViewMixin):
         self.size = (cols - 2 * EDGE_MARGIN, rows - 1) if self._edged() else self.screen
 
     def _edged(self) -> bool:
-        """Whether the screen keeps its edge for the working glow's frame (`edge_glow`): at the truecolor depth with
-        motion on, on a screen big enough (`edge_fits`). The rows are then drawn `EDGE_MARGIN` columns in from each
-        side, over a blank last row of the region's own, whether a turn runs or not, so nothing moves as the frame
-        comes and goes. OMH_TUI_GLOW=0 turns it off."""
-        return (self.motion and self.color_depth == TRUECOLOR and edge_fits(*self.screen)
-                and self.environ.get(GLOW_ENV) != GLOW_OFF)
+        """Whether the screen keeps its edge for the working glow's frame (`edge_glow`): where it shows
+        (`_glow_shown`), on a screen big enough (`edge_fits`). The rows are then drawn `EDGE_MARGIN` columns in from
+        each side, over a blank last row of the region's own, whether a turn runs or not, so nothing moves as the
+        frame comes and goes."""
+        return self._glow_shown() and edge_fits(*self.screen)
+
+    def _glow_shown(self) -> bool:
+        """Whether the working glow shows on a screen big enough: wanted (`/glow`), not held off by OMH_TUI_GLOW=0,
+        with motion on, at the truecolor depth."""
+        return (self.glow and self.environ.get(GLOW_ENV) != GLOW_OFF and self.motion
+                and self.color_depth == TRUECOLOR)
+
+    def _saved_glow(self) -> bool:
+        """Whether the working glow is wanted: as saved under the OMH home, else on."""
+        home = self._omh_home()
+        saved = read_glow_choice(home) if home is not None else None
+        return True if saved is None else saved
+
+    def _glow(self, arg: str) -> None:
+        """`/glow on|off` turns the working glow on or off and keeps that under the OMH home; alone, switches it.
+
+        The rows move in or out by the margin it takes, so the session is drawn again.
+        """
+        choice = arg.strip().lower()
+        if choice not in ("", "on", "off"):
+            self.transcript.add_notice(GLOW_USAGE_NOTICE, NOTICE_WARN)
+            return
+        self.glow = not self.glow if not choice else choice == "on"
+        state = "on" if self.glow else "off"
+        home = self._omh_home()
+        if home is None:
+            self.transcript.add_notice(GLOW_SESSION_NOTICE.format(state=state))
+        else:
+            try:
+                path = write_glow_choice(home, self.glow)
+            except OSError as error:
+                self.transcript.add_notice(
+                    GLOW_SAVE_FAILED_NOTICE.format(state=state, path=theme_store_path(home), error=error), NOTICE_WARN)
+            else:
+                self.transcript.add_notice(GLOW_KEPT_NOTICE.format(state=state, path=path))
+        if self.glow and self.environ.get(GLOW_ENV) == GLOW_OFF:
+            self.transcript.add_notice(GLOW_ENV_NOTICE.format(state=state))
+        elif self.glow and not self._glow_shown():
+            self.transcript.add_notice(GLOW_UNAVAILABLE_NOTICE.format(state=state))
+        if self._edged() != (self.size != self.screen):  # the margin comes or goes: lay the session out again
+            self._take_size()
+            self._full_redraw()
+        self.dirty = True
 
     def _margin(self) -> int:
         """Columns the rows are drawn in from the screen's left edge."""

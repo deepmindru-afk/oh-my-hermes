@@ -19,6 +19,17 @@ All notable changes will be documented here.
   tab as spaces and no longer lets a colour code in stderr shift the columns a
   click or a drag lands on.
 
+- **`/glow off` turns the OMH TUI's working glow off, and it now shows in a
+  short session too.** `/glow on|off` (alone, it switches) is saved beside
+  the theme under the OMH home, so it holds in every later session;
+  `omh theme glow on|off` saves the same choice from the shell, and
+  `omh theme glow` shows it. `OMH_TUI_GLOW=0` still holds it off in one
+  terminal. The light used to be
+  drawn only once the session filled the screen; it now goes round a
+  session of any length, over the blank rows under it. A prompt's band no
+  longer runs into the right margin the glow keeps: it ends one column in,
+  as it starts one column in on the left.
+
 - **A light goes round the OMH TUI's screen while a turn runs.** It runs
   along the terminal's whole edge, clockwise, once every four seconds, with
   a round head and a trail in the launch look's logo colours that fades
@@ -453,6 +464,36 @@ All notable changes will be documented here.
   three. A one-line text paste sent at once joins its prompt the same way.
   Esc, or Ctrl+C, gives the held prompt back. A paste Hermes never answers
   holds the prompt only until it expires.
+- **`omh doctor` and the probe read the skill pack you actually run, on a
+  migrated install too (#2358, reported by @yqm-307; #2378, reported by
+  @mazzy89).** A managed install serves its skills from a generation behind
+  the `current` pointer, and a host migrated from the 3.x layout keeps
+  `~/.omh/skills` as a frozen copy. Three read-only diagnostics looked at
+  that copy instead. The `workflow_engine_reach` advice measured it, so a
+  migrated host was told `dag-ulw` was not installed (it postdates the
+  copy) and a host without the copy was told no install existed; neither
+  report could change, since `omh update` never touches the copy. It now
+  measures the pack doctor resolved, and an unmeasurable install names the
+  file or directory that was missing. The plugin's standalone probe matched
+  only the copy's path in `config.yaml`, which registers the pointer, so it
+  reported the managed skills unregistered; it now accepts the pointer, a
+  generation's pack, the recorded pack and the copy, matched by real path,
+  and checks for `omh-routing` in the pack in use. The chat status card
+  carried the same mistake. Separately, `omh doctor` run from the 3.x
+  bootstrap venv stopped at once with `support refuses symlink component:
+  .../generations/bootstrap-legacy/skills`, because it read the support
+  files through that generation's link and the support reader refuses every
+  link. Doctor now reads through the link the way `omh update` does, so the
+  full report prints. A link the installer would also refuse is a blocking
+  `skills_dir_link` check that names it, and any other refused path fails
+  `local_modifications` and `guidance_projection` with the reason, while
+  every other check still runs. The advice still never moves doctor's
+  status or exit code.
+- **product-ab gives the OMH arm the same reach as the Hermes arm.** The OMH
+  arm's unit was scoped to `src/` and `tests/` while the Hermes arm's prompt
+  set no limit, so a task whose fix regenerates `docs/WORKFLOWS.md` or a
+  skill body was one only the Hermes arm was allowed to finish. The unit
+  scope is now the whole checkout.
 
 ## 4.0.3 - 2026-10-27
 

@@ -62,9 +62,12 @@ lays its rows out for a screen that much smaller (`App._edged`), and every
 row count it passes in or gets back is of its own rows, the footer left out.
 Those keep the screen's first and last columns and its last row free, and a
 frame passed to `render` (`edge`) is painted there, and on the screen's top
-row, over what is drawn, while the region's last row is the screen's last
-row and every row above it is one this region flushed (so the top row can be
-painted back). Before a write that can scroll the screen (a flush, a frame
+row, over what is drawn, wherever every row above the region is one it
+flushed (so the top row can be painted back): with the region's last row on
+the screen's last row, or above it, where the rows under the region are blank
+(the region erased them, and nothing else writes there). A band's background
+stops at the region's width, short of the right margin, as it starts after
+the left one. Before a write that can scroll the screen (a flush, a frame
 that grows) and when the frame goes, the frame is taken off again: the top
 row is painted back from what was flushed there and the edge cells are
 blanked, so nothing of the frame reaches the scrollback.
@@ -333,7 +336,7 @@ class LiveRegion:
         last_rows, last_lines = self._rows, self._lines
         kept = 0 if repaint_all else min(len(last_rows), len(last_lines))
         rows = [
-            last_rows[index] if index < kept and line == last_lines[index] else paint_line(line, width)
+            last_rows[index] if index < kept and line == last_lines[index] else self._paint(line, width)
             for index, line in enumerate(lines)
         ]
         held = max(len(self._rows), 1)  # the row the cursor is on is the region's first row
@@ -420,11 +423,20 @@ class LiveRegion:
         ops = self._unframe() + self._flush(lines, width)
         self._send(*self._compose(frame, self._cursor, width, ops))
 
+    def _paint(self, line: Line, width: int) -> str:
+        """`paint_line`, and with a margin, a band's background (a fill erasing to the line's end) taken back off the
+        right margin, so it ends at `width` as it starts after the left margin."""
+        painted = paint_line(line, width)
+        if self._margin and line and is_fill(line[-1]):
+            painted += CARRIAGE_RETURN + cursor_forward(self._margin + width) + ERASE_TO_LINE_END
+        return painted
+
     def _frameable(self, rows: int) -> int | None:
-        """The region's top row where an edge frame may be painted on a screen `rows` tall: the region's last row is
-        the screen's last, and every row above its top is one it flushed. None elsewhere."""
+        """The region's top row where an edge frame may be painted on a screen `rows` tall: where the region is is
+        certain, and every row above its top is one it flushed. The rows under a region short of the screen's end
+        are blank, so the frame may paint there too. None elsewhere."""
         top, last = self._top(rows), self._last(rows)
-        if top is None or last != rows - 1 or top > len(self._above):
+        if top is None or last is None or top > len(self._above):
             return None
         return top
 
@@ -499,7 +511,7 @@ class LiveRegion:
         ops: list[str] = []
         self._move_to(0, ops)
         for index, line in enumerate(lines):
-            painted = paint_line(line, width)
+            painted = self._paint(line, width)
             ops.append(painted if index == 0 else cursor_forward(self._margin) + painted)
             ops.append(NEWLINE)
             self._above.append(painted)
