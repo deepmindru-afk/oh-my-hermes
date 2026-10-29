@@ -12,6 +12,7 @@ none goes missing, and nothing already in scrollback would need a repaint.
 from __future__ import annotations
 
 from dataclasses import replace
+import time
 import unicodedata
 import unittest
 from unittest.mock import patch
@@ -26,7 +27,6 @@ from omh.tui.theme import DEFAULT_THEME as THEME
 from omh.tui.theme import with_launch_look
 from omh.tui.transcript import (
     STEER_QUEUED,
-    STEER_REFUSED,
     GUTTER,
     OUTPUT_PREVIEW_ROWS,
     AssistantBlock,
@@ -943,145 +943,75 @@ class ToolDraftTests(LoopTestCase):
 
 
 class SteeredReplyTests(unittest.TestCase):
-    """A steer Hermes reads before another model call splits a reply that made no tool call (no `message.interim`
-    between): `message.complete` carries the last call's text only, and nothing that streamed is ever dropped."""
+    """Once the person steered, `message.complete` never removes or rewrites what streamed: Hermes reads a steer
+    before its next model call, a reply that made no tool call is not sealed between the calls, and the final
+    carries the last call's text only."""
 
     def setUp(self) -> None:
         self.transcript = Transcript(clock=FakeClock())
 
-    def step(self, event: Event | None = None) -> None:
-        if event is not None:
-            self.transcript.apply(event)
-
     def replies(self) -> list[object]:
         return [(type(block).__name__[0], getattr(block, "text", "")) for block in self.transcript.blocks
-                if isinstance(block, (AssistantBlock, SteerBlock, CommandBlock))]
+                if isinstance(block, (AssistantBlock, SteerBlock))]
 
-    def steer(self, text: str, answered: bool = True) -> SteerBlock:
-        block = self.transcript.add_steer(text)
-        if answered:
-            self.transcript.steer_answered(block, STEER_QUEUED)
-        self.step()
-        return block
-
-    def stream(self, first: str, last: str, final: str) -> list[object]:
-        """One reply streamed as `first`, a steer Hermes took, then `last`, ending on `final`."""
-        self.step(ev("message.start"))
-        self.step(ev("message.delta", text=first))
-        self.steer("s1")
-        self.step(ev("message.delta", text=last))
-        self.step(ev("message.complete", text=final, status="complete"))
+    def stream(self, first: str, last: str, final: str, agent: str = "") -> list[object]:
+        """A reply streamed as `first`, a steer Hermes took, then `last`, ending on `final`, and the turn's end."""
+        self.transcript.apply(ev("message.start"))
+        self.transcript.apply(ev("message.delta", text=first))
+        steer = self.transcript.add_steer("s1", agent=agent)
+        self.transcript.steer_answered(steer, STEER_QUEUED)
+        self.transcript.apply(ev("message.delta", text=last))
+        self.transcript.apply(ev("message.complete", text=final, status="complete"))
+        self.transcript.add_turn_summary(1.0, None)
         return self.replies()
 
-    def test_the_split_is_where_the_last_call_begins_however_often_its_first_line_comes_back(self) -> None:
-        # Review 2 of #2389: the last place the final's first line occurred was taken, so a reply that came back to
-        # its first line split there and showed twice (R2), or cut a line in half (R1, R3, R12).
-        replies = (
-            ("Summary\n- fixed the Summary section\n- done", "I will look at the file."),
-            ("Done\n\nI changed x.\nDone", "I will look at the file."),
-            ("OK\nThe tests pass. OK", "I will look at the file."),
-            ("-\n- c", "Plan:\n- a\n- b\n"),
-        )
-        for last, first in replies:
-            with self.subTest(last=last):
-                self.setUp()
-                self.assertEqual(self.stream(first, last, last), [("A", first), ("S", "s1"), ("A", last)])
+    def test_two_calls_keep_all_that_streamed_and_the_steer_row_goes_under_them(self) -> None:
+        self.assertEqual(self.stream("First answer.\n", "Second answer.", "Second answer."),
+                         [("A", "First answer.\nSecond answer."), ("S", "s1")])
 
-    def test_a_final_whose_spaces_differ_still_splits_where_the_last_call_began(self) -> None:
-        # Review 3 of #2389 (W1): with an exact comparison the true boundary failed, and a later repeat of the
-        # final's first line won, showing the last call twice.
-        self.assertEqual(self.stream("I will look at the file.\n", "Done\n\nI changed  x.\nDone", "Done\n\nI changed x.\nDone"),
-                         [("A", "I will look at the file.\n"), ("S", "s1"), ("A", "Done\n\nI changed x.\nDone")])
-        self.setUp()
-        self.assertEqual(self.stream("First.\n\n", "Second  line.", "Second line."),
-                         [("A", "First.\n\n"), ("S", "s1"), ("A", "Second line.")])
-
-    def test_a_footer_hermes_appended_shows_whether_or_not_the_reply_splits(self) -> None:
-        last = "Summary\n- fixed the Summary section"
+    def test_what_the_final_adds_past_the_stream_is_added_spaces_aside(self) -> None:
         footer = "\n\nWarning: 1 edit failed"
-        self.assertEqual(self.stream("I will look.", last, last + footer),
-                         [("A", "I will look."), ("S", "s1"), ("A", last + footer)])  # F3
-        self.setUp()  # F1: the last call's spaces differ in the final: it still splits, and the footer shows
-        self.assertEqual(self.stream("First.", "Second  line. And a longer second answer.",
-                                     "Second line. And a longer second answer." + footer),
-                         [("A", "First."), ("S", "s1"), ("A", "Second line. And a longer second answer." + footer)])
-        self.setUp()  # joined inside a line and too short to tell from a repeat: no split, and the footer shows
-        self.assertEqual(self.stream("First.", "Second.", "Second." + footer)[0], ("A", "First.Second." + footer))
+        self.assertEqual(self.stream("One call ", "that  ends.", "One call that ends." + footer),
+                         [("A", "One call that  ends." + footer), ("S", "s1")])
 
-    def test_a_final_that_shares_nothing_with_the_stream_shows_under_it(self) -> None:
-        # Review 3 (W3): Hermes wrote a warning in place of the last call's reply; with a steer it was dropped.
+    def test_a_final_that_differs_inside_adds_nothing_and_rewrites_nothing(self) -> None:
+        for final in ("Second answer!", "Second", "Second  answer.\n\nFirst."):
+            with self.subTest(final=final):
+                self.setUp()
+                self.assertEqual(self.stream("First.\n", "Second answer.", final),
+                                 [("A", "First.\nSecond answer."), ("S", "s1")])
+
+    def test_a_final_whose_first_word_never_streamed_shows_under_the_reply(self) -> None:
+        # Review 3 (W3): Hermes wrote a warning in place of the last call's reply.
         warning = "⚠️ The model produced only internal reasoning and no final answer, despite retries."
         self.assertEqual(self.stream("Let me check.", "", warning), [("A", "Let me check."), ("S", "s1"), ("A", warning)])
 
-    def test_one_call_whose_final_differs_only_in_spaces_takes_the_final_and_is_never_split(self) -> None:
-        # R4: a steer waited, but there was one call; its final changed spaces inside, and its fence came back.
-        reply = "```py\nx = 1\n```\nand then\n```py\ny = 2\n```"
-        final = reply.replace("and then", "and  then")
-        self.assertEqual(self.stream(reply[:10], reply[10:] + "   \n\n\n", final)[0], ("A", final))
-        self.assertEqual(len([block for block in self.transcript.blocks if isinstance(block, AssistantBlock)]), 1)
+    def test_without_a_steer_of_the_persons_own_the_final_is_adopted_as_before(self) -> None:
+        self.assertEqual(self.stream("Hello wrld", "", "Hello world", agent="child alpha")[0], ("A", "Hello world"))
+        self.setUp()
+        self.transcript.apply(ev("message.start"))
+        self.transcript.apply(ev("message.delta", text="Hello wrld"))
+        self.transcript.apply(ev("message.complete", text="Hello world", status="complete"))
+        self.assertEqual(self.replies(), [("A", "Hello world")])
 
-    def test_a_steer_sent_before_the_reply_opened_still_keeps_the_first_call(self) -> None:
-        # Review 3 (p2b): a steer sent while Hermes was thinking, or before any text, was written above the reply,
-        # not held, so it was not counted and the final dropped the first call.
-        for thinking in (True, False):
-            with self.subTest(thinking=thinking):
-                self.setUp()
-                self.step(ev("message.start"))
-                if thinking:
-                    self.step(ev("reasoning.delta", text="thinking about it"))
-                self.steer("s1")
-                self.step(ev("message.delta", text="Here is the first answer, which the person reads. "))
-                self.step(ev("message.delta", text="Per your steer, the second answer."))
-                self.step(ev("message.complete", text="Per your steer, the second answer.", status="complete"))
-                self.assertEqual(self.replies(), [("A", "Here is the first answer, which the person reads. "),
-                                                  ("S", "s1"), ("A", "Per your steer, the second answer.")])
+    def test_a_steer_counts_for_its_own_turn_only(self) -> None:
+        self.stream("First.", "", "First.")
+        self.transcript.apply(ev("message.start"))
+        self.transcript.apply(ev("message.delta", text="Hello wrld"))
+        self.transcript.apply(ev("message.complete", text="Hello world", status="complete"))
+        self.assertEqual(self.replies()[-1], ("A", "Hello world"))
 
-    def test_a_steer_a_tool_call_took_splits_nothing(self) -> None:
-        # Review 3 (W2): Hermes put the steer into the running call's result; the reply after it is one call.
-        self.step(ev("message.start"))
-        self.step(ev("tool.start", tool_id="t1", name="terminal", context="ls"))
-        block = self.steer("s1", answered=False)
-        self.step(ev("tool.complete", tool_id="t1", name="terminal", result={"output": ""}))
-        self.step(ev("message.delta", text="Summary\n\nfixed  the bug\nSummary"))
-        self.transcript.steer_answered(block, STEER_QUEUED)
-        self.step(ev("message.complete", text="Summary\n\nfixed the bug\nSummary", status="complete"))
-        self.assertEqual([text for kind, text in self.replies() if kind == "A"], ["Summary\n\nfixed the bug\nSummary"])
-
-    def test_a_steer_answered_after_the_turn_ended_still_keeps_the_first_reply(self) -> None:
-        self.step(ev("message.start"))
-        self.step(ev("message.delta", text="First."))
-        block = self.steer("s1", answered=False)
-        self.step(ev("message.delta", text="Second answer, a whole one."))
-        self.step(ev("message.complete", text="Second answer, a whole one.", status="complete"))
-        self.transcript.steer_answered(block, STEER_QUEUED)
-        self.step()
-        self.assertEqual(self.replies(), [("A", "First."), ("S", "s1"), ("A", "Second answer, a whole one.")])
-
-    def test_a_steer_refused_after_the_turn_ended_goes_under_the_reply_not_between(self) -> None:
-        self.step(ev("message.start"))
-        self.step(ev("message.delta", text="First."))
-        block = self.steer("s1", answered=False)
-        self.step(ev("message.delta", text="Second answer, a whole one."))
-        self.step(ev("message.complete", text="Second answer, a whole one.", status="complete"))
-        self.transcript.steer_answered(block, STEER_REFUSED, "refused")
-        self.step()
-        self.assertEqual(self.replies(), [("A", "First."), ("A", "Second answer, a whole one."), ("S", "s1")])
-
-    def test_what_came_during_the_last_call_waits_under_it(self) -> None:
-        # Review of #2389: a second steer Hermes hands to the next turn, and a command echo, both rose above it.
-        self.step(ev("message.start"))
-        self.step(ev("message.delta", text="First."))
-        self.steer("s1")
-        self.step(ev("message.delta", text="Sec"))
-        self.steer("s2")
-        echo = self.transcript.add_command("/usage")
-        self.transcript.add_output("cost $1")
-        self.transcript.close_command(echo)
-        self.step(ev("message.delta", text="ond."))
-        self.step(ev("message.complete", text="Second.", status="complete"))
-        self.transcript.add_turn_summary(3.0, None)
-        self.step()
-        self.assertEqual(self.replies(), [("A", "First."), ("S", "s1"), ("A", "Second."), ("S", "s2"), ("C", "")])
+    def test_settling_a_megabyte_reply_is_linear(self) -> None:
+        # The owner's bound: settling never scans the stream more than a fixed number of times.
+        body = "word and more " * 75_000  # about 1 MB
+        start = time.perf_counter()
+        replies = self.stream(body, "", body + "\n\nfooter")
+        self.assertLess(time.perf_counter() - start, 3.0)
+        self.assertEqual(" ".join(replies[0][1].split()), " ".join((body + "footer").split()))
+        self.setUp()
+        start = time.perf_counter()
+        self.stream(body, "", "z" * 1_000_000)  # no opening in common: a bounded search, then its own block
+        self.assertLess(time.perf_counter() - start, 3.0)
 
 
 class TurnEndTests(LoopTestCase):
