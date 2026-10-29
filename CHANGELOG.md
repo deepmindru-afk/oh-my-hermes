@@ -20,6 +20,20 @@ All notable changes will be documented here.
   is BLOCK, reading code never passes, and a run with no WebGL context is
   recorded as `environment: no_webgl` instead of being judged a blank frame.
 
+- **The OMH TUI's background-process row shows for a local session.** A
+  local session's process is recorded under its route,
+  `agent:<namespace>:local:dm:<stored id>`, which the row never matched,
+  so it never appeared. It now matches that key or the bare stored id, and
+  no prefix or suffix of either. With `compression.in_place: false` the
+  row and an unreported end now survive the rotation to a new stored id.
+  The row's spinner steps once a second, like its clock, so an idle session
+  with a process draws 1 frame a second, not 6, and none under the pager.
+  A messaging session resumed in the TUI (a bot profile's Telegram chat)
+  shows the processes its own turns and its subagents started, matched on
+  the route Hermes records on the session's row and on the spawning
+  session's id; after a `/new` on the same chat, neither conversation
+  shows the other's.
+
 - **A steer sent while a reply streams no longer erases that reply.** When
   Hermes read the steer before a second model call, the OMH TUI replaced the
   whole streamed text with the last call's at turn end. Once you steer, what
