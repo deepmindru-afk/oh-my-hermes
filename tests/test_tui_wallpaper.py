@@ -5,13 +5,16 @@ nothing of it reaches the scrollback."""
 
 from __future__ import annotations
 
+import contextlib
 import json
 from pathlib import Path
 import random
 import tempfile
+import unicodedata
 import unittest
 from unittest import mock
 
+import _vt_screen
 from _vt_screen import VTScreen
 from omh.skin_pack import (
     SKIN_THEMES,
@@ -57,6 +60,16 @@ ANSWERED = "#1E1E1E"  # what the terminal answered the startup background query 
 WALLPAPER_ON = {"COLORTERM": "truecolor", "TERM": "xterm-256color", "OMH_TUI_WALLPAPER": "1"}
 MARK = "░"  # the test scene's glyph: every cell of the screen lit with it, so any cell it reaches shows
 SIZES = ((150, 42), (80, 24), (100, 30), (200, 60), (80, 60), (250, 24))
+
+
+@contextlib.contextmanager
+def ambiguous_wide():
+    """The VT screen drawing East Asian Ambiguous characters two cells wide, as a terminal with that option set does."""
+    narrow = _vt_screen.cluster_width
+    with mock.patch.object(_vt_screen, "cluster_width",
+                           lambda cluster: 2 if len(cluster) == 1 and unicodedata.east_asian_width(cluster) == "A"
+                           else narrow(cluster)):
+        yield
 
 
 class Clock:
@@ -233,51 +246,81 @@ class RegionTests(unittest.TestCase):
                 region.render([(Span("> "),)], (0, 2), 40, screen_rows=12, ambient=ambient)
                 self.assertEqual(screen.line(0), "logo row", "taken off once no longer asked")
 
+    def test_ambiguous_width_text_drawn_wide_is_never_covered(self) -> None:
+        # A terminal set to draw East Asian Ambiguous characters two cells wide (an iTerm2 and Terminal.app option)
+        # pushes a row's text one cell right for each: the tail starts that much later, so no glyph covers the text,
+        # on screen or, once the row scrolls, in the scrollback.
+        with ambiguous_wide():
+            for count in range(6):
+                text = "reply " + "…" * count + " end"
+                screen = VTScreen(6, 40)
+                region = LiveRegion(screen.feed, at_top=True)
+                region.render([(Span(text),), (Span("> "),)], (1, 2), 40, screen_rows=6,
+                              ambient=everywhere("", 40, 6, 0, False), ambient_above=True)
+                self.assertTrue(screen.line(0).startswith(text + " " * TEXT_GAP + MARK), (count, screen.line(0)))
+            screen = VTScreen(8, 40)
+            region = LiveRegion(screen.feed, at_top=True)
+            ambient = everywhere("", 40, 8, 0, False)
+            region.render([(Span("> "),)], (0, 2), 40, flush=[(Span("Greek: αβγδ → ok"),)], screen_rows=8,
+                          ambient=ambient, ambient_above=True)
+            for index in range(12):
+                region.render([(Span("> "),)], (0, 2), 40, flush=[(Span(f"later {index}"),)], screen_rows=8,
+                              ambient=ambient, ambient_above=True)
+            self.assertEqual(screen.scrollback[0], "Greek: αβγδ → ok")
+
     def test_random_frames_never_cover_text_or_reach_the_scrollback(self) -> None:
         # Seeded random frames, flushes, inserted rows, ticks and starting places, with and without the glow's margin
         # and the rows above painted: the screen with the glyph taken out is the plain run's, no glyph is in the
         # scrollback, and every glyph on screen is one the region tracks (after the review's fuzz).
-        for seed in range(40):
-            rnd = random.Random(seed)
-            rows, cols = rnd.choice([(8, 30), (12, 40), (20, 60)])
-            footer = rnd.random() < 0.5
-            margin = int(footer)
-            start = rnd.choice(["top", "row", "none"])
-            place = {"at_top": True} if start == "top" else {"start_row": rnd.randrange(rows)} if start == "row" else {}
-            painted, plain = VTScreen(rows, cols), VTScreen(rows, cols)
-            if start != "top":
-                shell = "shell\r\n" * rnd.randrange(rows) if start == "none" else f"\x1b[{place['start_row'] + 1};1H"
-                for screen in (painted, plain):
-                    screen.feed(shell)
-            regions = [LiveRegion(screen.feed, margin=margin, footer=footer, **place) for screen in (painted, plain)]
-            width, screen_rows = cols - 2 * margin, rows - footer
-            lines: list = []
-            for step in range(50):
-                ambient = tuple(Cell(r, c, MARK, "#445566") for r in range(rows) for c in range(cols)
-                                if rnd.random() < 0.7)
-                if rnd.random() < 0.15:
-                    regions[0].paint_ambient(ambient, screen_rows)
-                else:
-                    if rnd.random() < 0.4 or not lines:
-                        lines = [(Span("x" * rnd.randrange(width)),) if rnd.random() < 0.85 else
-                                 (Span("band", Style(bg="#334455")), Span("", Style(bg="#334455")))
-                                 for _ in range(rnd.randint(1, screen_rows - 1))]
-                    elif rnd.random() < 0.5 and len(lines) < screen_rows - 1:
-                        at = rnd.randrange(len(lines) + 1)
-                        lines = lines[:at] + [(Span(f"ins{step}"),)] + lines[at:]
-                    flush = [(Span(f"f{step}-{i}" + "y" * rnd.randrange(width // 2)),)
-                             for i in range(rnd.choice([0, 0, 1, 2, 5]))]
-                    cursor = None if rnd.random() < 0.2 else (rnd.randrange(len(lines)), rnd.randrange(width))
-                    regions[0].render(lines, cursor, width, flush=flush, screen_rows=screen_rows, ambient=ambient,
-                                      ambient_above=rnd.random() < 0.7)
-                    regions[1].render(lines, cursor, width, flush=flush, screen_rows=screen_rows)
-                where = f"seed {seed} step {step}"
-                self.assertEqual([line.replace(MARK, " ").rstrip() for line in painted.lines()],
-                                 [line.rstrip() for line in plain.lines()], where)
-                self.assertFalse(any(MARK in line for line in painted.scrollback), where)
-                marks = {(row, col) for row in range(rows) for col, char in enumerate(painted.line(row))
-                         if char == MARK}
-                self.assertEqual(marks, set(regions[0]._paper), where)
+        for seed in range(48):
+            wide = seed >= 40  # the last few on a terminal that draws ambiguous characters wide, over such text
+            with ambiguous_wide() if wide else contextlib.nullcontext():
+                self.random_frames(seed, wide)
+
+    def random_frames(self, seed: int, wide: bool) -> None:
+        rnd = random.Random(seed)
+        rows, cols = rnd.choice([(8, 30), (12, 40), (20, 60)])
+        footer = rnd.random() < 0.5
+        margin = int(footer)
+        start = rnd.choice(["top", "row", "none"])
+        place = {"at_top": True} if start == "top" else {"start_row": rnd.randrange(rows)} if start == "row" else {}
+        painted, plain = VTScreen(rows, cols), VTScreen(rows, cols)
+        if start != "top":
+            shell = "shell\r\n" * rnd.randrange(rows) if start == "none" else f"\x1b[{place['start_row'] + 1};1H"
+            for screen in (painted, plain):
+                screen.feed(shell)
+        regions = [LiveRegion(screen.feed, margin=margin, footer=footer, **place) for screen in (painted, plain)]
+        width, screen_rows = cols - 2 * margin, rows - footer
+        lines: list = []
+        for step in range(50):
+            ambient = tuple(Cell(r, c, MARK, "#445566") for r in range(rows) for c in range(cols)
+                            if rnd.random() < 0.7)
+            if rnd.random() < 0.15:
+                regions[0].paint_ambient(ambient, screen_rows)
+            else:
+                if rnd.random() < 0.4 or not lines:
+                    letters = "x…αβ─→" if wide else "x"  # ambiguous ones count one cell here, two on that screen
+                    longest = width // 2 if wide else width
+                    lines = [(Span("".join(rnd.choice(letters) for _ in range(rnd.randrange(longest)))),)
+                             if rnd.random() < 0.85 else
+                             (Span("band", Style(bg="#334455")), Span("", Style(bg="#334455")))
+                             for _ in range(rnd.randint(1, screen_rows - 1))]
+                elif rnd.random() < 0.5 and len(lines) < screen_rows - 1:
+                    at = rnd.randrange(len(lines) + 1)
+                    lines = lines[:at] + [(Span(f"ins{step}"),)] + lines[at:]
+                flush = [(Span(f"f{step}-{i}" + "y" * rnd.randrange(width // 2)),)
+                         for i in range(rnd.choice([0, 0, 1, 2, 5]))]
+                cursor = None if rnd.random() < 0.2 else (rnd.randrange(len(lines)), rnd.randrange(width))
+                regions[0].render(lines, cursor, width, flush=flush, screen_rows=screen_rows, ambient=ambient,
+                                  ambient_above=rnd.random() < 0.7)
+                regions[1].render(lines, cursor, width, flush=flush, screen_rows=screen_rows)
+            where = f"seed {seed} step {step}"
+            self.assertEqual([line.replace(MARK, " ").rstrip() for line in painted.lines()],
+                             [line.rstrip() for line in plain.lines()], where)
+            self.assertFalse(any(MARK in line for line in painted.scrollback), where)
+            marks = {(row, col) for row in range(rows) for col, cell in enumerate(painted._text[row])
+                     if cell == MARK}  # by cell, where a wide glyph takes two
+            self.assertEqual(marks, set(regions[0]._paper), where)
 
     def test_clearing_the_region_takes_the_cells_above_it_off_too(self) -> None:
         # Exit from the launch screen (nothing to flush) and Ctrl+Z only clear the region: the cells beside the logo
@@ -525,9 +568,13 @@ class AppWallpaperTests(unittest.TestCase):
             app._on_event(Event("session.info", SID, {"model": "openai/gpt-6.1-sol", "skills": SKILLS}))
             app._render()
             screen = app.terminal.screen
+            banner = next(row for row in range(42) if "OH-MY-HERMES v" in screen.line(row))
+            self.assertLess(banner, app.region.top_row(app.size[1]), "the banner is flushed above the region")
+            self.assertIn(MARK, screen.line(banner), "the launch screen's empty area beside the banner")
+            # The logo's rows are block and box-drawing characters, East Asian Ambiguous all: counted as wide as a
+            # terminal may draw them, they reach past the screen's edge and keep no tail.
             logo = next(row for row in range(42) if "██" in screen.line(row))
-            self.assertLess(logo, app.region.top_row(app.size[1]), "the logo is flushed above the region")
-            self.assertIn(MARK, screen.line(logo), "the launch screen's empty area beside the logo")
+            self.assertNotIn(MARK, screen.line(logo))
             app._submit_prompt("first question")
             app.transcript.apply(Event("message.start", SID, {}))
             app.transcript.apply(Event("message.complete", SID, {"text": "an answer someone may copy"}))

@@ -121,6 +121,7 @@ from __future__ import annotations
 
 from collections import deque
 from collections.abc import Callable, Sequence
+import unicodedata
 
 from .edge_glow import Edge
 from .escapes import strip_escapes
@@ -209,13 +210,21 @@ def _is_blank(line: Line) -> bool:
 
 def _blank_from(line: Line, width: int, margin: int) -> int | None:
     """Where the wallpaper may start on a row: at the margin on a blank row, `TEXT_GAP` cells past the text on one with
-    text (a terminal that draws an ambiguous-width glyph two cells wide would otherwise push the glyph over the
-    row's last character), never on a band's row (None)."""
+    text, never on a band's row (None). The text is counted as wide as a terminal can draw it: a terminal set to
+    draw East Asian Ambiguous characters (`…`, `→`, `·`, Greek, box drawing) two cells wide pushes the text one cell
+    further right for each, and a glyph there would cover the text, and with it, once the row scrolls, what the
+    scrollback keeps of it."""
     if line and is_fill(line[-1]):
         return None
     if _is_blank(line):
         return margin
-    return margin + min(line_width(line), width) + TEXT_GAP
+    return margin + min(line_width(line) + _ambiguous_cells(line), width) + TEXT_GAP
+
+
+def _ambiguous_cells(line: Line) -> int:
+    """How many East Asian Ambiguous characters a row's text holds: the cells a terminal that draws them two cells
+    wide adds to it."""
+    return sum(unicodedata.east_asian_width(char) == "A" for span in line for char in span.text)
 
 
 def paint_line(line: Line, width: int) -> str:
