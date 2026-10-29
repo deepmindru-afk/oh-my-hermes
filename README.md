@@ -58,8 +58,8 @@ omh setup
   You never call them; the router loads the right ones into the run as tool calls.
 
 - **Semantic rename for Python, opt-in.**<br>
-  `lsp_definition`, `lsp_references` and `lsp_rename` drive the language server Hermes already runs.<br>
-  On 72 measured renames, pass rate went from 47 to 61; small models from 16 to 28 of 36.<br>
+  `lsp_definition`, `lsp_references` and `lsp_rename` ask the language server Hermes already runs instead of searching text.<br>
+  Aliases, re-exports and shadowed names get renamed correctly, and smaller models gain the most.<br>
   Off by default; turn on `lsp_tools` in the OMH plugin settings ([measurement](benchmarks/live-model-tools/v1/README.md)).
 
 - **Long-term memory you can trust.**<br>
