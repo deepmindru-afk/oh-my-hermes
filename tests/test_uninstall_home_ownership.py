@@ -330,5 +330,28 @@ class UninstallHomeOwnershipTests(unittest.TestCase):
         self.assertTrue(result["command_package_kept"], result)
 
 
+
+class SystemRootAliasTests(unittest.TestCase):
+    """macOS ships /var, /tmp and /etc as root-owned links into /private; a home under them is not
+    behind a user's link (per-user temp roots live under /var/folders)."""
+
+    @requires_symlinks
+    def test_a_user_link_in_the_path_still_refuses(self) -> None:
+        from omh.commands.setup import _configured_path_contains_symlink
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "real").mkdir()
+            (root / "link").symlink_to(root / "real", target_is_directory=True)
+            self.assertTrue(_configured_path_contains_symlink(str(root / "link" / ".omh")))
+            self.assertFalse(_configured_path_contains_symlink(str(root.resolve() / "real" / ".omh")))
+
+    @unittest.skipUnless(os.name != "nt" and Path("/var").is_symlink() and Path("/var").lstat().st_uid == 0,
+                         "needs the OS's root-owned /var alias (macOS)")
+    def test_the_os_var_alias_is_not_a_configured_link(self) -> None:
+        from omh.commands.setup import _configured_path_contains_symlink
+        with TemporaryDirectory(dir="/var/tmp") as temporary:
+            self.assertFalse(_configured_path_contains_symlink(str(Path(temporary) / ".omh")))
+
+
 if __name__ == "__main__":
     unittest.main()

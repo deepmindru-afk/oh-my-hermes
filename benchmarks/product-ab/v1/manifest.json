@@ -4,7 +4,7 @@
   "question": "On this repository's own merged pull requests, graded by those pull requests' own tests, does the same model reach the same pass rate for less money, less wall clock, and fewer false completions when it is reached through OMH's coding delegation instead of Hermes alone?",
   "control": {
     "provider": "openai-codex",
-    "model": "gpt-5.6-sol",
+    "model": "gpt-6.1-sol",
     "effort": "high",
     "mixture_provider": "og"
   },

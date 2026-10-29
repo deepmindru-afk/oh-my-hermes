@@ -670,6 +670,48 @@ class ImageTests(AdapterCase):
         [(_, submit)] = adapter.from_client(_call(25, "prompt.submit", {"session_id": SID, "text": "x"}))
         self.assertNotIn("attachments", submit["params"])
 
+    def test_the_bytes_the_tui_keeps_are_staged_queued_and_detached_by_the_path_answered(self) -> None:
+        adapter = self.adapter()
+        self.opened(adapter)
+        sent = {"session_id": SID, "filename": "shot.png", "content_base64": base64.b64encode(PNG).decode("ascii")}
+        answer = self.stage(adapter, adapter.from_client(_call(40, "image.attach_bytes", sent)))
+        self.assertEqual(answer, _answer(40, {"attached": True, "path": "/hermes/cache/images/upload_1.png",
+                                              "name": "shot.png", "count": 1}))
+        [(_, submit)] = adapter.from_client(_call(41, "prompt.submit", {"session_id": SID, "text": "x"}))
+        self.assertEqual(submit["params"]["attachments"],
+                         [{"path": "/hermes/cache/images/upload_1.png", "mime": "image/png"}])
+        self.stage(adapter, adapter.from_client(_call(42, "image.attach_bytes", sent)),
+                   staged="/hermes/cache/images/upload_2.png")
+        [(_, answer)] = adapter.from_client(_call(43, "image.detach", {
+            "session_id": SID, "path": "/hermes/cache/images/upload_2.png"}))
+        self.assertEqual(answer, _answer(43, {"detached": True, "count": 0}))
+        [(_, submit)] = adapter.from_client(_call(44, "prompt.submit", {"session_id": SID, "text": "y"}))
+        self.assertNotIn("attachments", submit["params"])
+
+    def test_a_staged_path_with_no_mime_answered_is_typed_by_the_suffix_the_owner_gave_it(self) -> None:
+        adapter = self.adapter()
+        self.opened(adapter)
+        sent = {"session_id": SID, "filename": "photo.jpg", "content_base64": base64.b64encode(PNG).decode("ascii")}
+        call = self.own_call(adapter.from_client(_call(48, "image.attach_bytes", sent)), "image.attach_bytes")
+        adapter.from_owner(_answer(call["id"], {"attached": True, "path": "/hermes/cache/images/upload_3.jpg"}))
+        [(_, submit)] = adapter.from_client(_call(49, "prompt.submit", {"session_id": SID, "text": "x"}))
+        self.assertEqual(submit["params"]["attachments"], [{"path": "/hermes/cache/images/upload_3.jpg",
+                                                            "mime": "image/jpeg"}])
+
+    def test_empty_bytes_are_refused_and_bytes_the_owner_refuses_say_why(self) -> None:
+        adapter = self.adapter()
+        self.opened(adapter)
+        [(target, refusal)] = adapter.from_client(_call(45, "image.attach_bytes", {
+            "session_id": SID, "filename": "x.png", "content_base64": ""}))
+        self.assertEqual((target, refusal["error"]["code"]), (TO_CLIENT, attach.NOT_FOUND))
+        call = self.own_call(adapter.from_client(_call(46, "image.attach_bytes", {
+            "session_id": SID, "filename": "x.png", "content_base64": "bm90IGFuIGltYWdl"})), "image.attach_bytes")
+        self.assertEqual(call["params"]["content_base64"], "bm90IGFuIGltYWdl")  # as the TUI sent it
+        [(target, refusal)] = adapter.from_owner(_error(call["id"], "unsupported image extension"))
+        self.assertEqual((target, refusal["error"]["code"]), (TO_CLIENT, attach.REFUSED))
+        [(_, submit)] = adapter.from_client(_call(47, "prompt.submit", {"session_id": SID, "text": "x"}))
+        self.assertNotIn("attachments", submit["params"])
+
     def test_an_image_not_found_is_refused_with_its_reason(self) -> None:
         adapter = self.adapter()
         self.opened(adapter)

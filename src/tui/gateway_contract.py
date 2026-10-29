@@ -83,8 +83,12 @@ CLIENT_METHODS: dict[str, frozenset[str]] = {
     "prompt.submit": frozenset({"session_id", "text", "queued", "truncate_before_row_id", "confirm_truncate"}),
     # The durable display transcript with row ids: what the rewind picker lists and redraws from.
     "session.history": frozenset({"session_id"}),
-    # Attachments: the gateway resolves and queues the file; the TUI sends a path, never bytes.
+    # Attachments: the gateway resolves and stages the file the TUI names by its path; the TUI then reads the bytes
+    # of the file Hermes staged and has it let go of it (`image.detach`), until a prompt stages them again below.
     "image.attach": frozenset({"session_id", "path"}),
+    # The bytes the TUI keeps for an image token, staged for the one prompt that goes with it (Hermes writes its own
+    # file and answers its path, which `image.detach` then names).
+    "image.attach_bytes": frozenset({"session_id", "filename", "content_base64"}),
     "image.detach": frozenset({"session_id", "path"}),
     "clipboard.paste": frozenset({"session_id"}),
     "input.detect_drop": frozenset({"session_id", "text"}),

@@ -129,17 +129,17 @@ HERMES_MIXTURE_CATEGORY_CHAINS: dict[str, tuple[tuple[str, str], ...]] = {
         ("claude-opus-5-5", "medium"),
         ("claude-sonnet-5-5", "medium"),
         ("kimi-k3.1-pro", "medium"),
-        ("gemini-3.1-pro", "medium"),
+        ("gemini-4-argon", "medium"),
     ),
     # Labelled "deep" by projection: its head is deep's (accepted collision).
     "visual-engineering": (
         ("claude-opus-5-5", "high"),
         ("claude-fable-5-1", "high"),
-        ("gemini-3.1-pro", "high"),
+        ("gemini-4-argon", "high"),
         ("kimi-k3.1-pro", "high"),
     ),
     "artistry": (
-        ("gemini-3.1-pro", "high"),
+        ("gemini-4-argon", "high"),
         ("claude-opus-5-5", "high"),
         ("claude-fable-5-1", "high"),
         ("kimi-k3.1-pro", "high"),
@@ -191,7 +191,7 @@ HERMES_MIXTURE_CATEGORY_CHAINS: dict[str, tuple[tuple[str, str], ...]] = {
     # child with no matching record is labelled by projection, so forensics
     # and synthesize are labels only a routed lane carries.
     # Six projections move (diffed over every shipped (model, effort) pair):
-    # (deepseek-flash, low) unspecified-low -> swarm and (gemini-3.1-pro,
+    # (deepseek-flash, low) unspecified-low -> swarm and (gemini-4-argon,
     # medium) writing -> google-search, because each now heads a chain;
     # (gpt-6.1-sol, xhigh) and (grok-4.7, high) had no label and now head
     # review and x-search; (kimi-k3.1-pro, high) deep -> x-search and
@@ -199,7 +199,7 @@ HERMES_MIXTURE_CATEGORY_CHAINS: dict[str, tuple[tuple[str, str], ...]] = {
     # chain position wins (second in x-search against third in deep; third
     # in review against fourth in architect).
     "google-search": (
-        ("gemini-3.1-pro", "medium"),
+        ("gemini-4-argon", "medium"),
         ("gpt-6.1-sol", "medium"),
         ("claude-opus-5-5", "medium"),
     ),
@@ -208,7 +208,7 @@ HERMES_MIXTURE_CATEGORY_CHAINS: dict[str, tuple[tuple[str, str], ...]] = {
     "x-search": (
         ("grok-4.7", "high"),
         ("kimi-k3.1-pro", "high"),
-        ("gemini-3.1-pro", "high"),
+        ("gemini-4-argon", "high"),
     ),
     # A category, not the `review` role: the role still resolves through
     # unspecified-high/unspecified-low and never reaches this chain.
@@ -232,7 +232,7 @@ HERMES_MIXTURE_CATEGORY_CHAINS: dict[str, tuple[tuple[str, str], ...]] = {
     "synthesize": (
         ("claude-opus-5-5", "xhigh"),
         ("gpt-6.1-sol", "xhigh"),
-        ("gemini-3.1-pro", "high"),
+        ("gemini-4-argon", "high"),
     ),
 }
 
@@ -493,6 +493,11 @@ HERMES_MIXTURE_ALIAS_PROVIDER_FAMILIES: dict[str, tuple[str, ...]] = {
     "grok-4.3": ("xai", "openrouter"),
     # Retired on 2026-10-01 under the same rule (superseded by gpt-6.1-sol).
     "gpt-6-sol": ("openai-codex", "openai"),
+    # Gemini 4 Argon holds every former Gemini 3.1 Pro slot since 2026-10-28.
+    # Google's own API serves it (`google` / `gemini` in Hermes), and
+    # OpenRouter lists `google/gemini-4-argon` (catalog snapshot, 2026-10-28).
+    "gemini-4-argon": ("google", "gemini", "openrouter"),
+    # Retired on 2026-10-28 under the same rule (superseded by gemini-4-argon).
     "gemini-3.1-pro": ("google", "gemini", "openrouter"),
     # Recognition-only, in no shipped chain (catalog sync, 2026-10-28): the
     # Gemini API pricing page lists each id and OpenRouter lists
@@ -514,7 +519,7 @@ EXACT_MODEL_CONTRACT_ALIASES: frozenset[str] = frozenset(
     {
         "gpt-6-astra", "gpt-6-sol", "gpt-6.1-sol", "gpt-6.1-terra", "gpt-6-luna", "claude-opus-5-5",
         "claude-sonnet-5-5", "claude-haiku-5-5", "deepseek-v4.1-flash", "kimi-k3.1-pro",
-        "kimi-k3.1-pro-highspeed", "jev-1.13.0",
+        "kimi-k3.1-pro-highspeed", "gemini-4-argon", "jev-1.13.0",
     }
 )
 
@@ -1549,7 +1554,17 @@ APPROX_PRICE_PER_MTOK: dict[str, tuple[float, float]] = {
     # Google list price (ai.google.dev/gemini-api/docs/pricing, read
     # 2026-10-01): Gemini 3.1 Pro Preview 2/12 up to 200K prompt tokens, 4/18
     # above. The earlier 1.25/10 was Gemini 2.5 Pro's rate on the same page.
+    # The id left the shipped chains on 2026-10-28 and stays priced for
+    # overrides.
     "gemini-3.1-pro": (2.0, 12.0),
+    # Google list price (ai.google.dev/gemini-api/docs/pricing, read
+    # 2026-10-28), Standard paid tier, no prompt-size tier: Gemini 4 Argon
+    # 2/10 through 2026-11-30, cached input 0.10 (APPROX_CACHE_READ_RATIO).
+    # From 2026-12-01 the card is 4/20 (cache 0.20, the same 0.05 ratio), so
+    # re-read the page after that date. Batch is half. GA 2026-10-13;
+    # 1,048,576-token unified context, 65,536 output per synchronous request.
+    # Thinking `low`/`medium`/`high` (default `medium`), never off.
+    "gemini-4-argon": (2.0, 10.0),
     # Google list price (ai.google.dev/gemini-api/docs/pricing, read
     # 2026-10-28), paid tier, no prompt-size tier: Gemini 3.8 Flash and 3.6
     # Flash 0.75/3.75, cached input 0.075 (the default tenth). Both are an
@@ -1682,6 +1697,10 @@ APPROX_CACHE_READ_RATIO: dict[str, float] = {
     # DeepSeek V4 Pro cache hit 0.044 vs cache miss 1.32 per MTok input
     # (api-docs.deepseek.com/quick_start/pricing, read 2026-10-28).
     "deepseek-v4-pro": 0.0333,
+    # Gemini 4 Argon cached input 0.10 against 2.00 input through 2026-11-30,
+    # and 0.20 against 4.00 from 2026-12-01 (ai.google.dev/gemini-api/docs/
+    # pricing, read 2026-10-28).
+    "gemini-4-argon": 0.05,
     # Kimi K3.1 Pro Highspeed cached input 0.20 against 4.00 input
     # (platform.kimi.ai/docs/pricing/chat, read 2026-10-24); the base model's
     # 0.20 against 2.00 is the default tenth and needs no row.

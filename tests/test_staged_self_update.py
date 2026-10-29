@@ -1139,7 +1139,9 @@ class StagedSelfUpdateTests(unittest.TestCase):
 
     def test_windows_junction_absolutizes_relative_target_without_resolving_aliases(self):
         with TemporaryDirectory() as temporary:
-            root = Path(temporary)
+            # The process cwd is already canonical (macOS reports /var/... as /private/var/...),
+            # so anchor the fixture there; the alias under test is generation-alias below.
+            root = Path(temporary).resolve()
             generations = root / "generations"
             generations.mkdir()
             (generations / "candidate").mkdir()

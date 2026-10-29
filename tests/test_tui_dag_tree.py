@@ -1158,7 +1158,7 @@ class RunEndTests(unittest.TestCase):
         info = box_top(screen) + 3
         # The tree's rows are blank under the info line, down to the region's last row.
         self.assertEqual(screen[info + 1 : 42], [""] * (41 - info), "the tree's rows are blank under the info line")
-        self.assertIn("[ ⚚ OMH Native ]", screen[info])
+        self.assertIn("[⚚ OMH Native]", screen[info])
         above = screen[box_top(screen) - 2 : box_top(screen)]
         self.assertTrue(above[0].strip().startswith("✻"), screen)  # the turn's summary line, then one spacer row
         self.assertEqual(drawn(app), screen, "the next frame keeps them")

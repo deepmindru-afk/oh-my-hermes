@@ -72,6 +72,8 @@ class ParityTests(unittest.TestCase):
         "kimi-k3.1-pro-highspeed": ("kimi-coding",),
         # Retired 2026-10-24 when Kimi K3.1 Pro took every K3 slot.
         "kimi-k3": ("apitopia", "kimi-coding", "openrouter", "opencode"),
+        # Retired 2026-10-28 when Gemini 4 Argon took every Gemini 3.1 Pro slot.
+        "gemini-3.1-pro": ("google", "gemini", "openrouter"),
         # The versioned spelling of the shipped `deepseek-flash` pointer;
         # gateways serve it under this id.
         "deepseek-v4.1-flash": ("deepseek", "openrouter", "opencode"),

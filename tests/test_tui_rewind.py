@@ -262,15 +262,32 @@ class RewindTests(unittest.TestCase):
         self.assertIn("Hermes cut the session there", notices(app, NOTICE_WARN)[-1])
         self.assertFalse(app.turn_pending)
 
-    def test_the_images_sent_with_a_refused_rewind_come_back_as_chips(self) -> None:
-        # Hermes keeps an image queued when it refuses the prompt it was for, so the chip comes back with it.
+    def picked_with_image(self, text: str) -> tuple[App, object, Attachment]:
+        """A rewind picked and `text` with an image token sent: Hermes staged its bytes and answered the path."""
         app, client = self.picked()
-        chip = Attachment("/hermes/cache/images/upload_1.png", "shot.png", "")
-        app.attachments.append(chip)
+        app._set_composer(text)
+        image = Attachment("/hermes/cache/images/clip_1.png", "shot.png", "", "[Image #1]", b"\x89PNG")
+        app.composer.insert_image(image.label, image)
         app._on_input(Key(ENTER))
-        self.assertEqual(app.attachments, [])  # sent with the prompt
+        self.assertEqual(client.calls[-1][0], "image.attach_bytes")
+        answer(app, client, {"attached": True, "path": "/hermes/cache/images/upload_1.png"})
+        self.assertEqual(client.calls[-1][0], "prompt.submit")
+        return app, client, image
+
+    def test_the_images_staged_for_a_refused_rewind_are_detached_as_the_prompt_is_not_given_back(self) -> None:
+        # Hermes keeps what was staged for a prompt it refuses: it is detached, by the path Hermes answered.
+        app, client, _image = self.picked_with_image("")
         answer(app, client, error={"code": 4018, "message": "rewind target not found"})
-        self.assertEqual(app.attachments, [chip])
+        self.assertIn(("image.detach", {"session_id": SID, "path": "/hermes/cache/images/upload_1.png"}), client.calls)
+        self.assertEqual(app.composer.images, {})
+
+    def test_a_rewound_prompt_hermes_cut_for_but_refused_comes_back_with_its_tokens(self) -> None:
+        app, client, image = self.picked_with_image("again ")
+        answer(app, client, error={"code": 4001, "message": "Hermes cut the session, then refused the prompt (busy)",
+                                   "data": {"rewound": True}})
+        self.assertEqual(app.composer.expanded(), "again [Image #1] ")
+        self.assertEqual([held for _label, held in app.composer.images.values()], [image])
+        self.assertIn(("image.detach", {"session_id": SID, "path": "/hermes/cache/images/upload_1.png"}), client.calls)
 
     def test_a_refused_rewind_puts_the_screen_back_before_hermes_sends_its_history(self) -> None:
         app, client = self.sent_and_refused()

@@ -47,8 +47,8 @@ SHORTCUTS: tuple[tuple[str, str], ...] = (
           "as the agent list; in a DAG run, to its folding tree"),
     ("← / →", "Move by a character; with Ctrl or Alt, by a word (Alt+B and Alt+F too)"),
     ("Home / End, Ctrl+A / Ctrl+E", "Go to the start or the end of the line"),
-    ("Backspace / Delete", "Delete a character, or a paste chip whole; Backspace on an empty composer removes "
-                           "the last attached image"),
+    ("Backspace / Delete", "Delete a character, or a paste chip or an [Image #N] token whole; deleting a token "
+                           "removes its image"),
     ("Ctrl+W, Alt+Backspace, Ctrl+Backspace", "Deletes the word before the caret (Ctrl+Backspace where the terminal reports it apart from Backspace)"),
     ("Ctrl+U / Ctrl+K", "Delete to the start or the end of the line"),
     ("Ctrl+_ / Ctrl+Y", "Undo or redo an edit in the composer (Ctrl+_ is what Ctrl+- and Ctrl+/ send on most terminals); "
@@ -60,14 +60,14 @@ SHORTCUTS: tuple[tuple[str, str], ...] = (
             "sends nothing more and brings your draft back"),
     ("Esc Esc", "With text, clears it and keeps it in this session's history; on an empty composer between turns, "
                 "lists your prompts to rewind to (/rewind does too)"),
-    ("Ctrl+V", "Attaches the clipboard image"),
+    ("Ctrl+V", "Attaches the clipboard image as an [Image #N] token at the caret"),
     ("Ctrl+O", "Opens the whole transcript with every detail (thinking, tool output, whole diffs) at its end, or, "
                "while Hermes asks something, the whole question (it answers nothing); q leaves it"),
     ("Ctrl+L", "Redraws the screen"),
     ("Ctrl+Z", "Suspends the OMH TUI to the shell, as Ctrl+Z does in any terminal program (Hermes stops with it); "
                "fg brings it back"),
     ("Ctrl+C", "Clears the composer, else interrupts a running turn; a second press within 2 s exits, "
-               "mid-turn too"),
+               "mid-turn too; a prompt held for its pasted image comes back to the composer"),
     ("Ctrl+D", "On an empty composer, exits; with text, deletes the character ahead"),
     ("↑ / ↓ or ← / → then Enter", "On an approval, highlight allow once, allow this session or (when Hermes "
                                   "offers it) always allow, and allow it, or the last row to deny and tell Hermes "

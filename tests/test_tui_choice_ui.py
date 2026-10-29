@@ -16,6 +16,8 @@ check the frames a terminal would show at every step.
 
 from __future__ import annotations
 
+from pathlib import Path
+import tempfile
 import time
 import unittest
 from unittest import mock
@@ -261,12 +263,15 @@ class HiddenComposerTests(unittest.TestCase):
         # A drop's answer, an image's remainder or a command's prefill is the person's draft, never an answer to Hermes.
         from omh.tui.slash import parse_slash
 
-        shot = {"attached": True, "path": "/h/images/shot.png", "name": "shot.png", "width": 4, "height": 3,
-                "remainder": "what is this?"}
+        home = tempfile.TemporaryDirectory()
+        self.addCleanup(home.cleanup)
+        Path(home.name, "shot.png").write_bytes(b"\x89PNG\r\n\x1a\n")
+        shot = {"attached": True, "path": str(Path(home.name, "shot.png")), "name": "shot.png", "width": 4,
+                "height": 3, "remainder": "what is this?"}
         arrivals = {
             "drop": (lambda app: app._on_drop(app.sid, "/Users/me/notes.txt", {"matched": False}), "/Users/me/notes.txt"),
             "drop refused": (lambda app: app._on_drop_refused("/Users/me/notes.txt"), "/Users/me/notes.txt"),
-            "image remainder": (lambda app: app._on_image_attached(app.sid, shot), "what is this?"),
+            "image remainder": (lambda app: app._on_image_attached(app.sid, shot), " [Image #1] what is this?"),
             "prefill": (lambda app: app._on_dispatch(parse_slash("/draft x"), {"type": "prefill", "message": "drafted"}, 0),
                         None),
         }
@@ -280,7 +285,7 @@ class HiddenComposerTests(unittest.TestCase):
                     self.assertEqual(app.composer.text, "")  # the answer field holds nothing it did not type
                     armed(app)
                     press(app, Key(ESCAPE))
-                    self.assertEqual(app.composer.text, "drafted" if appended is None else "my draft" + appended)
+                    self.assertEqual(app.composer.expanded(), "drafted" if appended is None else "my draft" + appended)
                     self.assertNotIn("notes.txt", str(client.answers))
 
     def test_a_text_only_question_keeps_the_composer_as_its_answer_field(self) -> None:

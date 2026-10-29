@@ -313,8 +313,8 @@ class TitleTests(unittest.TestCase):
             if "Rename" in row:  # never shortened past its cap, and never shown at the model's cost
                 self.assertIn(f"{title[:23]}… · deepseek/deepseek-v4.1-flash · ", row)
         self.assertIn("Rename every production… · ", rows[120])
-        self.assertNotIn("Rename", rows[91])  # 91 columns: the badge, and the right side without the title
-        self.assertIn("deepseek/deepseek-v4.1-flash", rows[91])  # the title went first; the model is still whole
+        self.assertNotIn("Rename", rows[89])  # 89 columns: the badge, and the right side without the title
+        self.assertIn("deepseek/deepseek-v4.1-flash", rows[89])  # the title went first; the model is still whole
         self.assertNotIn("Rename", rows[60])
         app, _client = make_app(cols=120)
         app.model = "deepseek/deepseek-v4.1-flash"

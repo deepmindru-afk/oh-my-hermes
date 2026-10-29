@@ -355,7 +355,7 @@ class WaitingTimeTests(unittest.TestCase):
         self.assertIn("1 tool · 9s", status())
         app._on_event(Event("message.complete", SID, {"text": "done"}))
         self.assertNotIn("tool", status())  # the snapshot still says live; the turn is over
-        self.assertTrue(status().startswith(INFO_INSET + "[ ⚚ OMH Native ]   "), status())  # the badge alone on the left
+        self.assertTrue(status().startswith(INFO_INSET + "[⚚ OMH Native]   "), status())  # the badge alone on the left
 
     def test_back_to_back_questions_are_one_wait(self) -> None:
         app, _client, now = self.clocked()

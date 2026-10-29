@@ -476,7 +476,7 @@ run and approval decision stays Hermes'; the screen is OMH's.
   composer and the info line on the bottom rows, the rows between them empty.
 - The info line under the composer, two cells in so it starts under the
   composer's text (on the edge on a terminal too small for the rules), is the
-  one line under it. On the left it starts with `[ ⚚ OMH Native ]` in the
+  one line under it. On the left it starts with `[⚚ OMH Native]` in the
   launch look's colours, then the session directory's git branch
   (`branch:<name> | !3 ?128`: tracked files changed, then untracked, each
   only when not zero; a detached HEAD by its short sha; nothing outside a
@@ -489,7 +489,7 @@ run and approval decision stays Hermes'; the screen is OMH's.
   and the error colour from 95 %; `ctrl+t effort` while no level is
   known). As the line narrows, the right side's fields shorten and then go
   first; then the branch's name is cut to `…` (24, then 12 cells); then the
-  badge shortens to `[ ⚚ OMH ]`, then `⚚`, then goes, and then the branch;
+  badge shortens to `[⚚ OMH]`, then `⚚`, then goes, and then the branch;
   the mode's label, the agent count and what the next key does (a question's
   or a picker's way out) keep their words until all of those are gone. Room
   the left side leaves goes to the right side's shortest fitting form, so a
@@ -861,6 +861,16 @@ run and approval decision stays Hermes'; the screen is OMH's.
   terminal's own notification: OSC 9 in iTerm2, WezTerm and Ghostty, OSC 777
   in foot and rxvt, the bell elsewhere (tmux among them, which flags the
   window); `OMH_TUI_BELL=0` keeps all of it quiet.
+- While a turn runs, a light goes round the screen's edge, clockwise, once
+  every four seconds, in the launch look's colours, and it is gone when the
+  turn ends. To keep the edge free, the rows are drawn one column in from
+  each side and the screen's last row stays blank, whether a turn runs or
+  not. It shows with motion on, at truecolor, on a screen 20×8 or larger.
+  `/glow off` turns it off and `/glow on` back on (`/glow` alone switches
+  it); the choice is saved beside the theme, as `glow` in
+  `<omh_home>/tui/theme.json`; `omh theme glow on|off` saves the same choice
+  from the shell. `OMH_TUI_GLOW=0` holds it off in one terminal whatever is
+  saved.
 - Each tool call is a block of its own on a rail in its state's
   colour, with a blank row between two calls and no header over a turn's
   calls: its state's mark (below), its name, and what it ran on (a path, a
@@ -1031,11 +1041,24 @@ run and approval decision stays Hermes'; the screen is OMH's.
     and the pager's footer bar are reversed, and every state keeps its
     glyph.
 - Images: drag an image file onto the terminal, press Ctrl+V for an image on
-  the clipboard, or type `/image <path>`. Each one shows as a chip on the row
-  above the input (`📎 shot.png 1280×720`) and goes with the next message you
-  send; Backspace on an empty composer removes the last one. Hermes reads and
-  queues the file; the OMH TUI keeps only its name. Dropping a file that is not
-  an image types Hermes' reference to it instead.
+  the clipboard, or type `/image <path>`. Each one is a token at the caret,
+  `[Image #1]`, in the text you type around it (`[Image #1] like this`).
+  Images are numbered upward through the TUI run, as Claude Code numbers
+  them, past any number a resumed session already holds. The OMH TUI keeps
+  the image's bytes in memory, and Hermes holds the image only while the
+  prompt it goes with is sent, so the image belongs to its token: whatever
+  deletes the token (Backspace into it, Cmd+Backspace, Ctrl+W, Ctrl+U,
+  Ctrl+K, Ctrl+C, Esc Esc) removes the image, and an undo puts both back.
+  The prompt keeps the `[Image #N]` labels in its text so the model can name
+  them, and the transcript lists under it each image Hermes accepted for it
+  (`⎿  [Image #1]`). A `!` line or a command that sends no prompt gives its
+  tokens back to the composer. Enter right after a paste or a drop waits for
+  Hermes to answer it, under `waiting for the image…`, and the prompt goes
+  with that image (a one-line text paste joins it the same way); Esc or
+  Ctrl+C meanwhile gives the prompt back. Typing `[Image #1]`
+  yourself attaches nothing, and a prompt recalled from history is plain
+  text. Dropping a file
+  that is not an image types Hermes' reference to it instead.
 - A line that starts with `!` is a shell command: while the composer holds
   one, its `❯` mark turns the shell family's amber and the info line says
   `! shell (not sent to the model)`. Sending it runs it through Hermes'
@@ -1119,17 +1142,17 @@ Esc closes it):
 | ↓ | On an empty composer while the agent view under the info line shows subagents, gives its rows the keys as the agent list; in a DAG run, to its folding tree |
 | ← / → | Move by a character; with Ctrl or Alt, by a word (Alt+B and Alt+F too) |
 | Home / End, Ctrl+A / Ctrl+E | Go to the start or the end of the line |
-| Backspace / Delete | Delete a character, or a paste chip whole; Backspace on an empty composer removes the last attached image |
+| Backspace / Delete | Delete a character, or a paste chip or an `[Image #N]` token whole; deleting a token removes its image |
 | Ctrl+W, Alt+Backspace, Ctrl+Backspace | Deletes the word before the caret (Ctrl+Backspace where the terminal reports it apart from Backspace) |
 | Ctrl+U / Ctrl+K | Delete to the start or the end of the line |
 | Ctrl+_ / Ctrl+Y | Undo or redo an edit in the composer (Ctrl+_ is what Ctrl+- and Ctrl+/ send on most terminals); a run of typed characters is one edit |
 | Esc | Closes the `/` or `@` menu; on an empty composer, interrupts a running turn (the activity row shows how long it has run, then `interrupting…`, and what you queued comes back to the composer unsent); cancels a rewind you picked; cancels an agent steer you picked and keeps what you typed; after an approval's tell row, sends nothing more and brings your draft back |
 | Esc Esc | With text, clears it and keeps it in this session's history; on an empty composer between turns, lists your prompts to rewind to (`/rewind` does too) |
-| Ctrl+V | Attaches the clipboard image |
+| Ctrl+V | Attaches the clipboard image as an `[Image #N]` token at the caret |
 | Ctrl+O | Opens the whole transcript with every detail (thinking, tool output, whole diffs) at its end, or, while Hermes asks something, the whole question (it answers nothing); q leaves it |
 | Ctrl+L | Redraws the screen |
 | Ctrl+Z | Suspends the OMH TUI to the shell, as Ctrl+Z does in any terminal program (Hermes stops with it); fg brings it back |
-| Ctrl+C | Clears the composer, else interrupts a running turn; a second press within 2 s exits, mid-turn too |
+| Ctrl+C | Clears the composer, else interrupts a running turn; a second press within 2 s exits, mid-turn too; a prompt held for its pasted image comes back to the composer |
 | Ctrl+D | On an empty composer, exits; with text, deletes the character ahead |
 | ↑ / ↓ or ← / → then Enter | On an approval, highlight allow once, allow this session or (when Hermes offers it) always allow, and allow it, or the last row to deny and tell Hermes what to do instead; Enter alone denies and stops the running turn |
 | `d`, `n` | On an approval, deny and stop the running turn |
@@ -1267,7 +1290,7 @@ and Shift+Tab move the highlight, Space folds a box, d shows or hides Node
 details; it sends nothing anywhere; q or Esc closes it), `/bots` (the bot
 board, also Ctrl+S, described below), `/copy`, `/image`,
 `/paste` (the clipboard
-image), `/theme`, `/omh-model`, `/rewind`, `/todos` (the session's whole
+image), `/theme`, `/glow`, `/omh-model`, `/rewind`, `/todos` (the session's whole
 plan), `/model` (alone, a picker of the models Hermes offers this session,
 from Hermes' `model.options`, opened on the session's model, marked `●`, which
 comes first when no provider lists it, and with the highlight's place in the
@@ -1897,7 +1920,7 @@ Agent/maintainer preview example:
 ```sh
 omh setup --model-setup \
   --confirm-model openai-codex/gpt-6.1-sol \
-  --confirm-model google/gemini-3.1-pro \
+  --confirm-model google/gemini-4-argon \
   --model-alias main=openai-codex/gpt-6.1-sol \
   --no-interactive --json
 ```
@@ -1938,19 +1961,19 @@ The shipped catalog is editorial policy, not benchmark output:
 | `unspecified-high` | Default working model | GPT-6.1 Sol (`medium`), Claude Opus 5.5 (`medium`), Kimi K3.1 Pro (`medium`) |
 | `unspecified-low` | Cheaper fallback | GLM 5.3 (`low`), DeepSeek V4.1 Flash (`low`), GPT-6.1 Sol (`low`), Claude Sonnet 5.5 (`low`) |
 | `quick` | Short tasks | GLM 5.3 Flash (`low`), GPT-6 Luna (`low`), Claude Haiku 5.5 (`low`), Kimi K3.1 Pro (`low`) |
-| `writing` | Prose and docs | Claude Opus 5.5 (`medium`), Claude Sonnet 5.5 (`medium`), Kimi K3.1 Pro (`medium`), Gemini 3.1 Pro (`medium`) |
-| `visual-engineering` | Frontend and visual | Claude Opus 5.5 (`high`), Claude Fable 5.1 (`high`), Gemini 3.1 Pro (`high`), Kimi K3.1 Pro (`high`) |
-| `artistry` | Unconventional work | Gemini 3.1 Pro (`high`), Claude Opus 5.5 (`high`), Claude Fable 5.1 (`high`), Kimi K3.1 Pro (`high`) |
+| `writing` | Prose and docs | Claude Opus 5.5 (`medium`), Claude Sonnet 5.5 (`medium`), Kimi K3.1 Pro (`medium`), Gemini 4 Argon (`medium`) |
+| `visual-engineering` | Frontend and visual | Claude Opus 5.5 (`high`), Claude Fable 5.1 (`high`), Gemini 4 Argon (`high`), Kimi K3.1 Pro (`high`) |
+| `artistry` | Unconventional work | Gemini 4 Argon (`high`), Claude Opus 5.5 (`high`), Claude Fable 5.1 (`high`), Kimi K3.1 Pro (`high`) |
 | `capable` | Strong general work | Claude Opus 5.5 (`medium`), GPT-6.1 Sol (`medium`), Claude Fable 5.1 (`medium`), Kimi K3.1 Pro (`medium`) |
 | `simple-work` | Small everyday tasks | GPT-6 Luna (`low`), Claude Haiku 5.5 (`low`), DeepSeek V4.1 Flash (`low`) |
 | `deep-work` | Long tasks at frontier depth | Claude Opus 5.5 (`max`), GPT-6.1 Sol (`max`) |
-| `google-search` | Research grounded in Google Search | Gemini 3.1 Pro (`medium`), GPT-6.1 Sol (`medium`), Claude Opus 5.5 (`medium`) |
-| `x-search` | Live search on X | Grok 4.7 (`high`), Kimi K3.1 Pro (`high`), Gemini 3.1 Pro (`high`) |
+| `google-search` | Research grounded in Google Search | Gemini 4 Argon (`medium`), GPT-6.1 Sol (`medium`), Claude Opus 5.5 (`medium`) |
+| `x-search` | Live search on X | Grok 4.7 (`high`), Kimi K3.1 Pro (`high`), Gemini 4 Argon (`high`) |
 | `review` | A different model tries to break the diff | GPT-6.1 Sol (`xhigh`), Claude Opus 5.5 (`xhigh`), Kimi K3.1 Pro (`xhigh`) |
 | `swarm` | Many parallel workers on separate slices | DeepSeek V4.1 Flash (`low`), GLM 5.3 Flash (`low`), GPT-6 Luna (`low`) |
 | `forensics` | Root-causing a live symptom or a captured trace | GPT-6 Astra (`xhigh`), Claude Opus 5.5 (`xhigh`), Kimi K3.1 Pro (`xhigh`) |
-| `synthesize` | Merging many results into one answer | Claude Opus 5.5 (`xhigh`), GPT-6.1 Sol (`xhigh`), Gemini 3.1 Pro (`high`) |
-| `x_platform_data` affinity | X-platform data affinity | Grok Build 0.1, Kimi K3.1 Pro, Gemini 3.1 Pro |
+| `synthesize` | Merging many results into one answer | Claude Opus 5.5 (`xhigh`), GPT-6.1 Sol (`xhigh`), Gemini 4 Argon (`high`) |
+| `x_platform_data` affinity | X-platform data affinity | Grok Build 0.1, Kimi K3.1 Pro, Gemini 4 Argon |
 | Shared final order (`last_resort.any`) | Last resort when a chain is exhausted | Claude Opus 5.5 (`medium`), GPT-6.1 Sol (`medium`) |
 <!-- omh:model-chain-table:end -->
 
@@ -2877,6 +2900,7 @@ omh theme list               # plain listing, always (the scriptable surface)
 omh theme use crimson        # select one directly (also accepts omh-crimson)
 omh theme use crimson --dry-run
 omh theme status             # the active theme, which source decided it, and where it is saved
+omh theme glow off           # the working glow off in every later OMH TUI session (on, or alone to show it)
 ```
 
 Bare `omh theme` opens a picker: up/down arrows (or `j`/`k`) move the cursor,
@@ -2904,8 +2928,9 @@ Rules worth knowing:
   session opens, and `/theme auto|light|dark` chooses that background for
   the open session (see [The OMH TUI](#the-omh-tui)).
 - **The launch look is saved in the same record.** `/theme` in the OMH TUI
-  writes `launch` beside `theme` in `<omh_home>/tui/theme.json`; either
-  write keeps the other.
+  writes `launch` beside `theme` in `<omh_home>/tui/theme.json`, and
+  `/glow` or `omh theme glow` writes `glow` there; each write keeps the
+  others.
 - **Bare `hermes` keeps its own skin.** `display.skin` is yours; OMH reads it
   only for the fallback above and never writes it.
 

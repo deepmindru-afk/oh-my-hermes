@@ -107,6 +107,7 @@ COMMANDS: tuple[SlashCommand, ...] = (
     SlashCommand("paste", LOCAL, "Attach the clipboard image to the next message (also Ctrl+V)"),
     SlashCommand("theme", LOCAL, "Pick the launch look (a picker), or /theme <look|palette|auto|light|dark>",
                  echo_bare=False),
+    SlashCommand("glow", LOCAL, "Turn the light that goes round the screen during a turn on or off (/glow on|off)"),
     SlashCommand("omh-model", LOCAL, "Pick OMH model chains"),
     SlashCommand("topup", LOCAL, "Nous credit balance and the top-up link (Hermes' /topup)"),
     SlashCommand("reload-skills", LOCAL, "Re-scan Hermes' skills, so one installed since the start runs as /<name>",
@@ -176,7 +177,8 @@ class SlashInvocation:
     person had picked when they sent it (the app's `Rewind`), or None: a
     prompt it sends goes in place of the picked one while that very rewind is
     still picked. It is matched by identity, so it takes no part in `==` or
-    `hash()`.
+    `hash()`. `images` are the images typed with the command, which the
+    prompt it sends goes with; nor do they take part.
     """
 
     name: str
@@ -185,6 +187,7 @@ class SlashInvocation:
     for_plan_mode: bool = False
     held: bool = False
     rewind: object | None = field(default=None, compare=False)
+    images: tuple[object, ...] = field(default=(), compare=False)  # the app's images a prompt it sends goes with
 
     @property
     def text(self) -> str:

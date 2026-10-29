@@ -500,7 +500,7 @@ class InfoLineInsetTests(unittest.TestCase):
         composer, info = screen[-3], screen[-1]
         self.assertTrue(composer.startswith(PROMPT), screen)
         self.assertEqual(info.index("["), len(PROMPT))  # the badge under the composer's text, two cells in
-        self.assertTrue(info.startswith("  [ ⚚ OMH Native ]   "), info)  # the badge alone on the left
+        self.assertTrue(info.startswith("  [⚚ OMH Native]   "), info)  # the badge alone on the left
         self.assertEqual(line_width(app._info_line(80)), 80)  # the right side still ends on the last cell
 
     def test_a_tiny_terminal_draws_no_rules_and_the_line_starts_on_the_edge(self) -> None:

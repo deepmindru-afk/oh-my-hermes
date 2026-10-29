@@ -459,6 +459,26 @@ class MixtureCategoryProjectionTest(unittest.TestCase):
                 with self.subTest(spelling=spelling, effort=effort):
                     self.assertEqual(mixture_category_for(spelling, effort, parent_model="gpt-6.1-sol"), "")
 
+    def test_gemini_4_argon_holds_the_gemini_slots_and_3_1_pro_labels_nothing(self):
+        # Argon took every Gemini 3.1 Pro slot on 2026-10-28: it heads
+        # google-search at `medium` and artistry at `high`, under every
+        # spelling, and costs out at the introductory list price with the
+        # 0.05 cache ratio. The retired id keeps its price and families for
+        # an operator override but labels no category.
+        cost = hermes_delegation_module._approximate_cost_usd
+        for spelling in ("gemini-4-argon", "google/gemini-4-argon", "gemini-4-argon-2026-10-13"):
+            with self.subTest(spelling=spelling):
+                self.assertEqual(mixture_category_for(spelling, "medium", parent_model="gpt-6.1-sol"), "google-search")
+                self.assertEqual(mixture_category_for(spelling, "high", parent_model="gpt-6.1-sol"), "artistry")
+                self.assertAlmostEqual(cost(spelling, 1_000_000, 1_000_000, 1_000_000), 2.0 + 10.0 + 0.10)
+                self.assertIs(provider_serves_alias(spelling, "google"), True)
+                self.assertIs(provider_serves_alias(spelling, "anthropic"), False)
+        for effort in ("medium", "high"):
+            with self.subTest(retired_effort=effort):
+                self.assertEqual(mixture_category_for("gemini-3.1-pro", effort, parent_model="gpt-6.1-sol"), "")
+        self.assertAlmostEqual(cost("gemini-3.1-pro", 1_000_000, 1_000_000, 0), 14.0)
+        self.assertIs(provider_serves_alias("gemini-3.1-pro", "google"), True)
+
     def test_gpt_61_terra_is_priced_and_provider_mapped_but_unchained(self):
         # Onboarded 2026-10-27 ahead of any chain placement: an operator chain
         # naming it costs out at OpenAI's list price and gets a provider

@@ -16,7 +16,12 @@ from typing import Final
 # In two parts so the child section can make the criteria conditional
 # without a second copy of the rule.
 _GOAL_ECHO_RESTATE: Final[str] = "Before using tools, restate the overall goal, your deliverable, and the numbered criteria"
-_GOAL_ECHO_CONFLICT: Final[str] = "If they conflict with your brief, stop and report the conflict instead of guessing."
+# The brief outranks the repository's own workflow rules. "Stop if they
+# conflict with your brief" made the agent halt whenever a caller's
+# instruction (no branch, no commit) met an AGENTS.md convention (branch
+# first), so a task was declined before any edit. A stop is kept only for a
+# brief that contradicts itself.
+_GOAL_ECHO_CONFLICT: Final[str] = "Your brief outranks repo workflow rules; stop and report only a self-contradiction."
 
 GOAL_ECHO_PROTOCOL: Final[str] = f"{_GOAL_ECHO_RESTATE}. {_GOAL_ECHO_CONFLICT}"
 

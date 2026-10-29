@@ -869,8 +869,9 @@ Rules, all applied at freeze time:
 - **Unit prompt protocol.** Every dispatched unit prompt carries a fixed
   verification discipline (`src/coding/unit_prompt_protocol.py`): the
   subagent first echoes the goal, its deliverable, and the numbered
-  completion criteria back before any tool use (and stops to report a
-  conflict instead of guessing); "done" is pre-declared as numbered
+  completion criteria back before any tool use (the brief outranks the
+  repository's workflow rules, and only a brief that contradicts itself is
+  stopped on and reported); "done" is pre-declared as numbered
   criteria derived from the frozen contract (boundary confinement, the
   unit's integration checks, committed work); and verification is
   mandatory-but-bounded — exactly one full pass is the floor, a finding

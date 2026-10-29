@@ -6,8 +6,53 @@ All notable changes will be documented here.
 
 ![Sprite Forge patch notes](https://raw.githubusercontent.com/rlaope/oh-my-hermes/main/assets/omh-sprite-forge-patch-notes.png)
 
+- **`/glow off` turns the OMH TUI's working glow off, and it now shows in a
+  short session too.** `/glow on|off` (alone, it switches) is saved beside
+  the theme under the OMH home, so it holds in every later session;
+  `omh theme glow on|off` saves the same choice from the shell, and
+  `omh theme glow` shows it. `OMH_TUI_GLOW=0` still holds it off in one
+  terminal. The light used to be
+  drawn only once the session filled the screen; it now goes round a
+  session of any length, over the blank rows under it. A prompt's band no
+  longer runs into the right margin the glow keeps: it ends one column in,
+  as it starts one column in on the left.
+
+- **A light goes round the OMH TUI's screen while a turn runs.** It runs
+  along the terminal's whole edge, clockwise, once every four seconds, with
+  a round head and a trail in the launch look's logo colours that fades
+  out; nothing else of the edge is drawn, and it is gone when the turn
+  ends. It moves by the clock and repaints the edge every 0.05 s, so it
+  glides round corners instead of stepping. It needs the truecolor depth
+  with motion on; `OMH_TUI_GLOW=0` turns it off. To keep the edge free, the
+  TUI draws its rows one column in from each side and keeps the screen's
+  last row blank, whether a turn runs or not, so nothing moves as the light
+  comes and goes. The light is taken off before anything scrolls, so none
+  of it reaches the scrollback.
+
+- **Gemini 4 Argon replaces Gemini 3.1 Pro in the shipped chains.** Google
+  made Argon generally available on 2026-10-13. Every slot 3.1 Pro held now
+  names `gemini-4-argon` at the same effort: `writing` and `google-search`
+  at `medium`; `visual-engineering`, `artistry`, `x-search`, and
+  `synthesize` at `high`; and the X-platform affinity. The id has an exact
+  contract read from ai.google.dev: 1M unified context, 65,536 output per
+  synchronous request (1M with long decode), and a `low`/`medium`/`high`
+  thinking ladder with `medium` as the default and no off switch. `off`
+  and `minimal` are raised to `low` on record; `xhigh` and `max` pass
+  through, because nothing documented sits above `high`. Dated snapshots
+  project onto it. Cost estimates use the 2/10 list price with 0.10
+  cached input, which rises to 4/20 on 2026-12-01. Provider checks know
+  that Google's API and OpenRouter serve it. On Hermes, 3.1 Pro's `medium`
+  slots were sent as `low`, because Hermes allows only `low` and `high` for
+  a Gemini 3 Pro id. Argon's `medium` is sent as `medium`. Gemini 3.1 Pro
+  is retired under the superseded-generation rule. It stays recognized,
+  priced, and provider-mapped, so `omh model-chains set` can still name
+  it. The `gemini` family calibration applies unchanged. Both site pages,
+  the generated install table, and the model-setup skill say so. This is
+  an editorial change (owner decision) and has not been measured: no
+  served Gemini route was available to probe.
+
 - **Six more model categories you can route a subagent to.** `google-search`
-  (Gemini 3.1 Pro first, for research grounded in Google Search), `x-search`
+  (Gemini 4 Argon first, for research grounded in Google Search), `x-search`
   (Grok 4.7 first, for live search on X), `review` (GPT-6.1 Sol at xhigh, so
   a different model tries to break the diff), `swarm` (DeepSeek V4.1 Flash
   at low, for many parallel workers), `forensics` (GPT-6 Astra at xhigh, for
@@ -21,7 +66,7 @@ All notable changes will be documented here.
   `architect`'s), so an unrouted child on those models is still labelled
   with the earlier name; a lane routed through `omh_delegate_route` keeps its
   own. Six HUD labels move with the new chains: DeepSeek V4.1 Flash at low
-  now reads `swarm`, Gemini 3.1 Pro at medium `google-search`, Kimi K3.1 Pro
+  now reads `swarm`, Gemini 4 Argon at medium `google-search`, Kimi K3.1 Pro
   at high `x-search` and at xhigh `review`, and GPT-6.1 Sol at xhigh and
   Grok 4.7 at high, which had no label, read `review` and `x-search`.
 - **Selecting the transcript no longer copies its left bar, and the pager
@@ -244,7 +289,7 @@ All notable changes will be documented here.
   name in the skill hue, other commands keep that hue and their descriptions
   are muted. A prompt you sent runs on a band to the right edge, tinted by
   the launch look. The one line under the composer starts with
-  `[ ⚚ OMH Native ]` and shows the session directory's git branch with its
+  `[⚚ OMH Native]` and shows the session directory's git branch with its
   changed and untracked counts, read off the screen's thread, first on its
   right. The working row, the
   plan and the composer get a blank row between them where the terminal has
@@ -295,6 +340,21 @@ All notable changes will be documented here.
   backfill, a reply pointer or an attachment note still makes it ask. A
   closed request beside a character that folding removes entirely
   (U+2017, U+203E, a bare combining mark) is no longer admitted.
+- **An image you attach in the OMH TUI is an `[Image #N]` token in the text,
+  as in Claude Code.** Ctrl+V, a dropped file and `/image` put the token at
+  the caret, in place of the `📎 shot.png  Backspace removes` row above the
+  composer. Images are numbered upward through the TUI run, past any number a
+  resumed session already holds. The TUI keeps the image's bytes and Hermes
+  holds it only while its prompt is sent: the prompt stages exactly its own
+  images once Hermes has admitted the turn before it. So deleting the token
+  (Backspace, Cmd+Backspace, Ctrl+W, Ctrl+U, Ctrl+K, Ctrl+C, Esc Esc) removes
+  the image; before, Cmd+Backspace cleared the text and left the image
+  attached. An undo puts both back, and so does Up/Down through history over
+  a draft. The sent prompt keeps the labels and lists under its echo each
+  image whose staging Hermes answered (`⎿  [Image #1]`). A queued prompt, and each command in
+  flight, goes with its own images. A `!` line or a command that sends no
+  prompt gives its tokens back to the composer, with a notice. Typing the
+  label yourself attaches nothing.
 - **A queued prompt can be sent into the running turn now, and one line sits
   under the composer.** As in Claude Code, a muted row under the queued
   prompts says `ctrl+enter to send now · ↑ to edit` while a turn runs; on an
@@ -308,12 +368,12 @@ All notable changes will be documented here.
   read when the turn is stopped is queued again, with a notice. The info line
   no longer says `/steer <text> steers`; `/steer <text>` still works and
   stays in `/help` and the `?` list. The branch row is gone: the info line
-  starts with `[ ⚚ OMH Native ]` and the branch, then the mode and the keys
+  starts with `[⚚ OMH Native]` and the branch, then the mode and the keys
   that matter, with the title, model, context and effort on the right, and
   the row goes back to the transcript. Between turns it no longer says
   `? for shortcuts`: the launch card names `? every shortcut`, and `?` still
   opens the list. As the line narrows the right side's fields go first, then
-  the branch's name is cut, then the badge shortens to `[ ⚚ OMH ]` and `⚚`;
+  the branch's name is cut, then the badge shortens to `[⚚ OMH]` and `⚚`;
   the mode's label and a question's or picker's keys keep their words. The
   start-up query now asks every terminal for its kitty keyboard flags
   (`CSI ? u`): one that answers gets them pushed, Otty with its
@@ -362,6 +422,65 @@ All notable changes will be documented here.
   waits on the default-model check, which before took its place and lost
   it. A prompt held for that check is never replaced: the queue waits
   behind it.
+- **`omh uninstall` removes an OMH home under `/var` or `/tmp` on macOS
+  again (#2359, reported and fixed by @Kenmege).** The uninstall guard that
+  keeps a home configured through a symlink walked every ancestor of the
+  configured path, and on macOS `/var`, `/tmp` and `/etc` are themselves
+  root-owned links into `/private`. Every home under them, including the
+  per-user temporary roots in `/var/folders`, was therefore kept with
+  "passes through a symlink or directory junction". A root-owned link
+  directly under the filesystem root now counts as an OS alias; a link
+  anywhere below it, or one a user owns, still refuses, and Windows never
+  takes the exemption. The same rule applies to the menu-bar refresh that
+  `omh update` skips for a linked home.
+- **Delegated agents no longer stop on a repository convention the brief
+  overrides.** The goal echo-back told an agent to stop whenever its brief
+  conflicted with anything, so a brief saying "do not create a branch" met
+  `AGENTS.md`'s "branch first" and the agent declined without making a
+  change. The brief now outranks repository workflow rules, and only a
+  brief that contradicts itself is stopped on.
+- **product-ab prices cached input once.** Hermes' usage file counts cache
+  reads inside `input_tokens` on the Codex route, and the lane priced them
+  again as cache reads, so one task read $35.77 instead of $4.98. The control
+  model moves from the retired `gpt-5.6-sol` to `gpt-6.1-sol`.
+- **An image pasted or dropped right before Enter goes with that prompt.**
+  The OMH TUI used to send the text and leave the image in the next draft
+  when Enter beat Hermes' answer to the paste. Now the prompt waits for the
+  answer and goes with the image, as in Claude Code, and the composer shows
+  a muted `waiting for the image…` row meanwhile, with the seconds after
+  three. A one-line text paste sent at once joins its prompt the same way.
+  Esc, or Ctrl+C, gives the held prompt back. A paste Hermes never answers
+  holds the prompt only until it expires.
+- **`omh doctor` and the probe read the skill pack you actually run, on a
+  migrated install too (#2358, reported by @yqm-307; #2378, reported by
+  @mazzy89).** A managed install serves its skills from a generation behind
+  the `current` pointer, and a host migrated from the 3.x layout keeps
+  `~/.omh/skills` as a frozen copy. Three read-only diagnostics looked at
+  that copy instead. The `workflow_engine_reach` advice measured it, so a
+  migrated host was told `dag-ulw` was not installed (it postdates the
+  copy) and a host without the copy was told no install existed; neither
+  report could change, since `omh update` never touches the copy. It now
+  measures the pack doctor resolved, and an unmeasurable install names the
+  file or directory that was missing. The plugin's standalone probe matched
+  only the copy's path in `config.yaml`, which registers the pointer, so it
+  reported the managed skills unregistered; it now accepts the pointer, a
+  generation's pack, the recorded pack and the copy, matched by real path,
+  and checks for `omh-routing` in the pack in use. The chat status card
+  carried the same mistake. Separately, `omh doctor` run from the 3.x
+  bootstrap venv stopped at once with `support refuses symlink component:
+  .../generations/bootstrap-legacy/skills`, because it read the support
+  files through that generation's link and the support reader refuses every
+  link. Doctor now reads through the link the way `omh update` does, so the
+  full report prints. A link the installer would also refuse is a blocking
+  `skills_dir_link` check that names it, and any other refused path fails
+  `local_modifications` and `guidance_projection` with the reason, while
+  every other check still runs. The advice still never moves doctor's
+  status or exit code.
+- **product-ab gives the OMH arm the same reach as the Hermes arm.** The OMH
+  arm's unit was scoped to `src/` and `tests/` while the Hermes arm's prompt
+  set no limit, so a task whose fix regenerates `docs/WORKFLOWS.md` or a
+  skill body was one only the Hermes arm was allowed to finish. The unit
+  scope is now the whole checkout.
 
 ## 4.0.3 - 2026-10-27
 

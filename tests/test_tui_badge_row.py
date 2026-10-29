@@ -1,4 +1,4 @@
-"""The info line's badge and branch: `[ ⚚ OMH Native ]` at its left end, the session's git branch on its right
+"""The info line's badge and branch: `[⚚ OMH Native]` at its left end, the session's git branch on its right
 (owner's requests of 2026-10-27, made one line on 2026-10-28)."""
 
 from __future__ import annotations
@@ -210,18 +210,18 @@ class LongBranchTests(unittest.TestCase):
     def test_every_scene_at_every_width(self) -> None:
         self.assertEqual(len(self.BRANCH), 63)
         expected = {
-            ("idle", 40): "  [ ⚚ OMH ]  branch:feature/rea… | !3 ?2",
-            ("idle", 80): "  [ ⚚ OMH Native ]  branch:feature/really-long-bra… | !3 ?2              ctx 50%",
-            ("idle", 120): "  [ ⚚ OMH Native ]  branch:feature/really-long-branch-name-for-the-steer-key-hint-work-063 | !3 ?2"
-                           "               ctx 50%",
+            ("idle", 40): "  [⚚ OMH]  branch:feature/rea… | !3 ?2",
+            ("idle", 80): "  [⚚ OMH Native]  branch:feature/really-long-bra… | !3 ?2                ctx 50%",
+            ("idle", 120): "  [⚚ OMH Native]  branch:feature/really-long-branch-name-for-the-steer-key-hint-work-063 | !3 ?2"
+                           "   ctx 50% · effort high",
             ("plan", 40): "  ⏸ plan mode on (⇧⇥ to cycle)   ctx 50%",
-            ("plan", 80): "  [ ⚚ OMH Native ]  branch:feature/rea… | !3 ?2  ⏸ plan mode on (⇧⇥ to cycle)",
-            ("plan", 120): "  [ ⚚ OMH Native ]  branch:feature/really-long-bra… | !3 ?2  ⏸ plan mode on (⇧⇥ to cycle)"
-                           "          ctx 50% · effort high",
-            ("busy-queue", 40): "  [ ⚚ OMH ]  branch:feature/rea… | !3 ?2",
-            ("busy-queue", 80): "  [ ⚚ OMH Native ]  branch:feature/really-long-bra… | !3 ?2              ctx 50%",
-            ("busy-queue", 120): "  [ ⚚ OMH Native ]  branch:feature/really-long-branch-name-for-the-steer-key-hint-work-063"
-                                 " | !3 ?2               ctx 50%",
+            ("plan", 80): "  [⚚ OMH Native]  branch:feature/rea… | !3 ?2  ⏸ plan mode on (⇧⇥ to cycle)",
+            ("plan", 120): "  [⚚ OMH Native]  branch:feature/really-long-bra… | !3 ?2  ⏸ plan mode on (⇧⇥ to cycle)"
+                           "            ctx 50% · effort high",
+            ("busy-queue", 40): "  [⚚ OMH]  branch:feature/rea… | !3 ?2",
+            ("busy-queue", 80): "  [⚚ OMH Native]  branch:feature/really-long-bra… | !3 ?2                ctx 50%",
+            ("busy-queue", 120): "  [⚚ OMH Native]  branch:feature/really-long-branch-name-for-the-steer-key-hint-work-063"
+                                 " | !3 ?2   ctx 50% · effort high",
         }
         for (scene, cols), row in expected.items():
             with self.subTest(scene=scene, cols=cols):
@@ -244,26 +244,26 @@ class BottomLineTests(unittest.TestCase):
     def test_the_badge_then_the_branch_on_the_left_and_the_fields_on_the_right(self) -> None:
         text = self.line(130)
         self.assertEqual(len(text), 130)
-        self.assertTrue(text.startswith("[ ⚚ OMH Native ]  branch:omh/terminology-unification | !3 ?128   "), text)
+        self.assertTrue(text.startswith("[⚚ OMH Native]  branch:omh/terminology-unification | !3 ?128   "), text)
         self.assertTrue(text.endswith("   deepseek-v4.1-flash · ctx 12% · effort high"), text)
 
     def test_the_fields_go_first_then_the_branch_name_then_the_badge(self) -> None:
         branch = "branch:omh/terminology-unification | !3 ?128"  # 44 cells
         cut24, cut12 = "branch:omh/terminology-unifica… | !3 ?128", "branch:omh/termino… | !3 ?128"  # 41 and 29
-        badge = "[ ⚚ OMH Native ]  "  # the badge's 16 cells and 2; `[ ⚚ OMH ]` is 9, `⚚` 1; the right side 3 away
+        badge = "[⚚ OMH Native]  "  # the badge's 14 cells and 2; `[⚚ OMH]` is 7, `⚚` 1; the right side 3 away
         widths = {
-            108: (badge + branch, "deepseek-v4.1-flash · ctx 12% · effort high"),
-            107: (badge + branch, "ctx 12% · effort high"),
-            86: (badge + branch, "ctx 12% · effort high"),
-            85: (badge + branch, ""),  # the fields go first
-            62: (badge + branch, ""),
-            61: (badge + cut24, ""),  # then the branch's name is cut, before the badge shortens
-            59: (badge + cut24, ""),
-            58: (badge + cut12, ""),
-            47: (badge + cut12, ""),
-            46: ("[ ⚚ OMH ]  " + cut12, ""),  # then the badge
-            40: ("[ ⚚ OMH ]  " + cut12, ""),
-            39: ("⚚  " + cut12, ""),
+            106: (badge + branch, "deepseek-v4.1-flash · ctx 12% · effort high"),
+            105: (badge + branch, "ctx 12% · effort high"),
+            84: (badge + branch, "ctx 12% · effort high"),
+            83: (badge + branch, ""),  # the fields go first
+            60: (badge + branch, ""),
+            59: (badge + cut24, ""),  # then the branch's name is cut, before the badge shortens
+            57: (badge + cut24, ""),
+            56: (badge + cut12, ""),
+            45: (badge + cut12, ""),
+            44: ("[⚚ OMH]  " + cut12, ""),  # then the badge
+            38: ("[⚚ OMH]  " + cut12, ""),
+            37: ("⚚  " + cut12, ""),
             32: ("⚚  " + cut12, ""),
             31: (cut12, ""),
         }

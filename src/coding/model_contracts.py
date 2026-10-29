@@ -1240,6 +1240,119 @@ _KIMI_K3_1_PRO_HIGHSPEED: Final[dict[str, object]] = {
     },
 }
 
+# Gemini 4 Argon (Google, GA 2026-10-13), the first Gemini exact contract and
+# the successor of Gemini 3.1 Pro in every shipped chain. The ladder is
+# `low`/`medium`/`high` with `medium` the default, and thinking cannot be
+# turned off, so `off` and `minimal` are raised to the floor `low` on record.
+# Rungs above `high` (`xhigh`, `max`, `ultra`) are deliberately NOT listed as
+# unsupported: the raise rule picks the lowest documented rung above the
+# request and there is none, so listing them would lower `xhigh` to the
+# floor. Google documents no value for them; they pass through on record,
+# and the Hermes surface note says what that build sends instead.
+_GEMINI_4_ARGON: Final[dict[str, object]] = {
+    "schema_version": MODEL_CONTRACT_SCHEMA_VERSION,
+    "model_id": "gemini-4-argon",
+    "reasoning_mode": "thinking",
+    "service_tier": "standard",
+    "family": "gemini",
+    "generation": "gemini-4",
+    # The Gemini API changelog entry is dated October 13, 2026.
+    "released": "2026-10-13",
+    "rollout": (
+        "generally available on the Gemini API; not on the free tier; a released id is not "
+        "account-level readiness evidence"
+    ),
+    # The model page lists one stable id and no preview, latest, or dated
+    # variant.
+    "served_ids": {
+        "first_party": "gemini-4-argon",
+        "openrouter": "google/gemini-4-argon",
+    },
+    "knowledge_cutoff": "",
+    "context_window_tokens": 1_048_576,
+    "max_input_tokens": 1_048_576,
+    "max_output_tokens": 65_536,
+    "limits_note": (
+        "1,048,576 tokens is a unified input and output limit; a synchronous request returns up to "
+        "65,536 output tokens, and long decode (`background: true` with `max_output_tokens` above "
+        "65,536) raises that to 1,048,576; `max_output_tokens` is a hard stop on thinking and "
+        "output together, and the migration guide recommends at least 32,768 because the model "
+        "can spend more of the limit on thinking"
+    ),
+    "reasoning_efforts": ("low", "medium", "high"),
+    "effort_floor": "low",
+    "effort_default": "medium",
+    "unsupported_efforts": {
+        "off": "thinking cannot be turned off; the thinking table lists the default as `On (medium)`",
+        "minimal": "not a documented `thinking_level`",
+    },
+    "tool_calling": {
+        "api": "generate_content",
+        "note": (
+            "function calling is supported; send the full history back, thought signatures "
+            "included, on every multi-turn and function-calling request"
+        ),
+    },
+    "unsupported_parameters": ("temperature", "top_p", "top_k"),
+    "unsupported_parameters_note": (
+        "`temperature`, `top_p`, and `top_k` are ignored when sent; explicit caching "
+        "(`cachedContents`) is not supported, only implicit caching"
+    ),
+    "runtime_mechanisms": {
+        "thought_signature_passback": "documented_not_observed",
+        "long_decode": "documented_not_observed",
+        "implicit_caching": "documented_not_observed",
+    },
+    "surface_notes": {
+        "hermes": (
+            "the installed Hermes Agent (v0.22.5 bf0203a794) sends `thinkingLevel` only, maps "
+            "`none`/`minimal` to `low` and `xhigh`/`max`/`ultra` to `high`, and on direct Google "
+            "endpoints only adds a long-decode output budget (262,144 at `xhigh`, 1,048,576 at "
+            "`max` and `ultra`); observed in the Hermes source, not a vendor statement"
+        ),
+        "thinking_budget": (
+            "Google's guides disagree: AI Studio maps `thinking_budget` to the nearest level with "
+            "a warning, Vertex AI returns HTTP 400 for it and for `MINIMAL`; send `thinkingLevel` "
+            "only; official"
+        ),
+        "gemini_cli": (
+            "gemini-cli main (b8fa817, 2026-10-28) has no Argon id or alias and its README says "
+            "it is \"Not optimized for Gemini 4+\"; official-client"
+        ),
+        "openrouter": (
+            "no `-preview` spelling is listed anywhere; OpenRouter's floating "
+            "`~google/gemini-pro-latest` now points at `google/gemini-4-argon` (read 2026-10-28); "
+            "community"
+        ),
+    },
+    "documented_traits": (
+        "thinking is always on; `thinking_level` accepts `low`, `medium`, and `high`, and "
+        "`medium` is the default and the level recommended for complex code and agentic work",
+        "it can spend more of `max_output_tokens` on thinking than earlier models",
+        "hard prompts can take several minutes, so client timeouts need room",
+    ),
+    # Google list price (ai.google.dev/gemini-api/docs/pricing, read
+    # 2026-10-28), Standard paid tier, no prompt-size tier. The rates step up
+    # on 2026-12-01; the cache-read ratio is 0.05 in both periods.
+    "pricing_usd_per_mtok": {
+        "input": 2.0,
+        "cached_input": 0.10,
+        "output": 10.0,
+        "from_2026_12_01": "input 4.00, cached input 0.20, output 20.00",
+        "batch": "half of the standard rates",
+    },
+    "data_handling": _DATA_HANDLING_NOT_READ,
+    "sources": (
+        "https://ai.google.dev/gemini-api/docs/models/gemini-4-argon",
+        "https://ai.google.dev/gemini-api/docs/thinking",
+        "https://ai.google.dev/gemini-api/docs/pricing",
+        "https://ai.google.dev/gemini-api/docs/changelog",
+        "https://ai.google.dev/gemini-api/docs/latest-model",
+    ),
+    "sources_read": "2026-10-28",
+    "claim_boundary": MODEL_CONTRACT_CLAIM_BOUNDARY,
+}
+
 # TypeSafe Jev 1.13, the first `non_generative` contract: a model whose
 # documented output is a typed answer over options the caller supplies, not
 # text. Four keys exist only on this class and carry their reason here rather
@@ -1386,6 +1499,7 @@ MODEL_CONTRACTS: Final[dict[str, Mapping[str, object]]] = {
     "deepseek-v4.1-flash": _DEEPSEEK_V41_FLASH,
     "kimi-k3.1-pro": _KIMI_K3_1_PRO,
     "kimi-k3.1-pro-highspeed": _KIMI_K3_1_PRO_HIGHSPEED,
+    "gemini-4-argon": _GEMINI_4_ARGON,
     "jev-1.13.0": _JEV_1_13,
 }
 

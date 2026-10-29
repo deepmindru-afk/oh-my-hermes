@@ -55,7 +55,7 @@ identical prompt. Nothing else about the pipeline changes per model.
 | --- | --- | --- |
 | `gpt` | `gpt-`; design-qualified alias `openai-gpt-` | `gpt-6-astra`, `gpt-6.1-terra`, `gpt-5.6-sol`, `digitalocean/openai-gpt-5.6-sol` |
 | `claude` | `claude-`; design-qualified alias `anthropic-claude-`; bare tiers `opus`/`sonnet`/`haiku`/`fable`/`mythos` | `claude-fable-5-1`, `claude-mythos-5-1`, `digitalocean/anthropic-claude-opus-5` |
-| `gemini` | `gemini-` | `gemini-3.1-pro` |
+| `gemini` | `gemini-` | `gemini-4-argon`, `google/gemini-4-argon`, `gemini-3.1-pro` |
 | `kimi` | `kimi-` | `kimi-k3`, `kimi-k3-ultrafast`, `kimi-k3.1-pro`, `kimi-k3.1-pro-highspeed`, `moonshotai/kimi-k3.1-pro` |
 | `glm` | `glm-` | `glm-5.3`, `glm-5.3-flash`, `glm-5.2-ultrafast` |
 | `grok` | `grok-` | `grok-build-0.1` |
@@ -1076,7 +1076,18 @@ pairing so a benchmark claim can never mix in other prompt changes.
   `benchmarks/live-model-tools/v1`, and a `family` vs `optimized` pair if a
   counter for the low-effort traits is proposed.
 
-### `gemini` (Gemini 3.1 Pro)
+### `gemini` (Gemini 4 Argon, Gemini 3.1 Pro)
+
+- **Generation note (2026-10-28):** the block below was written for Gemini
+  3.1 Pro and carries over to Gemini 4 Argon unchanged; it is unmeasured on
+  Argon. Google's Argon guides document no verbosity, eagerness, or
+  tool-use change to counter. The announcement does name one risk this
+  block already covers: Google monitors Argon's chain of thought and actions
+  so that it does not step "out of bounds to try to accomplish a task in a
+  way that goes beyond the user's intentions" (blog.google, 2026-09-30).
+  That is the boundary expansion the subagent block calls a defect, so no
+  Argon-specific text was added. The 3.1-Pro-vs-Argon pair in the next
+  section decides whether the block still holds.
 
 - **Model trait:** fluent and confident narration. Its observed failure mode
   is asserting results from recall rather than from tool output, sounding
@@ -1092,6 +1103,50 @@ pairing so a benchmark claim can never mix in other prompt changes.
   artifact.
 - **Source:** observed failure modes in live usage (authored in the
   per-family calibration commit; no upstream text existed for this shape).
+
+### `gemini-4-argon` (Gemini 4 Argon, exact contract; `gemini` family calibration)
+
+- **Documented contract (official, ai.google.dev, read 2026-10-28):**
+  generally available 2026-10-13 under the one stable id `gemini-4-argon`
+  (no preview or dated id is listed). 1,048,576 tokens is a unified input
+  and output limit. A synchronous request returns up to 65,536 output
+  tokens, and long decode (`background: true`) raises that to 1,048,576.
+  `max_output_tokens` is a hard stop on thinking and output together, and
+  the migration guide recommends at least 32,768. Thinking cannot be turned
+  off: `thinking_level` accepts `low`, `medium`, and `high`, and the
+  default is `medium`. `temperature`, `top_p`, and `top_k` are ignored.
+  Only implicit caching is supported. Not on the free tier.
+- **Effort on the route:** `off`, `none`, and `minimal` are raised to the
+  floor `low` on record (`floor_raised`). `xhigh` and `max` pass through on
+  record: no documented rung sits above `high`, and the raise rule would
+  otherwise lower them to the floor. Hermes (observed, v0.22.5
+  `bf0203a794`) sends them as `thinkingLevel: high` and, on direct Google
+  endpoints only, adds a long-decode budget of 262,144 tokens at `xhigh` and
+  1,048,576 at `max`. No shipped slot names a rung above `high`.
+- **Placement (owner decision, 2026-10-28):** `gemini-4-argon` took every
+  Gemini 3.1 Pro slot at the effort each carried: `writing` and
+  `google-search` at `medium`; `visual-engineering`, `artistry`,
+  `x-search`, and `synthesize` at `high`; and the `x_platform_data`
+  affinity. Gemini 3.1 Pro left the shipped chains under the
+  superseded-generation rule. It stays recognized, priced (2/12), and
+  provider-mapped, so an operator override that names it still resolves.
+  On Hermes, 3.1 Pro at `medium` was sent as `low`, because Hermes allows
+  only `low` and `high` for a Gemini 3 Pro id (observed). Argon's `medium`
+  goes on the wire as `medium`, so the two `medium` slots now run the rung
+  they name. Provider families: `google`, `gemini`, `openrouter`
+  (OpenRouter lists `google/gemini-4-argon`). Editorial and unmeasured.
+- **Price:** 2/10 through 2026-11-30 and 4/20 from 2026-12-01, cache read
+  0.05 of input in both periods. The approximation table carries the
+  current card, so re-read the page after the step-up.
+- **Surfaces:** gemini-cli main has no Argon entry and says it is "Not
+  optimized for Gemini 4+" (official-client). Google's guides disagree on
+  `thinking_budget`: AI Studio maps it to a level with a warning and Vertex
+  AI returns HTTP 400, so only `thinkingLevel` is safe. OpenRouter's
+  floating `~google/gemini-pro-latest` now points at Argon (community).
+- **Named follow-up:** Gemini 3.1 Pro vs Gemini 4 Argon at `high` on
+  `benchmarks/live-model-tools/v1`. No served route existed on the
+  onboarding machine (no Gemini, Google, or OpenRouter key), so neither the
+  served probe nor the pair has run.
 
 ### `grok` (Grok Build 0.1, formerly Grok Code Fast)
 
@@ -1866,6 +1921,7 @@ choose models by, not a guarantee for another persona or skill.
 | `openai-gpt-`, `anthropic-claude-` (design-qualified aliases) | yes → `gpt` / `claude` | yes, through the design family | concrete models.dev/OpenCode serving ids carry these sub-prefixes; their catalog `base_model` fields establish the underlying design family |
 | other `openai-`, `anthropic-` vendor-qualified ids | recognized as model targets, family `unknown` | no → `generic` | vendor qualification alone does not establish a design; O-series, image, and emerging ids remain uncalibrated |
 | `kimi-k3.1-pro`, `kimi-k3.1-pro-highspeed` (exact contracts, no exact calibration) | yes → `kimi` | yes, through the family block | exact documented contracts (three-rung `low`/`high`/`max` ladder with `max` as default, every other rung raised on record; Highspeed has its own rate card); K3.1 Pro holds every former Kimi K3 slot since 2026-10-24, Highspeed is recognition-only; the K3-vs-K3.1 pair is the named follow-up, blocked on a served route |
+| `gemini-4-argon` (exact contract, no exact calibration) | yes → `gemini` | yes, through the family block | exact documented contract (`low`/`medium`/`high` ladder with `medium` as default and no off switch; `off` and `minimal` raised on record, rungs above `high` passed through); holds every former Gemini 3.1 Pro slot since 2026-10-28; the 3.1-Pro-vs-Argon pair is the named follow-up, blocked on a served route |
 | `jev` (non-generative) | yes | no, and none applies → no calibration pair | recognized, contracted (`jev-1.13.0`, with `jev-latest` and `jev-preview` as declared aliases), priced with a free output side, and in no chain by decision; the route answers `model_refused` and both chain editors refuse it. The coverage audit reports `effort`, `category_projection`, and `provider_eligibility` as `missing`, which is the honest reading for a model with no effort parameter and no chain membership — greening any of them would need an invented rung or an invented chain entry |
 | `minimax` | yes | no → `generic` | prefix landed in #1304 (`MiniMax-M3`, released 2026-05-31, and `MiniMax-M2.7`, 2026-03-18, per minimax.io release notes and the platform.minimax.io model list); the calibration pair waits on an observed failure mode or a provider-stated characteristic worth countering |
 | emerging families | no → `unknown` | no → `generic` | add a prefix and a calibration pair when one lands (the #1051/#1052 pattern) |
