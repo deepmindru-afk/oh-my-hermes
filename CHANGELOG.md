@@ -13,12 +13,16 @@ All notable changes will be documented here.
   `+ N other commands`; a directory change (`cd`, `pushd`, `popd`) or a
   variable assignment (`T=/`, `printf -v`, `${T:=/}`) now stays listed
   whenever a listed command comes after it, and `echo`-like noise still
-  folds. A download run as a script (`curl … | sh`, `bash <(curl …)`,
-  `eval "$(curl …)"`, `sh -c "$(wget -qO- …)"`), decoded text piped into a
-  shell (`base64 -d | sh`, `xxd -r`, `echo | tr`, `openssl … -d`) and
-  `chmod` with a mode that lets others write (`777`, `666`, `o+w`, `a+w`)
-  now get their own `▲` row, the cases Hermes' approval table flags;
-  `echo "$(curl …)"`, `x=$(curl …)` and `diff <(curl a) <(curl b)` do not.
+  folds. When rows run short they fold step by step, the last one before
+  each risky command going last, then every row that is not risky, so a
+  `▲` row is never cut while another command's row shows. A download run
+  as a script (`curl … | sh`, `bash <(curl …)`, `eval "$(curl …)"`,
+  `sh -c "$(wget -qO- …)"`, and inside a `-c` script, a substitution or
+  after `then`), decoded text piped into a shell (`base64 -d | sh`,
+  `xxd -r`, `echo | tr`, `openssl … -d`) and `chmod` with a mode that lets
+  others write (`777`, `666`, `o+w`, `a+w`) now get their own `▲` row, the
+  cases Hermes' approval table flags; `echo "$(curl …)"`, `x=$(curl …)`
+  and `diff <(curl a) <(curl b)` do not.
 
 - **A light goes round the OMH TUI's screen while a turn runs.** It runs
   along the terminal's whole edge, clockwise, once every four seconds, with

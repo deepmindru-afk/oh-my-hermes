@@ -40,8 +40,14 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass, replace
 
-# Words that run the program after them; their options that take a value consume the next word.
-_RUNNERS = {"sudo": frozenset("ugCDhprtUT"), "env": frozenset("uCS"), "xargs": frozenset("InPLsdEa")}
+# Words that run the program after them; their options that take a value consume the next word (`timeout` also
+# takes its duration).
+_RUNNERS = {"sudo": frozenset("ugCDhprtUT"), "env": frozenset("uCS"), "xargs": frozenset("InPLsdEa"),
+            "timeout": frozenset("sk"), "command": frozenset()}
+# Shell words that come before the command they introduce (`if c; then curl x | sh; fi`).
+_KEYWORDS = frozenset(("if", "then", "elif", "else", "do", "while", "until", "time", "!", "{", "("))
+# How deep a shell's `-c` script or a substitution inside one is read for what it runs.
+_DEPTH = 3
 # Options git itself takes before the subcommand that consume the next word.
 _GIT_VALUE_OPTIONS = frozenset(("-C", "-c", "--git-dir", "--work-tree", "--namespace", "--exec-path", "--config-env"))
 # The programs a command may run and still fold out of sight: they read, print or move the shell, and change
@@ -83,6 +89,7 @@ class Segment:
     head: str
     risks: tuple[str, ...]
     foldable: bool = True  # may fold out of sight: it changes nothing (`_foldable`)
+    sets_state: bool = False  # would fold, but moves the shell or assigns before a listed command (`_sets_state`)
 
 
 def _word_start(text: str, index: int) -> bool:
@@ -245,21 +252,23 @@ def _is_assignment(word: str) -> bool:
 
 
 def _program(words: list[str]) -> list[str]:
-    """`words` from the program they run: past `NAME=value` assignments, and past `sudo`, `env` or `xargs` with
-    their options."""
+    """`words` from the program they run: past shell keywords (`then`, `do`, `!`), `NAME=value` assignments, and a
+    runner (`_RUNNERS`, by its name or its path) with its options."""
     index = 0
     while index < len(words):
         word = words[index]
-        if _is_assignment(word):
+        if _is_assignment(word) or word in _KEYWORDS:
             index += 1
             continue
-        valued = _RUNNERS.get(word)
+        runner = word.rsplit("/", 1)[-1]
+        valued = _RUNNERS.get(runner)
         if valued is None:
             return words[index:]
         index += 1
-        while index < len(words) and (words[index].startswith("-") or (word == "env" and _is_assignment(words[index]))):
+        while index < len(words) and (words[index].startswith("-") or (runner == "env" and _is_assignment(words[index]))):
             option = words[index]
             index += 2 if len(option) == 2 and option[1] in valued else 1
+        index += runner == "timeout"
     return []
 
 
@@ -297,9 +306,10 @@ def _chmod(args: list[str]) -> list[str]:
     """Whether the mode lets others write: an octal mode whose last digit has the write bit (`777`, `666`), or a
     symbolic clause for `o` or `a` that adds or sets `w` (`o+w`, `a+rwx`)."""
     _, _, rest = _options(args)
-    mode = rest[0] if rest else ""
-    if mode.isdigit():
-        return ["makes files world-writable"] if int(mode[-1]) in (2, 3, 6, 7) else []
+    operands = rest + (args[args.index("--") + 1 :] if "--" in args else [])
+    mode = operands[0] if operands else ""
+    if mode and all(digit in "01234567" for digit in mode):
+        return ["makes files world-writable"] if mode[-1] in "2367" else []
     for clause in mode.split(","):
         who, op, perms = clause.partition("+") if "+" in clause else clause.partition("=")
         if op and "w" in perms and set(who) & {"o", "a"}:
@@ -395,9 +405,10 @@ def _decodes(program: str, args: list[str], previous: str) -> bool:
     """Whether a pipe stage running `program` with `args`, after one running `previous`, decodes what it reads into
     text a shell after it would run (tools/approval_detection.py:332-338)."""
     if program in ("base64", "base32", "base16"):
-        return bool({"-d", "-D", "--decode"} & set(args))
+        return any(arg.partition("=")[0] == "--decode" or (arg[:1] == "-" and arg[1:2] != "-" and set(arg[1:]) & set("dD"))
+                   for arg in args)
     if program == "xxd":
-        return any(arg.startswith("-") and not arg.startswith("--") and "r" in arg for arg in args)
+        return bool({"-r", "-revert", "-rp", "-pr"} & set(args))
     if program == "openssl":
         return bool({"base64", "enc"} & set(args)) and bool({"-d", "-D"} & set(args))
     return program == "tr" and previous == "echo"
@@ -459,47 +470,69 @@ def _fetches(text: str) -> bool:
     return any(words and words[0].rsplit("/", 1)[-1] in _FETCHERS for words in map(_program, _stages(text)))
 
 
-def _runs_download(segment: str) -> bool:
-    """Whether `segment` hands a download to what runs it as a script: a shell, `eval`, `source` or `.` reading a
-    process substitution that downloads (`bash <(curl …)`, :314), `eval`, `source` or `.` given a command
-    substitution that does (`eval "$(curl …)"`, :316), or a shell given one after its `-c` (`sh -c "$(curl …)"`)."""
-    masked, found = _substitutions(segment)
-    for stage in _stages(masked):
+def _runs_text(word: str) -> bool:
+    """Whether a shell's option `word` makes it run the next word as its script (`-c`, `-lc`)."""
+    return word[:1] == "-" and word[1:2] != "-" and "c" in word
+
+
+def _shell_script(args: list[str]) -> str | None:
+    """The script a shell with `args` runs from its `-c`, or None when it has none."""
+    for index, arg in enumerate(args):
+        if _runs_text(arg):
+            return next((word for word in args[index + 1 :] if not word.startswith("-")), None)
+    return None
+
+
+def _runs_download(stages: list[list[str]], substituted: list[tuple[str, str]]) -> bool:
+    """Whether the pipe `stages` (substitutions masked, `_substitutions`) hand a download to what runs it as a
+    script: a shell, `eval`, `source` or `.` reading a process substitution that downloads (`bash <(curl …)`, :314),
+    `eval`, `source` or `.` given a command substitution that does (`eval "$(curl …)"`, :316), or a shell given one
+    after its `-c` (`sh -c "$(curl …)"`)."""
+    fetching = {str(number) for number, (_, body) in enumerate(substituted) if _fetches(body)}
+    if not fetching:
+        return False
+    for stage in stages:
         words = _program(stage)
         program = words[0].rsplit("/", 1)[-1] if words else ""
         if program not in _SHELLS | _SOURCES:
             continue
-        for position, word in enumerate(words[1:], start=1):
-            for number, (opener, body) in enumerate(found):
-                if f"\x00{number}\x00" not in word or not _fetches(body):
-                    continue
-                flagged = any(arg.startswith("-") and not arg.startswith("--") and "c" in arg
-                              for arg in words[1:position])
-                if opener == "<(" or program in _SOURCES or flagged:
+        given = False  # the shell's `-c` came before
+        for word in words[1:]:
+            for number in word.split("\x00")[1::2]:
+                if number in fetching and (substituted[int(number)][0] == "<(" or program in _SOURCES or given):
                     return True
+            given = given or _runs_text(word)
     return False
 
 
-def segment_risks(segment: str) -> tuple[str, ...]:
+def segment_risks(segment: str, depth: int = 0) -> tuple[str, ...]:
     """The risks of the programs `segment` runs, in table order within each, once each; a shell a download or decoded
     text is piped into, or a download handed to what runs it (`_runs_download`), is `REMOTE_SCRIPT` or
-    `DECODED_SCRIPT`."""
+    `DECODED_SCRIPT`. A shell's `-c` script and each substitution's commands are read the same way, `_DEPTH` deep."""
+    masked, substituted = _substitutions(segment)
+    stages = _stages(masked)
     found: list[str] = []
+    inner = [body for _, body in substituted]
     fetched = decoded = False
     previous = ""
-    for stage in _stages(segment):
+    for stage in stages:
         words = _program(stage)
         program = words[0].rsplit("/", 1)[-1] if words else ""
         check = RISKS.get(program)
         risks = check(words[1:]) if check else []
         if program in _SHELLS:
             risks += [REMOTE_SCRIPT] * fetched + [DECODED_SCRIPT] * decoded
+            script = _shell_script(words[1:])
+            inner += [script] if script else []
         found.extend(risk for risk in risks if risk not in found)
         fetched = fetched or program in _FETCHERS
         decoded = decoded or _decodes(program, words[1:], previous)
         previous = program
-    if REMOTE_SCRIPT not in found and _runs_download(segment):
+    if REMOTE_SCRIPT not in found and _runs_download(stages, substituted):
         found.append(REMOTE_SCRIPT)
+    for text in inner if depth < _DEPTH else ():
+        for _, read, _ in _scan(text):
+            found.extend(risk for risk in segment_risks(read, depth + 1) if risk not in found)
     return tuple(found)
 
 
@@ -586,8 +619,14 @@ def _foldable(read: str) -> bool:
 def _sets_state(read: str) -> bool:
     """Whether the command `read` decides what a later command acts on: it moves the shell (`_MOVES`) or sets a
     variable (`T=/`, `printf -v T /`, `${T:=/}`)."""
-    if "${" in read and "=" in read:
-        return True
+    start = read.find("${")
+    while start >= 0:  # `${NAME=…}` or `${NAME:=…}` assigns NAME when it is unset
+        end = start + 2
+        while end < len(read) and (read[end].isalnum() or read[end] == "_"):
+            end += 1
+        if end > start + 2 and read.startswith(("=", ":="), end):
+            return True
+        start = read.find("${", end)
     for stage in _stages(read):
         program = stage[0].rsplit("/", 1)[-1]
         if program in _MOVES or all(_is_assignment(word) for word in stage):
@@ -623,7 +662,7 @@ def segments(command: str) -> list[Segment]:
     listed = False  # a command after this one is listed
     for index in range(len(found) - 1, -1, -1):
         if listed and found[index].foldable and _sets_state(scanned[index][1]):
-            found[index] = replace(found[index], foldable=False)
+            found[index] = replace(found[index], foldable=False, sets_state=True)
         listed = listed or not found[index].foldable
     return found
 
