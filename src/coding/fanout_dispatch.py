@@ -357,6 +357,10 @@ def signal_safe_unit_runner(
     other shape keeps the plain blocking `communicate` exactly as before.
     `input`, as for `subprocess.run`, is written to the child's stdin on that
     plain path (the workspace preflight hands git its blob this way, #2040).
+    Without `input` the child's stdin is the null device, never the
+    dispatcher's own (#2402): `codex exec` reads a piped stdin to EOF even
+    with the prompt in argv, so a unit that inherited an agent shell's open
+    pipe waited for an EOF that never came until its deadline.
     """
     if input is not None and (output_capture is not None or on_output is not None):
         raise ValueError("input is only supported on the plain communicate path")
@@ -368,7 +372,7 @@ def signal_safe_unit_runner(
             env=dict(env) if env is not None else None,
             text=False if output_capture is not None else text,
             errors=None if output_capture is not None else errors,
-            stdin=None if input is None else subprocess.PIPE,
+            stdin=subprocess.DEVNULL if input is None else subprocess.PIPE,
             stdout=pipe,
             stderr=pipe,
             start_new_session=os.name != "nt",
