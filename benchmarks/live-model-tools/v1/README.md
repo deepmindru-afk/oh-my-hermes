@@ -554,7 +554,7 @@ Results describe this pinned corpus, OMH version, Hermes version, provider,
 model id and conditions only. They do not establish universal model
 superiority.
 
-### 2026-10-30 impact check: callers broken by an edit, off vs on (`impact_check` + `lsp_diagnostics`)
+### 2026-10-30 impact check: callers broken by an edit, off vs on (`impact_check` + `lsp_diagnostics`), gate passed
 
 One question, from oh-my-pi's workspace diagnostics: when an edit changes a definition, does
 telling the model which files that import it now have new type errors help it fix every caller?
@@ -622,6 +622,39 @@ asking for the task's final answer again, in full, and the gate gains a seventh 
   the same three templates whose last assistant message contains it.
 
 The other six clauses are unchanged. Run 2 is the reported result.
+
+Run 2, plugin `41e91a195` (the review fixes below plus the final-answer request). Every clause
+passes, so the check ships, off by default.
+
+| Model | off | on | off tokens (median) | on tokens (median) |
+| --- | ---: | ---: | ---: | ---: |
+| `claude-haiku-4-5-20251001` | 7 / 12 | 10 / 12 | 311,080 | 362,475 |
+| `claude-haiku-5-5` | 10 / 12 | 12 / 12 | 221,306 | 225,507 |
+| `gpt-5.6-luna` | 9 / 12 | 12 / 12 | 145,850 | 182,656 |
+| `claude-sonnet-5-5` | 12 / 12 | 12 / 12 | 174,693 | 182,988 |
+| `claude-opus-5-5` | 12 / 12 | 12 / 12 | 215,642 | 220,399 |
+| `gpt-6.1-sol` | 12 / 12 | 12 / 12 | 148,557 | 173,769 |
+| **Total** | **62 / 72** | **70 / 72** | 14.2M | 16.8M |
+
+Per template, off vs on: `I-SIGNATURE` 10 vs 18, `I-RETURN-SHAPE` 18 vs 18, `I-KWARG` 16 vs 16,
+`I-CONTROL` 18 vs 18.
+
+- Weak models, on at least off + 3: 34 vs 26, pass.
+- Strong models, on at least off - 1: 36 vs 36, pass.
+- No on-arm run above 3x its pair's median tokens: none; the highest is 2.20x (gpt-6.1-sol
+  `I-KWARG`).
+- The note fired in 12 of the 14 on-arm sessions with a broken caller, pass (9 `I-SIGNATURE`,
+  1 `I-RETURN-SHAPE`, 2 `I-KWARG`); every session that got a note ended passing. The two broken
+  sessions without one are haiku 4.5 `I-KWARG`, the `**options` caller.
+- Notes on `I-CONTROL`: 0, pass.
+- Round-end latency p95 48 ms (max 71 ms) over 72 sessions, pass; the first-edit baseline added
+  p95 0.5 s (max 0.9 s).
+- Final answer preserved after a note: 8 of 12, against round(31 / 54 x 12) - 2 = 5, pass. In run 1,
+  whose note ended on "re-check", it was 1 of 10.
+- Tools in the on arm: `lsp_diagnostics` 20 calls, `lsp_references` 4 (haiku 5.5),
+  `lsp_definition` and `lsp_rename` none. The off arm made no `lsp_*` calls.
+- omh `41e91a195`, Hermes Agent v0.22.5 (`bf0203a794`), fresh on/off profile pair per model,
+  2026-10-30 02:59-03:17 KST; 144 of 144 records completed, none failed, timed out or was retried.
 
 Run 1, plugin as of `c5e4fc02c` (note without the final-answer request; superseded by run 2). Six
 clauses passed; the seventh did not exist yet:
