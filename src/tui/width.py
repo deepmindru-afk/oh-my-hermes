@@ -103,7 +103,19 @@ def _extends(cluster: str, ch: str) -> bool:
         return True
     if _is_emoji_modifier(ch):
         return True
+    if _composes(cluster[-1], ch):
+        return True
     return len(cluster) == 1 and _is_regional_indicator(cluster) and _is_regional_indicator(ch)
+
+
+def _composes(before: str, ch: str) -> bool:
+    """True when NFC writes `before` and the letter `ch` as one code point (Kirat Rai: U+16D63 U+16D67 is U+16D69).
+
+    Every other character NFC joins to the one before it is a mark, which `_extends` joins already. A narrow letter
+    is asked here, so text NFC has not composed yet (`clusters_as_written`) splits where NFC text does."""
+    if unicodedata.category(ch) != "Lo" or unicodedata.east_asian_width(ch) in _WIDE:
+        return False
+    return len(unicodedata.normalize("NFC", before + ch)) == 1
 
 
 def _segment(text: str) -> list[str]:

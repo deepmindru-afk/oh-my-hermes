@@ -13,6 +13,7 @@ round 2026-10-28, R-B).
 from __future__ import annotations
 
 import base64
+import re
 import time
 import unicodedata
 import unittest
@@ -24,13 +25,13 @@ from test_tui_modes import drawn, make_app
 from omh.plugin_bundle.omh.delegation_view import Segment
 from omh.tui import bot_board, subagents
 from omh.tui.keys import BUTTON_LEFT, Mouse
-from omh.tui.pager import Pager, _cells, _reversed, _word_at
+from omh.tui.pager import Pager, _cells, _kept_cells, _reversed, _source_clusters, _word_at, forget_cells
 from omh.tui.panels import _aura_box
 from omh.tui.screen import paint_line, without_controls
 from omh.tui.style import TRUECOLOR, Span, Style
 from omh.tui.theme import DEFAULT_THEME
 from omh.tui.transcript import AssistantBlock, _glinted
-from omh.tui.width import TAB_CELLS, cluster_width, clusters, line_width
+from omh.tui.width import TAB_CELLS, cluster_width, clusters, clusters_as_written, line_width
 
 # One cluster each, with what a code-point count made of it.
 LEADS = {
@@ -41,6 +42,7 @@ LEADS = {
     "skin tone": "👍🏻",  # painted 2, counted 4
     "vs16": "☀️",  # painted 2, counted 1 or 3
     "flag": "🇰🇷",  # two regional indicators, one glyph
+    "kirat rai": "\U00016D63\U00016D67",  # two letters NFC writes as one (U+16D69)
 }
 KITTY = {"TERM": "xterm-kitty"}
 # A cluster of two or more code points whose first is not in the rest of the page, for a cut to fall inside.
@@ -50,6 +52,7 @@ CUT_LEADS = {
     "flag": "🇰🇷",
     "combining mark": "z\u0301",
     "decomposed hangul": "\u1112\u1161\u11ab",
+    "kirat rai": "\U00016D63\U00016D67",  # two letters NFC writes as one (U+16D69)
 }
 
 
@@ -196,11 +199,55 @@ class PagerSelectionTests(unittest.TestCase):
         self.assertEqual(click(pager, 1, 0.1), "snake_\u0301case")
 
     def test_one_long_cluster_is_measured_in_linear_time(self) -> None:
-        # One base with thousands of marks, not NFC: pairing each cluster with its source by growing a run one code
-        # point at a time took 71 ms for 2,000 marks (and four times that for twice as many); it is a few ms now.
-        line = (Span("a" + "\u0301" * 4000),)
-        best = min(_timed(lambda: _reversed(line, 0, 5)) for _ in range(3))
+        # One base with thousands of marks, not NFC. Pairing each cluster with its source by growing a run one code
+        # point at a time took 472 ms for 8,000 marks (117 ms for 4,000: quadratic); pairing the units takes 10 ms.
+        # `_source_clusters` is timed itself: `_cells` keeps a row, so a second `_reversed` would time the cache.
+        text = "a" + "\u0301" * 8000
+        best = min(_timed(lambda: _source_clusters(text)) for _ in range(3))
         self.assertLess(best, 0.1)
+
+    def test_a_long_row_is_not_kept_and_closing_the_pager_lets_go_of_the_rest(self) -> None:
+        forget_cells()
+        long_row = (Span("abcd " * 400),)  # a /logs line far wider than any screen
+        _cells(long_row)
+        self.assertEqual(_kept_cells.cache_info().currsize, 0, "a row past CELLS_KEPT_CHARS is measured, not kept")
+        _cells((Span("short"),))
+        self.assertEqual(_kept_cells.cache_info().currsize, 1)
+        app, client = make_app(rows=12, cols=60, environ=KITTY)
+        app.pbcopy = lambda text: False  # type: ignore[method-assign]  # never the real clipboard
+        client.stderr_tail = lambda: ["one log line", "and another"]  # type: ignore[attr-defined]
+        app._logs("")
+        drawn(app)
+        rows = app.terminal.screen.lines()  # type: ignore[attr-defined]
+        drag_row = next(index for index, row in enumerate(rows) if "one log" in row) + 1
+        app._on_input(Mouse(BUTTON_LEFT, 1, drag_row))
+        app._on_input(Mouse(BUTTON_LEFT, 8, drag_row, motion=True))
+        drawn(app)
+        self.assertGreater(_kept_cells.cache_info().currsize, 0)
+        app._leave_pager()
+        self.assertEqual(_kept_cells.cache_info().currsize, 0, "what the pager kept goes with it")
+
+    def test_a_span_of_only_escapes_does_not_become_a_fill_under_the_highlight(self) -> None:
+        sgr = re.compile("\x1b\\[[0-9;]*[mK]")
+        for line in ((Span("abc"), Span("\x1b[0m", Style(bg="#202020"))),
+                     (Span("abc"), Span("", Style(bg="#202020")))):  # a real fill stays one
+            with self.subTest(line=line):
+                for low, high in ((0, 0), (0, 9), (5, 9)):
+                    self.assertEqual(paint_line(_reversed(line, low, high), 10).count("\x1b[48;"),
+                                     paint_line(line, 10).count("\x1b[48;"))
+                    self.assertEqual(sgr.sub("", paint_line(_reversed(line, low, high), 10)),
+                                     sgr.sub("", paint_line(line, 10)))
+
+    def test_a_kirat_rai_pair_is_one_unit_as_written_and_leaves_the_rest_of_the_span_as_written(self) -> None:
+        # NFC composes these two letters (U+16D63 U+16D67 is U+16D69, U+16D67 U+16D67 is U+16D68), so they are one
+        # unit both written and painted; before, the span's units did not pair and its copy fell back to NFC whole.
+        for text in ("\U00016D63\U00016D67", "\U00016D67\U00016D67", "\U00016D63\U00016D67\U00016D67",
+                     "a\U00016D63\U00016D67", "\U0001F1F0\U00016D67\U00016D67"):
+            with self.subTest(text=text):
+                self.assertEqual([nfc(unit) for unit in clusters_as_written(text)], clusters(text))
+        text = "/tmp/e\u0301te\u0301 \U00016D63\U00016D67"
+        self.assertEqual("".join(cell.text for cell in _cells((Span(text),))), text)
+        self.assertEqual(subagents._cut("aaaa\U00016D63\U00016D67 tail", 5), "aaaa" + subagents.CUT_MARK)
 
     def test_the_logs_pager_paints_and_copies_what_stderr_shows(self) -> None:
         now = [100.0]

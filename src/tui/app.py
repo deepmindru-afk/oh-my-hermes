@@ -182,7 +182,7 @@ from .modes import (
     info_line,
     model_forms,
 )
-from .pager import ALT_SCREEN_OFF, ALT_SCREEN_ON, HistoryPager, Pager
+from .pager import ALT_SCREEN_OFF, ALT_SCREEN_ON, HistoryPager, Pager, forget_cells
 from .model_picker import KEYS as MODEL_PICKER_KEYS
 from .model_picker import PICK as MODEL_PICK
 from .model_picker import ModelPicker, model_rows, typed_switch_value
@@ -5838,6 +5838,7 @@ class App(ModesMixin, AgentViewMixin):
 
     def _leave_pager(self) -> None:
         self.pager = None
+        forget_cells()  # what the pager measured for its selection goes with it
         self.log_agent = ""
         self._stop_board_reader()
         self.terminal.write(ALT_SCREEN_OFF + self._caret_visibility())

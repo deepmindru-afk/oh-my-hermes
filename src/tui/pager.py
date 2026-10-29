@@ -59,7 +59,8 @@ CLICK_SECONDS = 0.5
 WORD_PUNCTUATION = "_-./~"  # what a double click keeps in a word besides letters and digits, as paths and names have
 ROW_END = 1 << 30  # the last column of a selection that runs to the end of its row
 Cell = tuple[int, int]  # a body cell of the screen: its row and its column, from 0
-CELLS_KEPT = 256  # rows whose cells (`_cells`) are kept: more than a screen holds
+CELLS_KEPT = 128  # rows whose cells (`_cells`) are kept: more than a screen holds
+CELLS_KEPT_CHARS = 256  # the longest row kept, in code points: as wide as a wide screen, so what is kept stays small
 # The most blocks a `HistoryPager` keeps rendered; one scrolled back to after it left is rendered again.
 HISTORY_BLOCKS_KEPT = 256
 
@@ -280,11 +281,22 @@ class _Cell(NamedTuple):
     span: int
 
 
-@lru_cache(maxsize=CELLS_KEPT)
 def _cells(line: Line) -> tuple[_Cell, ...]:
     """Each grapheme cluster of `line` as `screen.paint_line` measures it: on the text with no escape sequence or
     control (`screen.without_controls`), cluster by cluster within each span (`width.clusters`), so a column here is
-    the column on the screen. Kept per row, as a drag asks again for the same rows every frame."""
+    the column on the screen. A row of at most `CELLS_KEPT_CHARS` is kept until `forget_cells`, as a drag asks again
+    for the same rows every frame; a longer one is measured each time, so what is kept stays small."""
+    if sum(len(span.text) for span in line) <= CELLS_KEPT_CHARS:
+        return _kept_cells(line)
+    return _measured(line)
+
+
+def forget_cells() -> None:
+    """Let go of every row `_cells` kept: the pager that showed them has closed."""
+    _kept_cells.cache_clear()
+
+
+def _measured(line: Line) -> tuple[_Cell, ...]:
     cells: list[_Cell] = []
     at = 0
     for index, span in enumerate(without_controls(line)):
@@ -296,6 +308,9 @@ def _cells(line: Line) -> tuple[_Cell, ...]:
             cells.append(_Cell(at, at + max(width, 1) - 1, cluster, span.style.gutter, width, index))
             at += width
     return tuple(cells)
+
+
+_kept_cells = lru_cache(maxsize=CELLS_KEPT)(_measured)
 
 
 def _word_at(line: Line, column: int) -> tuple[int, int] | None:
@@ -324,14 +339,15 @@ def _reversed(line: Line, low: int, high: int) -> Line:
     """`line` with the clusters on columns `low` to `high` (a wide one when either of its cells is) drawn reversed, a
     selection's highlight; gutter cells keep their look, as the copy leaves them out. The text is the one painted
     (`screen.without_controls`), and a style changes only between two clusters of one span: spans are never merged,
-    so each is measured and clustered as it was."""
+    so each is measured and clustered as it was. A span that held only escapes is left out: kept empty, it would read
+    as a fill (`style.is_fill`) that the row without the highlight does not have."""
     shown = without_controls(line)
     spans: list[Span] = []
     cells = _cells(shown)
     at = 0
     last = -1  # the span of `shown` the last piece came from
-    for index, span in enumerate(shown):
-        if not span.text:
+    for index, (given, span) in enumerate(zip(line, shown)):
+        if not given.text:
             spans.append(span)  # a fill: the row's background to its edge
             last = -1
         while at < len(cells) and cells[at].span == index:
