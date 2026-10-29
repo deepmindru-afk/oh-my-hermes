@@ -868,8 +868,9 @@ run and approval decision stays Hermes'; the screen is OMH's.
   not. It shows with motion on, at truecolor, on a screen 20×8 or larger.
   `/glow off` turns it off and `/glow on` back on (`/glow` alone switches
   it); the choice is saved beside the theme, as `glow` in
-  `<omh_home>/tui/theme.json`. `OMH_TUI_GLOW=0` holds it off in one terminal
-  whatever is saved.
+  `<omh_home>/tui/theme.json`; `omh theme glow on|off` saves the same choice
+  from the shell. `OMH_TUI_GLOW=0` holds it off in one terminal whatever is
+  saved.
 - Each tool call is a block of its own on a rail in its state's
   colour, with a blank row between two calls and no header over a turn's
   calls: its state's mark (below), its name, and what it ran on (a path, a
@@ -2899,6 +2900,7 @@ omh theme list               # plain listing, always (the scriptable surface)
 omh theme use crimson        # select one directly (also accepts omh-crimson)
 omh theme use crimson --dry-run
 omh theme status             # the active theme, which source decided it, and where it is saved
+omh theme glow off           # the working glow off in every later OMH TUI session (on, or alone to show it)
 ```
 
 Bare `omh theme` opens a picker: up/down arrows (or `j`/`k`) move the cursor,
@@ -2926,8 +2928,9 @@ Rules worth knowing:
   session opens, and `/theme auto|light|dark` chooses that background for
   the open session (see [The OMH TUI](#the-omh-tui)).
 - **The launch look is saved in the same record.** `/theme` in the OMH TUI
-  writes `launch` beside `theme` in `<omh_home>/tui/theme.json`; either
-  write keeps the other.
+  writes `launch` beside `theme` in `<omh_home>/tui/theme.json`, and
+  `/glow` or `omh theme glow` writes `glow` there; each write keeps the
+  others.
 - **Bare `hermes` keeps its own skin.** `display.skin` is yours; OMH reads it
   only for the fallback above and never writes it.
 
