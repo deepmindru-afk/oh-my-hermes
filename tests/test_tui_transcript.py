@@ -687,7 +687,7 @@ class ReasoningAndToolTests(LoopTestCase):
                 "    ⎿  1 failed",
             ],
         )
-        self.assertEqual(self.taken[0][0], rail_cell(THEME.ok))
+        self.assertEqual(self.taken[0][0], rail_cell(THEME.accent))  # the launch look's rail; the mark says done
         # A failure's first line is grey like any result; its rail and its `✗` say it failed.
         self.assertEqual(self.taken[4][-1].style, THEME.faint)
         self.assertEqual([self.taken[row][0] for row in (3, 4)], [rail_cell(THEME.error)] * 2)  # search_files' rail
@@ -1312,7 +1312,7 @@ class ToolOutputTests(LoopTestCase):
         # Recorded from Hermes 6c61c3e27d (session fixture, the interrupted turn's `seq 1 300`).
         flushed = self.run_tool({"output": "1\n2\n3\n4\n5\n[trimmed: 295 more lines]", "exit_code": 0, "error": None})
         self.assertEqual(flushed[0], "  ● terminal(seq 1 300)  0.1s")
-        self.assertEqual(self.taken[-5][:3], (rail_cell(THEME.ok), Span(" ", GUTTER), Span("●", THEME.ok)))
+        self.assertEqual(self.taken[-5][:3], (rail_cell(THEME.accent), Span(" ", GUTTER), Span("●", THEME.ok)))
         self.assertEqual(flushed[1:], ["    ⎿  1", "       2", "       3", "       … +3 lines · ctrl+o shows all"])  # under the call
         self.assertEqual(self.taken[-1][-1].style, THEME.faint)
 
