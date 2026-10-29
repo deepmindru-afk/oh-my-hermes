@@ -607,6 +607,15 @@ below: a run with no completed record is a fail.
   no plan, so a second such row in a session (a one-shot run is one turn) would be a
   repeat. The off arm is checked for zero such rows.
 
+Measurement 1 (checklist text at `0c0e1c5e2`) failed one clause: on-arm median tokens
+were 1.434x off (302,806 vs 211,211). Every other clause passed, with 66 vs 57 passes.
+After the checklist, 62 of 72 on-arm sessions re-ran a test suite that had already
+passed, because the verification line said "run a check". Measurement 2 (`185abfc78`)
+changes only that line: it asks for the command already run after the last edit, and
+says to run one only if none was. It re-runs both arms on two fresh profiles
+(`cebench-off2`, `cebench-on2`), with `agent.run_budget_seconds: 600` set from the
+start. The gate does not change.
+
 ### 2026-10-29 debugging: builtin `patch` vs a debugpy tool (`omh-dap`), gate failed
 
 One question, from oh-my-pi's `debug` tool: does giving the model a debugger (breakpoints,
