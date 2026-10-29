@@ -133,8 +133,9 @@ FALLBACK_SIZE = (80, 24)
 # answers if there are any, so its answer ends the wait.
 BACKGROUND_QUERY = "\x1b]11;?\x07"
 # The living wallpaper's background (`App._sync_ground`): OSC 11 sets the terminal's default background, and on the
-# way out the colour the startup query read is set back, then OSC 111 resets it to the terminal's own default where
-# the terminal knows that command (one that does not ignores it, and keeps the colour set just before).
+# way out the colour the startup query read is set back. Not OSC 111 (reset to the profile's default) after it: a
+# background set at runtime before the TUI started (base16-shell and the like) is the one the person had, and 111
+# would drop it for the profile's.
 OSC_TERMINATOR = "\x1b\\"
 
 
@@ -144,8 +145,8 @@ def background_set(colour: str) -> str:
 
 
 def background_restore(original: str) -> str:
-    """The terminal's background put back: `original`, the colour it reported at start, then OSC 111 (reset)."""
-    return f"{background_set(original)}\x1b]111{OSC_TERMINATOR}"
+    """The terminal's background put back: `original`, the colour it reported at start."""
+    return background_set(original)
 
 
 CURSOR_POSITION_QUERY = f"{CSI}6n"

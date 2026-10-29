@@ -606,6 +606,41 @@ def with_launch_look(theme: Theme, skin: SkinTheme, background: str | None, look
     return with_catch_colours(looked, skin, background, look)
 
 
+# What `readable_on` lifts beyond `TEXT_ROLES` and `GLYPH_ROLES`: the other roles drawn as words (bold hues, a
+# catch row's words) and as marks, single and stepped. Styles with a background of their own (bands, the pager's bar,
+# an approval's choices) are measured against that band and keep their colours.
+WORD_ROLES = ("slash", "menu_current", "catch_words", "background_word")
+WORD_STEPS = ("kinds", "dag_words", "aura", "aura_glint")
+MARK_STEPS = ("dag_edges", "catch_mark")
+
+
+def readable_on(theme: Theme, skin: SkinTheme, background: str) -> Theme:
+    """`theme` with every word and mark drawn on the terminal's own background also reaching its floor against
+    `background`, lifted toward the ink only as far as that takes, so it keeps its floor against the background it
+    was measured on too where both are on one side (a light ink only gains against a darker background).
+
+    For the living wallpaper (`wallpaper`): the roles are measured against the look's ground, and the rows printed
+    with them stay in the terminal after the wallpaper's background is put back, on the background the terminal
+    reported (`background`)."""
+    ink = BLACK if is_light(background) else _palette(skin)["banner_text"]
+
+    def lift(style: Style, minimum: float) -> Style:
+        if style.fg is None or style.bg is not None:
+            return style
+        return replace(style, fg=_lifted(style.fg, ink, background, minimum))
+
+    changes: dict[str, object] = {}
+    for name in (*TEXT_ROLES, *WORD_ROLES):
+        changes[name] = lift(getattr(theme, name), TEXT_CONTRAST)
+    for name in GLYPH_ROLES:
+        changes[name] = lift(getattr(theme, name), EDGE_CONTRAST)
+    for name in WORD_STEPS:
+        changes[name] = tuple(lift(style, TEXT_CONTRAST) for style in getattr(theme, name))
+    for name in MARK_STEPS:
+        changes[name] = tuple(lift(style, EDGE_CONTRAST) for style in getattr(theme, name))
+    return replace(theme, **changes)
+
+
 def blend(start: str, end: str, share: float) -> str:
     """`#rrggbb` `start` moved `share` (0 to 1) of the way to `end`."""
     return _mix(start, end, share)

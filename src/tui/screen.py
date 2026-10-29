@@ -75,16 +75,19 @@ blanked, so nothing of the frame reaches the scrollback.
 
 The living wallpaper (`wallpaper`): a frame passed `ambient` cells paints the
 ones that fall on a blank cell, with absolute moves as the edge frame is: the
-tail of each of the caller's rows to the right of its text (not a band's,
-which is filled to the edge, and on the caret's row only past the caret), and
-the footer and the rows under the region. A row above the region's top, one
-it flushed, only where the caller asks (`ambient_above`: the launch screen's
-logo and card, never a transcript someone may select and copy), and with a
-footer never the edge frame's cells. A frame that repaints or erases a row takes that row's cells
-with it; between frames `paint_ambient` writes only the cells that changed.
-Before a write that can scroll the screen or move rows (a flush, a frame that
-grows, a new width) every painted cell is blanked first, as the edge frame is
-taken off, so none reaches the scrollback.
+caller's rows that are wholly blank, and the footer and the rows under the
+region. A row with text never gets a glyph, not even in its tail, so a
+selection across it copies only its text and a wallpaper tick never repaints
+a row someone may be selecting. A row above the region's top, one it flushed,
+only where the caller asks (`ambient_above`: the launch screen's logo and
+card, never a transcript), and then `TEXT_GAP` cells past its text. With a
+footer, never the edge frame's cells. A frame that repaints or erases a row
+takes that row's cells with it; between frames `paint_ambient` writes only the
+cells that changed. Before a write that can scroll the screen or move rows (a
+flush, a frame that grows), the cells the scroll would carry into the
+scrollback are blanked first and the rest are moved with the screen
+(`_carry`); a new width or `clear` blanks them all, so none reaches the
+scrollback.
 
 Precondition: the region is never taller than the terminal. Cursor-up stops
 at the top of the screen, so a taller region would lose its relative
@@ -135,6 +138,7 @@ CLEAR_SCREEN_AND_SCROLLBACK = f"{CSI}H{CSI}2J{ERASE_SCROLLBACK}"
 # One synchronized update: the terminal holds the screen until the end mark, then shows the frame at once.
 SYNC_BEGIN = f"{CSI}?2026h"
 SYNC_END = f"{CSI}?2026l"
+TEXT_GAP = 2  # cells left blank between a row's text and the first wallpaper glyph after it
 FLUSHED_KEPT = 512  # flushed rows kept to paint the screen's top row back under the edge frame (more than any screen)
 
 
@@ -190,6 +194,22 @@ def _without_controls(line: Line) -> Line:
     return tuple(
         Span("".join(ch for ch in strip_escapes(span.text) if not is_unpainted(ch)), span.style) for span in line
     )
+
+
+def _is_blank(line: Line) -> bool:
+    """Whether a row shows nothing: only spaces, and no background (a band's fill shows)."""
+    return all(not span.text.strip() and span.style.bg is None for span in line)
+
+
+def _blank_from(line: Line, width: int, margin: int) -> int | None:
+    """Where the wallpaper may start on a flushed row (`ambient_above`): at the margin on a blank row, `TEXT_GAP` cells
+    past the text on one with text (a terminal that draws an ambiguous-width glyph two cells wide would otherwise
+    push the glyph over the row's last character), never on a band's row (None)."""
+    if line and is_fill(line[-1]):
+        return None
+    if _is_blank(line):
+        return margin
+    return margin + min(line_width(line), width) + TEXT_GAP
 
 
 def paint_line(line: Line, width: int) -> str:
@@ -587,11 +607,12 @@ class LiveRegion:
 
     def _blank_starts(self, rows: int) -> dict[int, int]:
         """Screen row -> the first column of its blank cells, for the rows the wallpaper may paint on a screen `rows`
-        tall: the tail of each of the caller's rows past its text (not a band's, whose background runs to the edge,
-        nor one the last two frames both painted again, and on the caret's row only past the caret), and the
-        region's footer and the rows under the region whole; above the region only where `ambient_above` was asked,
-        the tails of the rows it flushed there. With a footer (the working glow's frame) the screen's top and last
-        rows stay the frame's. Empty where the region's place is not certain."""
+        tall: each of the caller's rows that is wholly blank (a row with text keeps its tail clear, so a selection
+        across it copies no glyph and a tick never repaints a row someone may be selecting), but not one the last two
+        frames both painted again, and the region's footer and the rows under the region; above the region only
+        where `ambient_above` was asked, the tails of the rows it flushed there, `TEXT_GAP` cells past their text.
+        With a footer (the working glow's frame) the screen's top and last rows stay the frame's. Empty where the
+        region's place is not certain."""
         top, width = self._top(rows), self._width
         if top is None or width is None or not self._rows:
             return {}
@@ -603,8 +624,8 @@ class LiveRegion:
                 if start is not None:
                     starts[row] = start
         for index, line in enumerate(self._lines[:caller]):
-            if index not in self._busy_rows and not (line and is_fill(line[-1])):
-                starts[top + index] = self._margin + min(line_width(line), width)
+            if index not in self._busy_rows and _is_blank(line):
+                starts[top + index] = self._margin
         for row in range(top + caller, rows):
             starts[row] = self._margin
         if self._cursor is not None and not self._hidden:
@@ -713,8 +734,7 @@ class LiveRegion:
             ops.append(painted if index == 0 else cursor_forward(self._margin) + painted)
             ops.append(NEWLINE)
             self._above.append(painted)
-            blank = None if line and is_fill(line[-1]) else self._margin + min(line_width(line), width)
-            self._above_blank.append(blank)
+            self._above_blank.append(_blank_from(line, width, self._margin))
         # The cursor now sits on the row below the last flushed line: the new top.
         self._row = 0
         self._parked = None
@@ -730,8 +750,7 @@ class LiveRegion:
             self._write(lead)
         if not self._rows and self._parked == (0, 0):
             return
-        ops: list[str] = self._unframe()
-        self._paper, self._papered_at = {}, None  # erased below with the rest, never above the region's top
+        ops: list[str] = self._unframe() + self._unpaper()  # cells above the region's top survive the erase below
         self._move_to(0, ops)
         ops.append(ERASE_BELOW)
         self._write("".join(ops))

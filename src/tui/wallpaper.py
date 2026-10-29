@@ -43,7 +43,9 @@ import math
 
 from .theme import BLACK, DEFAULT_LAUNCH, LAUNCH_PALETTES, LogoPalette, _logo_stops, blend, contrast_ratio, is_light
 
-TICK_SECONDS = 0.1  # how often the app paints while the wallpaper moves
+# How often the app paints the scene's changed cells between frames (a turn's frames, every spinner tick, bring it
+# along too): about four times a second keeps the motion visible within a second while an idle screen writes little.
+TICK_SECONDS = 0.25
 PEAK = 0.9  # the brightest a cell gets: the look's colour this far from the ground
 LEVELS = 8  # brightness steps: a cell keeps its bytes until its step changes
 # No cell stands out from the ground by more than this, well under the 4.5:1 the theme gives words: ambience never

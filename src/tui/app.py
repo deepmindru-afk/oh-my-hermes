@@ -290,6 +290,7 @@ from .theme import (
     lifted_colour,
     logo_lines,
     look_ground,
+    readable_on,
     surface_for,
     theme_named,
     without_colour,
@@ -2154,7 +2155,12 @@ class App(ModesMixin, AgentViewMixin):
         roles it owns (`with_launch_look`), painted."""
         skin, surface, look = self._skin(), self._surface(), self._shown_look()
         banded = with_prompt_band(build_theme(skin, surface), skin, surface, look)
-        return self._painted(with_launch_look(banded, skin, surface, look))
+        looked = with_launch_look(banded, skin, surface, look)
+        if self._ground() is not None and self.background_answered is not None:
+            # On the wallpaper's ground: the rows printed now outlive it (they show on the terminal's own background
+            # after exit), so every word and mark also keeps its floor against that.
+            looked = readable_on(looked, skin, self.background_answered)
+        return self._painted(looked)
 
     def _skin(self) -> SkinTheme:
         return theme_for_name(self.theme.name) or default_theme()
@@ -5718,16 +5724,20 @@ class App(ModesMixin, AgentViewMixin):
 
     def _preview_launch(self) -> None:
         """Draw the shown look where it shows: on the launch screen, the logo by a full redraw and the live card in
-        the region; past it, the compact preview above the picker (`_launch_preview`) needs only the next frame."""
+        the region; past it, the compact preview above the picker (`_launch_preview`) needs only the next frame.
+        Where the wallpaper shows, the look's ground becomes the whole screen's background, so the session is printed
+        again in colours measured against it."""
         self.theme = self._themed()  # a sent prompt's band in the shown look
-        if self.card_state == CARD_LIVE:
+        if self.card_state == CARD_LIVE or self._ground() is not None:
             self._full_redraw()
         self.dirty = True
 
     def _redraw_launch(self) -> None:
         """Draw a look kept: as the preview does, and once the launch is past it, the logo and the kept card in
-        scrollback again by a full redraw while the whole session still fits one, as `/theme <name>` repaints."""
-        if self.card_state == CARD_LIVE or (self.in_launch_session and not self.transcript.left_out):
+        scrollback again by a full redraw while the whole session still fits one, as `/theme <name>` repaints; and
+        whenever the wallpaper shows, since the ground under the rows already printed changed."""
+        if self.card_state == CARD_LIVE or (self.in_launch_session and not self.transcript.left_out) \
+                or self._ground() is not None:
             self._full_redraw()
         self.dirty = True
 
@@ -6155,15 +6165,18 @@ class App(ModesMixin, AgentViewMixin):
     def _wallpaper_shown(self) -> bool:
         """Whether the living wallpaper shows: wanted (`/wallpaper`), not held off by OMH_TUI_WALLPAPER=0, at the
         truecolor depth (so not under NO_COLOR), on a terminal that answered the startup background query, whose
-        colour is what it puts back."""
+        colour is what it puts back, and not where `/theme light` or `dark` names the other side from the terminal's
+        own background: the terminal's foreground (body text) is picked for its own background, and a ground of
+        the other lightness would leave it unreadable."""
+        answered = self.background_answered
         return (self.wallpaper and self.environ.get(WALLPAPER_ENV) != WALLPAPER_OFF
-                and self.background_answered is not None and self.color_depth == TRUECOLOR)
+                and answered is not None and self.color_depth == TRUECOLOR
+                and (self.background_mode == BACKGROUND_AUTO
+                     or (self.background_mode == BACKGROUND_LIGHT) == is_light(answered)))
 
     def _ground_light(self) -> bool:
-        """Whether the wallpaper takes the look's light ground: `/theme light` or `dark` says, else the terminal's
-        own background does, so the terminal's foreground stays readable on it."""
-        if self.background_mode != BACKGROUND_AUTO:
-            return self.background_mode == BACKGROUND_LIGHT
+        """Whether the wallpaper takes the look's light ground: the terminal's own background is light, so its
+        foreground, picked for that background, stays readable on the ground."""
         return self.background_answered is not None and is_light(self.background_answered)
 
     def _ground(self) -> str | None:
@@ -6197,9 +6210,11 @@ class App(ModesMixin, AgentViewMixin):
         return scene(self._shown_look(), *self.screen, seconds, self._ground_light())
 
     def _wallpaper_moves(self) -> bool:
-        """Whether the wallpaper's scene moves now: it shows, with motion on, and no pager or settling resize holds
-        the screen."""
-        return self.motion and self.pager is None and self.redraw_at is None and self._ground() is not None
+        """Whether the wallpaper's own tick paints now: it shows, with motion on, no pager or settling resize holds the
+        screen, and the composer is empty. While someone types (an IME's pre-edit sits at the caret), no tick moves
+        or hides the cursor; the frames their keys draw still bring the scene along."""
+        return (self.motion and self.pager is None and self.redraw_at is None and not self.composer.text
+                and self._ground() is not None)
 
     def _saved_wallpaper(self) -> bool:
         """Whether the living wallpaper is wanted: as saved under the OMH home, else on."""

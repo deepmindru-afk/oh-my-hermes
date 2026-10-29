@@ -883,21 +883,28 @@ run and approval decision stays Hermes'; the screen is OMH's.
   soft bokeh drifting; graphite rain over a puddle that ripples; spectrum a
   prism with a beam of light fanning out into five hues. A terminal with a
   light background gets each look's pale ground instead.
-  The theme is measured against that ground, so every colour keeps its
-  contrast floor. The scene is drawn only on blank cells: the tail of each
-  row to the right of its text, the rows under a short session and the
-  launch screen's empty area, never over text, never on the transcript's
-  rows, and never into the scrollback (a cell a scroll would carry there is
-  taken off first). At most a sixth of the screen is lit, and no cell is
-  brighter than 3:1 against the ground. It repaints only the cells that
-  changed, every 0.1 s, leaves alone the tail of a row that is repainted
-  every frame (the working row's spinner), and stands still with reduced
-  motion; a screen under 80×24 keeps the ground with no scene. It shows at
-  truecolor, on a terminal that answered the background query at start, and
-  not under `NO_COLOR`.
-  The terminal's own background comes back on every way out: on exit
-  (normal, a crash, or a signal), while the job is stopped with Ctrl+Z (set
-  again when it continues), and as soon as the wallpaper is turned off.
+  The theme is measured against that ground, and every word and mark also
+  keeps its floor against the terminal's own background, which the rows
+  printed during the session show on after exit. Changing the look past the
+  launch screen prints the session again on the new ground. The scene is
+  drawn only on rows that are wholly blank: the rows under a short session,
+  the launch screen's empty area, and two cells past the end of the logo
+  and card rows while the launch card shows. A row with text never gets a
+  glyph, so a selection copies only text, and nothing reaches the
+  scrollback (a cell a scroll would carry there is taken off first). At
+  most a sixth of the screen is lit, and no cell is brighter than 3:1
+  against the ground. Between frames it repaints only the cells that
+  changed, every 0.25 s, not while the composer holds text (so typing and
+  an IME's pre-edit are left alone), and stands still with reduced motion;
+  a screen under 80×24 keeps the ground with no scene. It shows at
+  truecolor, on a terminal that answered the background query at start,
+  not under `NO_COLOR`, and not where `/theme light` or `/theme dark` names
+  the other side from the terminal's own background (its text colour would
+  not read on a ground of the other lightness).
+  The terminal's own background, the colour it reported at start, comes
+  back on every way out: on exit (normal, a crash, or a signal), while the
+  job is stopped with Ctrl+Z (set again when it continues), and as soon as
+  the wallpaper is turned off.
   `/wallpaper off` turns it off and `/wallpaper on` back on (`/wallpaper`
   alone switches it); the choice is saved as `wallpaper` in
   `<omh_home>/tui/theme.json`, and `omh theme wallpaper on|off` saves the

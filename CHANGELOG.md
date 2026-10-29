@@ -19,13 +19,17 @@ All notable changes will be documented here.
   campfire and rising sparks; gold a large sun with turning rays; violet
   large drifting bokeh; graphite rain over a rippling puddle; spectrum a
   prism fanning a beam into five hues. A light terminal gets each look's
-  pale ground. The theme is measured against the ground, so every colour
-  keeps its contrast floor. At most a sixth of the screen is lit and no cell
-  passes 3:1 against the ground; the scene is drawn only on blank cells,
-  never over text, the transcript or into the scrollback, repaints only the
-  cells that changed every 0.1 s, and stands still with reduced motion. It
-  shows at truecolor on a terminal that answered the background query, and
-  not under `NO_COLOR`. It is on by default; `/wallpaper on|off` (alone, it
+  pale ground. The theme is measured against the ground, and every word and
+  mark also keeps its floor against the terminal's own background, where
+  the session's rows stay after exit; a look changed mid-session prints the
+  session again on its ground. At most a sixth of the screen is lit and no
+  cell passes 3:1 against the ground; the scene is drawn only on wholly
+  blank rows (and past the launch logo's text), never on a row with text,
+  the transcript or into the scrollback, repaints only the cells that
+  changed every 0.25 s, pauses while the composer holds text, and stands
+  still with reduced motion. It shows at truecolor on a terminal that
+  answered the background query, not under `NO_COLOR`, and not where
+  `/theme light|dark` names the other side from the terminal's own. It is on by default; `/wallpaper on|off` (alone, it
   switches) and `omh theme wallpaper on|off` save the choice as `wallpaper`
   in the theme record, and `OMH_TUI_WALLPAPER=0` holds it off in one
   terminal. The `/theme` picker shows each look's colours on its ground.
