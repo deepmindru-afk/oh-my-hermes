@@ -1,5 +1,5 @@
 {
-  "catalog_revision": "26f98196454ed86ef341f80f932bab56339c48aff06f0e23a9f5fe0409d535d0",
+  "catalog_revision": "cca66fc8475844f8287c104e4a5b4f85db398f79ce6f187894cc430c68960726",
   "files": {
     "omh-accessibility-audit/SKILL.md": "eb5011ae3f74d84dbe66bf2dcea9533c08ca407b246680b0bd686122f09b27fe",
     "omh-accessibility-audit/references/a11y-rules.md": "cd7e0404576923cfd3bcec9e055b1de7a78f3fc55971fd033598aac1043e4469",
@@ -98,13 +98,13 @@
     "omh-frontend-refactor/SKILL.md": "31dbb0d8f86a1a3d34f78eefac1142f5eaa580f0072f3fbfcdb5fcbc1231be10",
     "omh-frontend-refactor/references/refactor-passes.md": "ce187b2323fda67fb536249193b4cc0bab1f04024986c8313bb7a4c5fd87e54f",
     "omh-frontend-refactor/references/state-discipline.md": "04084cfd8d849f9e0b468d8a30fecc58f8c37ca5d5585afeb1e3bce95719faa4",
-    "omh-frontend/SKILL.md": "f3c89e373042e00fe94be43ab617848aa2706573d8890701e4b8ac52f3fc3dc8",
+    "omh-frontend/SKILL.md": "871d5ca5017c98d83444644f37e0ee961cd00a38a3709f08668efb8f82044bec",
     "omh-frontend/references/chart-styling.md": "aaaa79f8c52fd7e1b7daaa3a1142df79116eadfb7bb5653da5b0af0cbf0aecc3",
     "omh-frontend/references/component-registry-adoption.md": "8ec6284a7ad4e25e41f662474c85f280bed69869194c53509a22e23f3a3bc96e",
     "omh-frontend/references/design-system-contract.md": "551c4de7c97d31e1733af48a7ecfc6e9b4492c1be2fe35be65e8d24103f80dcd",
     "omh-frontend/references/reference-token-extraction.md": "b36dedde2f859f83a95563cddab06f4002ce8c0a2c3b4ef64abc8a954c1e12bf",
     "omh-frontend/references/rendered-scene-craft.md": "d6d3ab6749dc445580087358a0923db5e969918f5a64cf1336408ddb2dcbd310",
-    "omh-frontend/references/screenshot-loop.md": "ddaaf841a154130222c98945d070f4a8b157a564ef59a3f960a3e48e01113e09",
+    "omh-frontend/references/screenshot-loop.md": "d471b396b9fc9a39e06d2b52b3a55f055ed0294fcff80f2855efcfc36251180d",
     "omh-frontend/references/scroll-motion-libraries.md": "605393baaed428e2adab937fdbc1ab3e5db20a6592039d948a2447da80ceb245",
     "omh-frontend/references/taste-foundations.md": "e582a6a8b6921f307f19835210c8d927811320a4c80c040956d4a50af5e7c45e",
     "omh-frontend/references/tui-craft.md": "792b2dda6278a2e4a7a713d60aba09844362fd0376ae24f8ff10f4af8e3d1937",
