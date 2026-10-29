@@ -556,8 +556,8 @@ superiority.
 
 ### 2026-10-30 round-end checklist in `pre_verify`: off vs on, gate failed
 
-Not merged. Measurement 3, with a decoy template and a final-answer clause added, fails
-the token and scope clauses (details at the end of this section).
+Not merged, closed. Four measurements; the last two, with a decoy template and a final-answer
+clause added, fail the token and scope clauses (details at the end of this section).
 
 One question, from oh-my-pi's prewalk checklist and its delivery rules: after a turn
 that edited code, does one short checklist at the first stop (consistency, scope,
@@ -831,6 +831,61 @@ The gate is the same eight clauses with unchanged thresholds:
 - `C-DECOY`: on at least off - 1.
 
 The result is reported here with pooled `C-DUPLICATE` over all four measurements.
+
+#### Measurement 4 result: gate failed, item closed
+
+omh `530068797` on origin/main `5cc1ed311`, Hermes Agent v0.22.5 · stable · local
+bf0203a794a0. 180 of 180 run records, all completed.
+
+| Model | off | on | off tokens (median) | on tokens (median) |
+| --- | ---: | ---: | ---: | ---: |
+| `claude-haiku-4-5-20251001` | 12 / 15 | 15 / 15 | 268,730 | 318,424 |
+| `claude-haiku-5-5` | 15 / 15 | 15 / 15 | 243,538 | 302,141 |
+| `gpt-6-luna` | 12 / 15 | 14 / 15 | 241,621 | 306,662 |
+| `claude-sonnet-5-5` | 13 / 15 | 15 / 15 | 172,363 | 246,287 |
+| `claude-opus-5-5` | 15 / 15 | 15 / 15 | 207,843 | 283,440 |
+| `gpt-6.1-sol` | 14 / 15 | 15 / 15 | 174,484 | 216,839 |
+| **Total** | **81 / 90** | **89 / 90** | 19.5M total | 25.9M total |
+
+Per template, off vs on: `E-BUGFIX` 18 vs 17, `E-RENAME` 18 vs 18, `C-DUPLICATE` 9 vs 18,
+`C-SCOPE-TRAP` 18 vs 18, `C-DECOY` 18 vs 18.
+
+The gate:
+
+- Total, on at least off + 3: 89 vs 81. Pass.
+- Strong models, on at least off - 1: 45 vs 42. Pass.
+- `mutation_outside_scope`, on at most off: 1 vs 0. **Fail.** The one run was
+  `gpt-6-luna`, `E-BUGFIX`.
+- Median tokens, on at most 1.3x off: 280,668 vs 207,804, 1.35x. **Fail.**
+- No on run above 3x its off pair's median. Pass.
+- Fired in at least 90% of coding sessions, at most once per turn: 90 / 90, never
+  twice; 0 rows in the off arm. Pass.
+- Final answer kept, on at least off - 2: 89 / 90 vs 61 / 90. Pass.
+- `C-DECOY`, on at least off - 1: 18 vs 18. Pass.
+
+What the four measurements show together:
+
+- **Consistency is a real effect on this corpus.** `C-DUPLICATE` was 18 vs 9 in
+  measurement 4 (two-sided Fisher exact p = 0.001). Pooled over all four measurements it
+  is 58 vs 30 of 72 (p < 0.0001). This is the fourth measurement of one feature family,
+  and the template plants exactly the miss the check names. `C-DECOY` (18 vs 18 in
+  measurements 3 and 4) shows the check did not make models change a documented
+  look-alike. It is one decoy shape.
+- **The cost does not come from re-running tests.** The consistency-only text stopped
+  test re-runs entirely: 0 pytest calls after the check, against 48 in measurement 3.
+  Median tokens still rose 1.35x. The cost is the extra round itself: about two more
+  model calls, each re-sending the whole context, to search for other uses and restate
+  the answer. On these short tasks, about 200k tokens each, that round is a large
+  fraction. No wording change removes it.
+- **Scope failed at n = 1 in measurements 3 and 4, a different model each time.** Each
+  was one on-arm `mutation_outside_scope` on `E-BUGFIX`, against none off. Whether the
+  extra round causes stray edits is not established.
+- Weak models gained 39 to 44 and strong 42 to 45 in measurement 4.
+
+Item B closes here, unmerged, as the owner decided before the run. The code stays on
+branch `feature/round-end-checklist` (`530068797`). A future attempt would need a gate
+that prices the extra round differently, or a cheaper way to ask for the check than a
+continuation. Either is a new decision for the owner.
 
 Pass counts come from the run records. Firing, final answers and tool calls come from
 each profile's session DB.
