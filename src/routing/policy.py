@@ -4935,6 +4935,70 @@ _CREDENTIAL_ROTATION_SUBJECTS = (
     "인증서",
     "자격 증명",
 )
+# A game built for the browser is a rendered UI: `frontend` owns the scene craft
+# bar and the screenshot loop it needs. Measured on afb4f11a5, "three.js로 3D
+# 게임 만들어줘" reached the greenfield interview, "make a browser platformer game
+# in canvas" clarified toward the browser and live-score lanes (`game` is a
+# live-score topic word), and "이 게임 화면이 밋밋해 고쳐줘" reached nothing. The
+# game noun alone is a topic, so it needs a build or a look-and-feel cue beside
+# it, and a native engine, a question, or a non-build artifact stands it down.
+_GAME_NOUNS = (
+    "game",
+    "games",
+    "platformer",
+    "roguelike",
+    "tetris clone",
+    "게임",
+    "플랫포머",
+    "슈팅",
+)
+_GAME_BUILD_CUES = (
+    *_GREENFIELD_CREATION_PHRASES,
+    "make a ",
+    "make an ",
+    "make the game",
+    "feel juicier",
+    "juicier",
+    "game feel",
+    "polish the game",
+    "만들어",
+    "구현해",
+    "밋밋",
+    "화면이",
+    "그래픽",
+    "타격감",
+    "이펙트",
+)
+_GAME_NATIVE_ENGINES = (
+    "unity",
+    "unreal",
+    "godot",
+    "roblox",
+    "gamemaker",
+    "game maker",
+    "유니티",
+    "언리얼",
+    "고도 엔진",
+    "로블록스",
+)
+_GAME_TOPIC_BLOCKERS = (
+    *_GREENFIELD_QUESTION_OPENERS,
+    "game theory",
+    "trailer",
+    "recommend",
+    "tonight",
+    "score",
+    "sprite",
+    "market",
+    "design doc",
+    "추천",
+    "트레일러",
+    "이론",
+    "시장",
+    "기획서",
+    "점수",
+    "스프라이트",
+)
 _DEPENDENCY_UPGRADE_PHRASES = (
     "dependency upgrade",
     "dependency upgrades",
@@ -5827,6 +5891,15 @@ CREDENTIAL_ROTATION_GUARD = RoutingGuardRule(
     why="Matched guard/trigger metadata; replacing a live credential needs an overlap window, a cutover order, and a check that the old credential stopped working.",
     activation_status="active",
 )
+GAME_BUILD_GUARD = RoutingGuardRule(
+    id="game_build_before_greenfield_interview",
+    rule="Building or polishing a browser game should route to frontend, which owns the rendered-scene craft bar and the screenshot loop, before the greenfield interview or the browser and live-score lanes.",
+    matched_label="guard:game_build",
+    preferred_skills=("frontend",),
+    score_boost=30,
+    why="Matched a game noun with a build or look-and-feel cue; a browser game is a rendered UI whose first frame, input response, and loop must be seen, not read.",
+    activation_status="active",
+)
 DEPENDENCY_UPGRADE_GUARD = RoutingGuardRule(
     id="dependency_upgrade_before_generic_plan",
     rule="A major dependency or framework upgrade should route to the phased refactor planner rather than the generic plan lane.",
@@ -5957,6 +6030,7 @@ ROUTING_GUARD_RULES = (
     DIRECT_CODING_TASK_GUARD,
     NAMED_CODING_AGENT_DELIVERY_GUARD,
     CODING_HANDOFF_STATUS_GUARD,
+    GAME_BUILD_GUARD,
 )
 
 
@@ -6015,6 +6089,7 @@ GUARD_DISPATCH_TRUST: dict[str, tuple[str, str]] = {
     "gateway_intent_before_feedback_triage": (GUARD_TRUSTED, "messenger thread or delivery policy named as the task; measured 2 right / 0 wrong"),
     "generated_artifact_provenance_before_deliverable_package": (GUARD_TRUSTED, "asks whether a change touches a generated file; no measured record as a winner, keeps its shape label"),
     "github_event_ops_before_generic_planning": (GUARD_TRUSTED, "an explicit PR, CI, or issue-to-PR event; measured 0 right / 1 wrong; kept trusted: demoting it removes no measured wrong dispatch and moves canonical pins"),
+    "game_build_before_greenfield_interview": (GUARD_TRUSTED, "a build or look-and-feel cue on a browser game, native engines and topic uses excluded; no measured record as a winner, keeps its shape label"),
     "github_issue_intake_before_event_ops_or_feedback": (GUARD_TRUSTED, "an imperative to file a new issue; no measured record as a winner, keeps its shape label"),
     "greenfield_build_before_generic_picker": (GUARD_CONTEXT_ONLY, "fires on build plus the absence of a named existing surface; no measured record as a winner, keeps its shape label"),
     "harness_session_inventory_before_toolbelt_or_observability": (GUARD_TRUSTED, "an inventory request over named harness sessions; measured 1 right / 0 wrong"),
@@ -6618,6 +6693,8 @@ def _active_routing_guard_rules_cached(
         rules.append(CONTRACT_REDLINE_GUARD)
     if credential_rotation_guard_applies(normalized_query):
         rules.append(CREDENTIAL_ROTATION_GUARD)
+    if not direct_coding_task_applies and game_build_guard_applies(normalized_query):
+        rules.append(GAME_BUILD_GUARD)
     if dependency_upgrade_guard_applies(normalized_query):
         rules.append(DEPENDENCY_UPGRADE_GUARD)
     if _generated_artifact_provenance_guard_applies(normalized_query):
@@ -10358,6 +10435,15 @@ def contract_redline_guard_applies(normalized_query: str) -> bool:
     return _contains_phrase(normalized_query, _CONTRACT_MARKUP_CUES) and _contains_phrase(
         normalized_query, _CONTRACT_DOCUMENT_NOUNS
     )
+
+
+def game_build_guard_applies(normalized_query: str) -> bool:
+    """A game noun plus a build or look-and-feel cue, for a game the browser renders."""
+    if not phrase_is_spoken(normalized_query, "game") and not _contains_phrase(normalized_query, _GAME_NOUNS):
+        return False
+    if not _contains_phrase(normalized_query, _GAME_BUILD_CUES):
+        return False
+    return not _contains_phrase(normalized_query, _GAME_NATIVE_ENGINES + _GAME_TOPIC_BLOCKERS)
 
 
 def credential_rotation_guard_applies(normalized_query: str) -> bool:
