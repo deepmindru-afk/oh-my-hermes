@@ -5472,7 +5472,8 @@ class App(ModesMixin, AgentViewMixin):
     def _logs(self, arg: str) -> None:
         tail = self.client.stderr_tail()
         if tail:
-            self._open_pager("gateway stderr (memory only)", [(Span(line),) for line in tail])
+            # As painted: escapes and controls gone and tabs as spaces, so a cell is the column it shows on.
+            self._open_pager("gateway stderr (memory only)", [(Span(clean_text(line)),) for line in tail])
         else:  # /logs has no echo: during a turn this waits under what runs
             self.transcript.add_aside(NoticeBlock("The gateway has written nothing to stderr."))
 

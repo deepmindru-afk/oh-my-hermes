@@ -15,7 +15,9 @@ All notable changes will be documented here.
   glint and the running box's aura in `/dag`. A copy hands back the text's
   own code points, so a decomposed macOS path from `/logs` still matches its
   file, and a subagent's log row and a bot's message are cut between glyphs,
-  never inside an emoji, a flag or a letter with its accent.
+  never inside an emoji, a flag or a letter with its accent. `/logs` shows a
+  tab as spaces and no longer lets a colour code in stderr shift the columns a
+  click or a drag lands on.
 
 - **A light goes round the OMH TUI's screen while a turn runs.** It runs
   along the terminal's whole edge, clockwise, once every four seconds, with

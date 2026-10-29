@@ -13,6 +13,7 @@ round 2026-10-28, R-B).
 from __future__ import annotations
 
 import base64
+import time
 import unicodedata
 import unittest
 from dataclasses import replace
@@ -23,12 +24,13 @@ from test_tui_modes import drawn, make_app
 from omh.plugin_bundle.omh.delegation_view import Segment
 from omh.tui import bot_board, subagents
 from omh.tui.keys import BUTTON_LEFT, Mouse
-from omh.tui.pager import Pager, _reversed
+from omh.tui.pager import Pager, _cells, _reversed, _word_at
 from omh.tui.panels import _aura_box
+from omh.tui.screen import paint_line, without_controls
 from omh.tui.style import TRUECOLOR, Span, Style
 from omh.tui.theme import DEFAULT_THEME
 from omh.tui.transcript import AssistantBlock, _glinted
-from omh.tui.width import cluster_width, clusters, line_width
+from omh.tui.width import TAB_CELLS, cluster_width, clusters, line_width
 
 # One cluster each, with what a code-point count made of it.
 LEADS = {
@@ -62,6 +64,12 @@ def text_of(line) -> str:
 def no_cluster_split(line) -> bool:
     """Every span boundary of `line` falls between two clusters of its text."""
     return [cluster for span in line for cluster in clusters(span.text)] == clusters(text_of(line))
+
+
+def _timed(work) -> float:
+    start = time.perf_counter()
+    work()
+    return time.perf_counter() - start
 
 
 def click(pager: Pager, x: int, now: float) -> str:
@@ -154,6 +162,68 @@ class PagerSelectionTests(unittest.TestCase):
         sent = [text.removeprefix("52;c;") for text in screen.osc if text.startswith("52;c;")]
         self.assertEqual([base64.b64decode(text.rstrip("\x07")).decode("utf-8") for text in sent], [path])
 
+    def test_escapes_and_controls_take_no_column_and_are_never_copied(self) -> None:
+        # `paint_line` drops them (`screen.without_controls`), so the pager measures and copies what it paints.
+        for text, x, word in (("\x1b[31mERROR\x1b[0m: boom", 8, "boom"), ("\x9b31mred\x9b0m alert", 5, "alert"),
+                              ("\x1b]8;;http://x\x07link\x1b]8;;\x07 here", 6, "here"),
+                              ("👨\x01\u200d👩 x", 4, "x"), ("☀\x01\ufe0f x", 4, "x")):
+            with self.subTest(text=text):
+                pager = Pager("log", [(Span(text),)])
+                pager.frame(40, 10, DEFAULT_THEME)
+                click(pager, x, 0.0)
+                self.assertEqual(click(pager, x, 0.1), word)
+                line = (Span(text),)
+                self.assertEqual(sum(cell.width for cell in _cells(line)), line_width(without_controls(line)))
+                lit, plain = VTScreen(1, 40), VTScreen(1, 40)
+                lit.feed(paint_line(_reversed(line, 0, 1), 40))
+                plain.feed(paint_line(line, 40))
+                self.assertEqual(lit.line(0), plain.line(0), "the highlight paints the same glyphs")
+
+    def test_the_highlight_never_joins_two_spans_into_one_cluster(self) -> None:
+        line = (Span("ab👨\u200d"), Span("👩 tail"))  # measured span by span, as `width` measures every row
+        for low, high in ((0, 0), (20, 20), (2, 3), (0, 20)):
+            with self.subTest(low=low, high=high):
+                self.assertEqual(line_width(_reversed(line, low, high)), line_width(line))
+
+    def test_a_zero_width_cluster_that_leads_the_row_leaves_the_word_after_it_clickable(self) -> None:
+        self.assertEqual(_word_at((Span("\ufeffhello world"),), 0), (0, 4))
+        self.assertEqual(_word_at((Span("\u0301abc"),), 0), (0, 2))
+
+    def test_a_word_keeps_punctuation_that_carries_a_mark(self) -> None:
+        pager = Pager("log", [(Span("snake_\u0301case x"),)])
+        pager.frame(40, 10, DEFAULT_THEME)
+        click(pager, 1, 0.0)
+        self.assertEqual(click(pager, 1, 0.1), "snake_\u0301case")
+
+    def test_one_long_cluster_is_measured_in_linear_time(self) -> None:
+        # One base with thousands of marks, not NFC: pairing each cluster with its source by growing a run one code
+        # point at a time took 71 ms for 2,000 marks (and four times that for twice as many); it is a few ms now.
+        line = (Span("a" + "\u0301" * 4000),)
+        best = min(_timed(lambda: _reversed(line, 0, 5)) for _ in range(3))
+        self.assertLess(best, 0.1)
+
+    def test_the_logs_pager_paints_and_copies_what_stderr_shows(self) -> None:
+        now = [100.0]
+        app, client = make_app(rows=12, cols=60, environ=KITTY, clock=lambda: now[0])
+        app.pbcopy = lambda text: False  # type: ignore[method-assign]  # never the real clipboard
+        client.stderr_tail = lambda: [  # type: ignore[attr-defined]
+            "\x1b[31mERROR\x1b[0m: boom", "\x9b33mwarn\x9b0m: \x1b]8;;http://x\x07docs\x1b]8;;\x07", "col\tnext"]
+        app._logs("")
+        drawn(app)
+        screen = app.terminal.screen  # type: ignore[attr-defined]
+        rows = screen.lines()
+        self.assertTrue(any("ERROR: boom" in row for row in rows))
+        self.assertTrue(any("warn: docs" in row for row in rows))
+        self.assertTrue(any("col\tnext".expandtabs(TAB_CELLS) in row for row in rows), "a tab is spaces")
+        y = next(index for index, row in enumerate(rows) if "ERROR: boom" in row)
+        x = rows[y].index("boom") + 1
+        for _ in range(3):  # a triple click: the row
+            app._on_input(Mouse(BUTTON_LEFT, x, y + 1))
+            app._on_input(Mouse(BUTTON_LEFT, x, y + 1, pressed=False))
+            now[0] += 0.1
+        sent = [text.removeprefix("52;c;") for text in screen.osc if text.startswith("52;c;")]
+        self.assertEqual([base64.b64decode(text.rstrip("\x07")).decode("utf-8") for text in sent][-1], "ERROR: boom")
+
     def test_the_app_copies_the_word_after_a_zwj_family_with_the_clipboard_stubbed(self) -> None:
         now = [100.0]
         app, _client = make_app(rows=12, cols=60, environ=KITTY, clock=lambda: now[0])
@@ -184,9 +254,14 @@ class ClusterCutTests(unittest.TestCase):
                 text = "a" * 9 + lead + " tail"  # the limit, 10, falls inside `lead`
                 self.assertEqual(subagents._cut(text, 10), "a" * 9 + subagents.CUT_MARK)
                 self.assertEqual(subagents._one_line(text, 10), "a" * 9 + subagents.CUT_MARK)
-                # A row is painted NFC (`wrap_line`) whether cut or not, so the cut keeps the painted form.
-                self.assertEqual(subagents._cut(text, 9 + len(lead)), "a" * 9 + nfc(lead) + subagents.CUT_MARK)
+                self.assertEqual(subagents._cut(text, 9 + len(lead)), "a" * 9 + lead + subagents.CUT_MARK)
                 self.assertEqual(subagents._cut(text, len(text)), text)
+
+    def test_a_cut_keeps_the_texts_own_code_points_and_never_grows_past_its_limit(self) -> None:
+        text = "\u0958" * 10  # NFC writes each as two code points (it is a composition exclusion)
+        cut = subagents._cut(text, 5)
+        self.assertEqual(cut, "\u0958" * 5 + subagents.CUT_MARK)
+        self.assertEqual(subagents._cut("cafe\u0301 au lait", 6), "cafe\u0301 " + subagents.CUT_MARK)
 
     def test_a_bots_message_is_cut_before_the_cluster_the_limit_falls_in(self) -> None:
         for name, lead in CUT_LEADS.items():

@@ -130,6 +130,12 @@ def clusters(text: str) -> list[str]:
     return _segment(unicodedata.normalize("NFC", text))
 
 
+def clusters_as_written(text: str) -> list[str]:
+    """`clusters` without its NFC step: the same units in `text`'s own code points, for a copy or a cut that must hand
+    back what was written (a decomposed macOS path still matches its file). `cell_width` measures one as painted."""
+    return list(text) if text.isascii() else _segment(text)
+
+
 def _ascii_width(text: str) -> int:
     """Cells of ASCII text: one per printable character, none for a control or DEL."""
     return len(text) if text.isprintable() else sum(1 for ch in text if ch.isprintable())

@@ -96,7 +96,7 @@ from .panels import SPINNER_FRAMES
 from .prompts import CHOICE_MARK
 from .style import Line, Span
 from .theme import Theme, kind_style
-from .width import cell_width, clusters, truncate, truncate_line, wrap_line
+from .width import cell_width, clusters_as_written, truncate, truncate_line, wrap_line
 
 QUEUED = "queued"
 RUNNING = "running"
@@ -240,9 +240,10 @@ def _cut(text: str, limit: int) -> str:
 
 
 def _whole_clusters(text: str, limit: int) -> str:
-    """`text` from its start to at most `limit` characters, in whole clusters (`width.clusters`): the one `limit` falls
-    in is left out, so a cut never splits a ZWJ family, a skin tone, a flag or a base from its marks."""
-    return text if len(text) <= limit else "".join(clusters(text[: limit + 1])[:-1])
+    """`text` from its start to at most `limit` of its own characters, in whole clusters (`width.clusters_as_written`):
+    the one `limit` falls in is left out, so a cut never splits a ZWJ family, a skin tone, a flag or a base from its
+    marks, and never normalizes what it keeps."""
+    return text if len(text) <= limit else "".join(clusters_as_written(text[: limit + 1])[:-1])
 
 
 def _lines(text: str) -> list[str]:
