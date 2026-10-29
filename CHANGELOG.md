@@ -465,6 +465,11 @@ All notable changes will be documented here.
   `local_modifications` and `guidance_projection` with the reason, while
   every other check still runs. The advice still never moves doctor's
   status or exit code.
+- **product-ab gives the OMH arm the same reach as the Hermes arm.** The OMH
+  arm's unit was scoped to `src/` and `tests/` while the Hermes arm's prompt
+  set no limit, so a task whose fix regenerates `docs/WORKFLOWS.md` or a
+  skill body was one only the Hermes arm was allowed to finish. The unit
+  scope is now the whole checkout.
 
 ## 4.0.3 - 2026-10-27
 
