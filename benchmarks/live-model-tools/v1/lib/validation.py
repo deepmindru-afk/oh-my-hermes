@@ -40,12 +40,13 @@ workspace, test_file, checks = sys.argv[1], sys.argv[2], sys.argv[3]
 sys.path.insert(0, workspace + "/src")
 namespace = {}
 exec(checks, namespace)
-module = runpy.run_path(workspace + "/" + test_file)
 ran = 0
-for key, value in sorted(module.items()):
-    if key.startswith("test_") and callable(value):
-        value()
-        ran += 1
+if test_file != "-":
+    module = runpy.run_path(workspace + "/" + test_file)
+    for key, value in sorted(module.items()):
+        if key.startswith("test_") and callable(value):
+            value()
+            ran += 1
 print(json.dumps({"tests_run": ran}))
 """
 
@@ -151,7 +152,11 @@ def _rename_shadow_ok(workspace: Path, golden: dict[str, Any]) -> bool:
 _LSP_AB_VALIDATORS = {"RENAME-ALIAS": _rename_alias_ok, "RENAME-SHADOW": _rename_shadow_ok}
 
 
-# impact-ab: every caller module is exercised in a fresh interpreter, then the workspace's own tests.
+# impact-ab: the definition and every caller module are exercised in a fresh interpreter. The
+# workspace's own tests are the model's to change; they are not run here, because a bare runpy cannot
+# run what pytest can (fixtures, parametrize, `import pytest` in this interpreter): measured on a
+# first run, a correct gpt-6.1-sol edit whose new test imported pytest was scored as a fail.
+_NO_TESTS = "-"
 def _signature_ok(workspace: Path, golden: dict[str, Any]) -> bool:
     rate = golden["rate"]
     amount = 12345
@@ -169,7 +174,7 @@ def _signature_ok(workspace: Path, golden: dict[str, Any]) -> bool:
         f"assert fee_line({amount}) == 'fee={amount * 100 // 10000}'\n"
         f"assert cli_fee(['{amount}']) == {amount * 50 // 10000}\n"
     )
-    return _behaviour_ok(workspace, "tests/test_pricing.py", checks, golden["min_tests"])
+    return _behaviour_ok(workspace, _NO_TESTS, checks, 0)
 
 
 def _return_shape_ok(workspace: Path, golden: dict[str, Any]) -> bool:
@@ -188,7 +193,7 @@ def _return_shape_ok(workspace: Path, golden: dict[str, Any]) -> bool:
         "assert email_subject(2) == 'Your quote for 2 units'\n"
         f"assert ledger_entry(4) == (4, {4 * price})\n"
     )
-    return _behaviour_ok(workspace, "tests/test_quotes.py", checks, golden["min_tests"])
+    return _behaviour_ok(workspace, _NO_TESTS, checks, 0)
 
 
 def _kwarg_ok(workspace: Path, golden: dict[str, Any]) -> bool:
@@ -204,7 +209,7 @@ def _kwarg_ok(workspace: Path, golden: dict[str, Any]) -> bool:
         f"assert crawl('b') == {{'url': 'b', 'timeout': {golden['crawl_timeout']}, 'retries': 3}}\n"
         "assert ping('c') == {'url': 'c', 'timeout': 1.0, 'retries': 0}\n"
     )
-    return _behaviour_ok(workspace, "tests/test_http_client.py", checks, golden["min_tests"])
+    return _behaviour_ok(workspace, _NO_TESTS, checks, 0)
 
 
 def _control_ok(workspace: Path, golden: dict[str, Any]) -> bool:
@@ -217,7 +222,7 @@ def _control_ok(workspace: Path, golden: dict[str, Any]) -> bool:
         "from benchapp.summary import summary_line\n"
         "assert cart_total([1.0, 2.5]) == 350 and refund_cents(0.99) == 99 and summary_line(3.0) == '300 cents'\n"
     )
-    return _behaviour_ok(workspace, "tests/test_units.py", checks, golden["min_tests"])
+    return _behaviour_ok(workspace, _NO_TESTS, checks, 0)
 
 
 _IMPACT_AB_VALIDATORS = {

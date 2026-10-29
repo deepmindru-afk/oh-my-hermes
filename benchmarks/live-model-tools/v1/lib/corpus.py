@@ -222,7 +222,7 @@ def _signature_fixture(seed: int) -> tuple[dict[str, str], dict[str, Any]]:
             "def test_compute_fee():\n    assert compute_fee(10000, 250) == 250\n"
         ),
     }
-    return files, {"allowed_paths": sorted(files), "allowed_prefixes": ["tests/"], "rate": rate, "min_tests": 1}
+    return files, {"allowed_paths": sorted(files), "allowed_prefixes": ["tests/"], "rate": rate}
 
 
 def _return_shape_fixture(seed: int) -> tuple[dict[str, str], dict[str, Any]]:
@@ -257,7 +257,7 @@ def _return_shape_fixture(seed: int) -> tuple[dict[str, str], dict[str, Any]]:
             '    assert quote["total_cents"] == 2 * UNIT_PRICE_CENTS\n'
         ),
     }
-    return files, {"allowed_paths": sorted(files), "allowed_prefixes": ["tests/"], "price": price, "min_tests": 1}
+    return files, {"allowed_paths": sorted(files), "allowed_prefixes": ["tests/"], "price": price}
 
 
 def _kwarg_fixture(seed: int) -> tuple[dict[str, str], dict[str, Any]]:
@@ -292,7 +292,7 @@ def _kwarg_fixture(seed: int) -> tuple[dict[str, str], dict[str, Any]]:
         ),
     }
     golden = {"allowed_paths": sorted(files), "allowed_prefixes": ["tests/"], "sync_timeout": sync_timeout,
-              "crawl_timeout": crawl_timeout, "min_tests": 1}
+              "crawl_timeout": crawl_timeout}
     return files, golden
 
 
@@ -323,7 +323,7 @@ def _control_fixture(seed: int) -> tuple[dict[str, str], dict[str, Any]]:
             "def test_to_cents():\n    assert to_cents(1.25) == 125\n"
         ),
     }
-    return files, {"allowed_paths": sorted(files), "allowed_prefixes": ["tests/"], "min_tests": 1}
+    return files, {"allowed_paths": sorted(files), "allowed_prefixes": ["tests/"]}
 
 
 _IMPACT_AB_FIXTURES = {

@@ -89,6 +89,17 @@ class ImpactSplitTests(unittest.TestCase):
         grade = self._grade("I-CONTROL", edit)
         self.assertTrue(grade["pass"], grade["failure_codes"])
 
+    def test_pytest_style_tests_do_not_fail_a_correct_edit(self) -> None:
+        # Measured on the first live run: a correct edit whose new test imported pytest scored as a fail.
+        def edit(workspace: Path, name: str) -> None:
+            _apply(workspace, IMPACT_EDITS[name])
+            (workspace / "tests/test_quotes.py").write_text(
+                "import pytest\n\n\n@pytest.mark.parametrize('n', [1, 2])\ndef test_n(n):\n    assert n\n",
+                encoding="utf-8")
+
+        grade = self._grade("I-RETURN-SHAPE", edit)
+        self.assertTrue(grade["pass"], grade["failure_codes"])
+
     def test_fake_matrix_passes(self) -> None:
         with TemporaryDirectory() as root:
             receipt = run_matrix(BASE, corpus_manifest(), corpus.IMPACT_AB_SPLIT, "baseline", Path(root) / "r.jsonl")
