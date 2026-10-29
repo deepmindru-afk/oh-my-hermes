@@ -14,7 +14,12 @@ import unicodedata
 import unittest
 
 from _tui_lines import lines_text
-from omh.tui.markdown import MarkdownState, clean_text, render_line, render_lines, render_markdown, strip_escapes
+from unittest.mock import patch
+
+from omh.tui import markdown
+from omh.tui.markdown import (
+    GrowingLine, MarkdownState, clean_text, render_growing, render_line, render_lines, render_markdown, strip_escapes,
+)
 from omh.tui.style import Line, Span
 from omh.tui.theme import DEFAULT_THEME as THEME
 from omh.tui.width import is_control, line_width
@@ -434,6 +439,54 @@ class HighlightTests(unittest.TestCase):
                 for row in streamed:
                     for span in row:
                         self.assertFalse(any(is_control(ch) for ch in span.text), span.text)
+
+
+# What a streamed line grows by: words and spaces, every inline mark (closed later, or never), escapes, joining marks
+# and jamo a cut must not fall before, wide and emoji clusters, hard-broken words and paths, a tab and controls.
+GROWTH = (
+    "word ", "token ", "a", "b ", "  ", " ", "**", "*", "_", "__", "`", "``", "[", "]", "(", ")", "\\", "x_y ",
+    "한국어 ", "가", "\u1161", "e\u0301 ", "\u0301", "👍🏽 ", FAMILY + " ", "🇰🇷", "/", "https://x.example/a/b ",
+    "verylongwordwithoutanyspacesatall" * 2, "-", "1.", "#", ">", "|", "\t", "\x1b[31m", "\x07", "\u202e", ". ",
+)
+PROSE = ("word ", "to", "ken ", "and ", "**b** ", "`c` ", "[l](u) ", "_i_ ")
+
+
+class GrowingLineTests(unittest.TestCase):
+    """`render_growing` is `render_line` for a line that grows at its end, wrapping only the rows past its cut."""
+
+    def test_every_step_of_a_growing_line_renders_as_the_whole_line_does(self) -> None:
+        starts = ("", "- ", "1. ", "  ", "    ", "* ", "-", "--", "# ", "> ", "```", "|")
+        cuts = 0
+        for seed in range(160):
+            rnd = random.Random(seed)
+            line, memo = rnd.choice(starts), GrowingLine()
+            state = rnd.choice((MarkdownState(), MarkdownState(list_indent=2)))
+            width = rnd.choice((1, 2, 5, 8, 13, 20, 40, 77))
+            for step in range(40):
+                pieces = GROWTH if rnd.random() < 0.3 else PROSE
+                line += "".join(rnd.choice(pieces) for _ in range(rnd.randint(1, 4)))
+                drawn_at = width if rnd.random() < 0.9 else rnd.choice((5, 13, 40))  # a resize now and then
+                self.assertEqual(render_growing(line, state, drawn_at, THEME, memo), render_line(line, state, drawn_at,
+                                 THEME), (seed, step, drawn_at, line))
+                cuts += memo.cut > 0
+        self.assertGreater(cuts, 1000)  # the cut is what the equality is about: most steps draw past one
+
+    def test_a_long_streamed_paragraph_wraps_only_its_last_rows(self) -> None:
+        wrapped: list[int] = []
+        real = markdown.wrap_line
+
+        def counting(line: Line, cells: int) -> list[Line]:
+            wrapped.append(sum(len(span.text) for span in line))
+            return real(line, cells)
+
+        line, memo = "", GrowingLine()
+        with patch("omh.tui.markdown.wrap_line", counting):
+            for index in range(3000):
+                line += ("**bold** ", "`code` ", "한국어 ", "token ")[index % 4]
+                wrapped.clear()
+                render_growing(line, MarkdownState(), 60, THEME, memo)
+        self.assertGreater(len(line), 19_000)
+        self.assertLess(sum(wrapped), 600, wrapped)  # the last frame wrapped a few rows' text, not the paragraph
 
 
 if __name__ == "__main__":

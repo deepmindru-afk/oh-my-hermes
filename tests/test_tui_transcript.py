@@ -17,6 +17,7 @@ import unittest
 from unittest.mock import patch
 
 from _tui_lines import lines_text
+from omh.tui import markdown
 from omh.tui.gateway import Event
 from omh.tui.style import Line, Span
 from omh.tui.theme import DEFAULT_THEME as THEME
@@ -479,6 +480,27 @@ class PlainTurnTests(LoopTestCase):
         self.assertEqual(self.live(), ["    partial"])
         # Who said it: `⚚ Hermes` bold in the rail's hue on a header row of its own, apart from a call's state colours.
         self.assertEqual(self.taken[0][:3], (rail_cell(THEME.brand), Span(" ", GUTTER), Span("⚚ Hermes", replace(THEME.brand, bold=True))))
+
+    def test_a_long_paragraph_streaming_wraps_only_its_last_rows_each_frame(self) -> None:
+        # Found by the QA perf lane: every frame wrapped the whole paragraph, so one long paragraph cost O(n^2).
+        wrapped: list[int] = []
+        real = markdown.wrap_line
+
+        def counting(line: Line, cells: int) -> list[Line]:
+            wrapped.append(sum(len(span.text) for span in line))
+            return real(line, cells)
+
+        self.step(ev("message.start"))
+        for index in range(1200):
+            self.transcript.apply(ev("message.delta", text=("**bold** ", "`code` ", "한국어 ", "token ")[index % 4]))
+            if index % 40 == 0:
+                self.step()  # a frame: the step holds its rows to the whole paragraph's render
+        wrapped.clear()
+        with patch("omh.tui.markdown.wrap_line", counting):
+            self.transcript.apply(ev("message.delta", text="tail "))
+            self.transcript.live_lines(WIDTH, THEME, max_rows=10)
+        self.assertLess(sum(wrapped), 400, wrapped)  # the paragraph is ~8,000 characters
+        self.step(ev("message.complete", text="", status="complete"))
 
     def test_a_trailing_blank_line_waits_for_the_text_after_it(self) -> None:
         self.step(ev("message.start"))

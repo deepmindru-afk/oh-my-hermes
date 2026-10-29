@@ -6,6 +6,15 @@ All notable changes will be documented here.
 
 ![Sprite Forge patch notes](https://raw.githubusercontent.com/rlaope/oh-my-hermes/main/assets/omh-sprite-forge-patch-notes.png)
 
+- **A steer sent while a reply streams no longer erases that reply.** When
+  Hermes read the steer before a second model call, the OMH TUI replaced the
+  whole streamed text with the last call's at turn end; the first reply now
+  stays, the `↪ steer queued by Hermes` row sits under it, and the second
+  reply follows. A long one-paragraph reply now wraps only its last rows
+  each frame, so a frame no longer costs more as the paragraph grows; agent
+  names drop a goal's trailing colon (`Interrupted child alpha.`); and
+  `/title X` shows the title bold instead of `**X**`.
+
 - **A light goes round the OMH TUI's screen while a turn runs.** It runs
   along the terminal's whole edge, clockwise, once every four seconds, with
   a round head and a trail in the launch look's logo colours that fades

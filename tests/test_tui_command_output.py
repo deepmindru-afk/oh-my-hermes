@@ -14,13 +14,17 @@ from __future__ import annotations
 import unittest
 
 from _tui_gateway_replay import Scenario, spans
+from _tui_lines import line_text, lines_text
 from test_tui_app import NO_TERMIOS, AppTestCase, Step, startup_answers
 from test_tui_modes import PLAN_PROMPT, SID, answer, drawn, make_app, notices, type_text
 from omh.tui import gateway_contract as contract
 from omh.tui.app import App
 from omh.tui.gateway import Event, Response
 from omh.tui.keys import DOWN, ENTER, TAB, UP, Key
-from omh.tui.transcript import NOTICE_INFO, NOTICE_WARN, OUTPUT_PREVIEW_ROWS, CommandBlock, NoticeBlock, UserBlock
+from omh.tui.theme import DEFAULT_THEME as THEME
+from omh.tui.transcript import (
+    NOTICE_INFO, NOTICE_WARN, OUTPUT_PREVIEW_ROWS, CommandBlock, NoticeBlock, UserBlock, block_rows,
+)
 
 
 def send(app: App, text: str) -> None:
@@ -76,6 +80,18 @@ class CommandEchoTests(unittest.TestCase):
         screen = drawn(app)
         self.assertIn("  ❯ /usage", screen)
         self.assertIn("    ⎿  Session cost: $0.01", screen)
+
+    def test_hermes_markdown_in_a_reply_is_drawn_styled_and_other_output_stays_as_written(self) -> None:
+        # Found live: `/title Alpha Work` printed `Session title set: **Alpha Work**` (Hermes' `gateway.title.set_to`
+        # is written for a chat, in Markdown).
+        app, client = make_app()
+        send(app, "/title Alpha Work")
+        answer(app, client, {"output": "✏️ Session title set: **Alpha Work**"})
+        self.assertIn("    ⎿  ✏️ Session title set: Alpha Work", drawn(app))
+        (row,) = [row for row in block_rows(last(app), 80, THEME) if "title set" in line_text(row)]
+        self.assertEqual([span.text for span in row if span.style.bold], ["Alpha Work"])
+        shell = CommandBlock("! grep -c x", [("f(**args, **kwargs)", NOTICE_INFO)], done=True)  # not Hermes' reply
+        self.assertIn("f(**args, **kwargs)", lines_text(block_rows(shell, 80, THEME))[-1])
 
     def test_long_output_stays_in_the_transcript_and_no_pager_opens(self) -> None:
         app, client = make_app(rows=24, cols=80)

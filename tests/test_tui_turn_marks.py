@@ -307,6 +307,29 @@ class SteerPlacementTests(unittest.TestCase):
         kinds = [type(block).__name__ for block in app.transcript.blocks]
         self.assertEqual(kinds[:2], ["AssistantBlock", "SteerBlock"])
 
+    def test_a_steer_hermes_answers_with_another_call_keeps_the_first_reply_above_it(self) -> None:
+        # Found live: Hermes read the steer before a second model call with no `message.interim` between, so the
+        # second call's text streamed onto the first's, and `message.complete` (the last call's text only) replaced
+        # the whole block: the first reply left the screen and scrollback, and the steer row landed under the rest.
+        app, client = make_app(busy=True, rows=16)
+        app._on_event(ev("message.start"))
+        app._on_event(ev("message.delta", text="SLOW-START the first "))
+        self.steer(app, "steer me")
+        answer(app, client, {"status": "queued", "text": "steer me"})
+        app._on_event(ev("message.delta", text="reply SLOW-END"))
+        app._on_event(ev("message.delta", text="Reply #2 to: steer me. REPLY-END-2"))
+        app._on_event(ev("message.complete", text="Reply #2 to: steer me. REPLY-END-2", status="complete"))
+        replies = [block.text for block in app.transcript.blocks if isinstance(block, AssistantBlock)]
+        self.assertEqual(replies, ["SLOW-START the first reply SLOW-END", "Reply #2 to: steer me. REPLY-END-2"])
+        kinds = [type(block).__name__ for block in app.transcript.blocks]
+        self.assertEqual(kinds[:3], ["AssistantBlock", "SteerBlock", "AssistantBlock"])
+        drawn(app)
+        screen = app.terminal.screen.history()  # type: ignore[attr-defined]  # scrollback and the screen
+        rows = [[at for at, row in enumerate(screen) if words in row] for words in (
+            "SLOW-START the first reply SLOW-END", "↪ steer queued by Hermes · steer me", "Reply #2 to: steer me. REPLY-END-2")]
+        self.assertEqual([len(found) for found in rows], [1, 1, 1], screen)
+        self.assertEqual(sorted(rows), rows, screen)  # in that order, each once
+
     def test_the_screen_shows_the_steer_waiting_then_once_in_scrollback(self) -> None:
         app, client = make_app(busy=True, rows=16)
         app._on_event(ev("message.start"))

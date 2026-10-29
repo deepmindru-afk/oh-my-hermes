@@ -4947,7 +4947,7 @@ class App(ModesMixin, AgentViewMixin):
             return
         body = as_text(result.get("output")) or f"/{invocation.name}: no output"
         warning = as_text(result.get("warning"))
-        self._show_output(f"/{invocation.text}", f"warning: {warning}\n{body}" if warning else body)
+        self._show_output(f"/{invocation.text}", f"warning: {warning}\n{body}" if warning else body, markup=True)
         self._keep_images(invocation.images, f"/{invocation.name}")  # it printed: no prompt took them
 
     def _on_dispatch(self, invocation: SlashInvocation, result: dict[str, Any], depth: int) -> None:
@@ -4955,7 +4955,7 @@ class App(ModesMixin, AgentViewMixin):
         images; any other outcome gives their tokens back (`_keep_images`)."""
         kind = as_text(result.get("type"))
         if kind in ("exec", "plugin"):
-            self._show_output(f"/{invocation.text}", as_text(result.get("output")) or "(no output)")
+            self._show_output(f"/{invocation.text}", as_text(result.get("output")) or "(no output)", markup=True)
             self._keep_images(invocation.images, f"/{invocation.name}")
             task = as_text(result.get(contract.SIDE_ANSWER_TASK))
             if task and self.sid:
@@ -5015,18 +5015,19 @@ class App(ModesMixin, AgentViewMixin):
         else:
             other = as_text(result.get("output")) or as_text(result.get("display"))
             if other:
-                self._show_output(f"/{invocation.text}", other)
+                self._show_output(f"/{invocation.text}", other, markup=True)
         self._keep_images(invocation.images, f"/{invocation.name}")  # after a prefill, so it keeps them
 
-    def _show_output(self, command: str, text: str, whole: bool = False) -> None:
-        """A command's output, in the transcript under its echo (`command` repeats the echo once it has closed).
+    def _show_output(self, command: str, text: str, whole: bool = False, markup: bool = False) -> None:
+        """A command's output, in the transcript under its echo (`command` repeats the echo once it has closed);
+        `markup` for Hermes' reply, written in Markdown for a chat (`Transcript.add_output`).
 
         However long it is: a long one shows its first rows and a count of the
         rest, which /history shows, unless `whole`. The pager opens only when
         the person asks for one, so output answered while a view has the
         alternate screen waits in the transcript until they leave it.
         """
-        self.transcript.add_output(text, command=command, whole=whole)
+        self.transcript.add_output(text, command=command, whole=whole, markup=markup)
 
     def _local_handlers(self) -> dict[str, Callable[[str], None]]:
         return {
@@ -5093,7 +5094,7 @@ class App(ModesMixin, AgentViewMixin):
         self._request("skills.reload", {"session_id": self.sid}, self._on_skills_reloaded, self._on_reload_refused)
 
     def _on_skills_reloaded(self, result: dict[str, Any]) -> None:
-        self._show_output("/reload-skills", as_text(result.get("output")) or "Skills reloaded.")
+        self._show_output("/reload-skills", as_text(result.get("output")) or "Skills reloaded.", markup=True)
         self._refresh_catalog()
 
     def _on_reload_refused(self, error: dict[str, Any]) -> bool:

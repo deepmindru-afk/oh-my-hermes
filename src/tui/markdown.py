@@ -32,7 +32,7 @@ Malformed markdown renders as literal text; nothing here raises on any input.
 from __future__ import annotations
 
 from collections.abc import Sequence
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 import unicodedata
 
 from .escapes import strip_escapes
@@ -55,8 +55,10 @@ _ORDERED_DELIMITERS = frozenset(".)")
 _MAX_ORDINAL_DIGITS = 9
 _DIGITS = "0123456789"
 _RULE_CHARS = frozenset("-*_")
+_RULE_MARKS = frozenset(" -*_")  # a line of only these may yet turn out to be a rule
 _MIN_RULE_RUN = 3
 _ESCAPABLE = frozenset("\\`*_[]()#+-.!|>~")
+_INLINE_MARKS = frozenset("\\`[*_")  # what `inline_spans` reads as more than itself
 
 
 
@@ -130,6 +132,96 @@ def render_lines(
     return rows, state
 
 
+@dataclass
+class GrowingLine:
+    """What `render_growing` keeps between the frames of a line still being written: the rows above a cut in it,
+    wrapped once, so that a frame wraps only what follows the cut, however long the line has grown."""
+
+    line: str = ""  # the line when the cut last moved: a later line goes on from it, or the cut is not used
+    cut: int = 0  # where in `line` the rows above end; 0 for no cut
+    rows: list[Line] = field(default_factory=list)  # the rows above the cut
+    rest: Line = ()  # what every row of the line but its first hangs on
+    after: MarkdownState = MarkdownState()  # the state the line hands the next
+    drawn: tuple[MarkdownState, int, Theme | None] = (MarkdownState(), 0, None)  # the state, width and theme
+
+
+def render_growing(
+    source: str, state: MarkdownState, width: int, theme: Theme, memo: GrowingLine
+) -> tuple[list[Line], MarkdownState]:
+    """`render_line(source, state, width, theme)` for a line that grows at its end from one call to the next.
+
+    The rows above `memo`'s cut are reused and only the text past it is
+    wrapped; the cut then moves down to the last row a word opens whose
+    rows nothing after it can change (`_move_cut`). So a long paragraph
+    streamed token by token costs a frame its last rows, not the whole
+    paragraph. Only a paragraph or a list item line that `clean_text` leaves
+    as it is, and that holds no tab, is cut; any other line is rendered whole.
+    """
+    width = max(1, width)
+    if "\t" in source:
+        return render_line(source, state, width, theme)
+    if memo.cut and memo.drawn[:2] == (state, width) and memo.drawn[2] is theme and source.startswith(memo.line):
+        start, lead = memo.cut, memo.rest
+    else:
+        memo.cut, memo.rows = 0, []
+        plain = not state.in_fence and source.strip() and clean_text(source) == source and not _fence_open(source)
+        inline = _inline_block(source, state, theme) if plain else None
+        if inline is None or line_width(inline[1]) != line_width(inline[2]):
+            return render_line(source, state, width, theme)
+        start, lead, memo.rest, memo.after = inline
+        memo.drawn = (state, width, theme)
+    tail = source[start:]
+    text = clean_text(tail)
+    stops: list[tuple[int, int]] = []
+    spans = inline_spans(text, theme.text, theme, stops)
+    rows = wrap_prefixed(spans, lead, memo.rest, width)
+    drawn = memo.rows + rows
+    if text == tail:
+        _move_cut(memo, source, start, spans, stops, rows, lead, width, theme)
+    return drawn, memo.after
+
+
+def _move_cut(
+    memo: GrowingLine, source: str, start: int, spans: list[Span], stops: list[tuple[int, int]], rows: list[Line],
+    lead: Line, width: int, theme: Theme,
+) -> None:
+    """Move `memo`'s cut from `start` down to the last of `rows` that opens at one of `stops` but the last.
+
+    Everything before a stop is decided however the line goes on, so with a
+    later stop the word the row opens with is too: that row stays where it
+    opens, and what follows wraps from there as that text alone would (a
+    row a word opens begins with nothing carried over). The rows the
+    shown text maps onto, and those the text from the cut wraps to on its
+    own, are checked against `rows` before the cut moves.
+    """
+    if len(stops) < 2 or len(rows) < 2:
+        return
+    shown = "".join(span.text for span in spans)
+    opens = {at: index for index, at in stops[:-1]}  # where a cut can go, by the characters shown before it
+    bare = max(line_width(lead), line_width(memo.rest)) >= width  # `wrap_prefixed` then drops the prefixes
+    at, cut_row, cut_at = 0, 0, 0
+    for number, row in enumerate(rows):
+        if number:
+            while shown[at : at + 1] == " ":  # the spaces a break left out
+                at += 1
+            if at in opens:
+                cut_row, cut_at = number, opens[at]
+        words = "".join(span.text for span in row[0 if bare else len(memo.rest if number else lead) :])
+        if not shown.startswith(words, at):
+            return
+        at += len(words)
+    if not cut_row:
+        return
+    if wrap_prefixed(inline_spans(source[start + cut_at :], theme.text, theme), memo.rest, memo.rest, width) != rows[
+        cut_row:
+    ]:
+        return
+    if not memo.cut and set(source[: start + cut_at]) <= _RULE_MARKS:
+        return  # it could still turn out to be a rule
+    memo.rows = memo.rows + rows[:cut_row]
+    memo.cut, memo.line = start + cut_at, source
+
+
 def render_markdown(text: str, width: int, theme: Theme) -> list[Line]:
     """A whole document at `width`, from a fresh state."""
     return render_lines(text.split("\n"), MarkdownState(), width, theme)[0]
@@ -193,32 +285,46 @@ def _list_item(body: str) -> tuple[str, str] | None:
     return None
 
 
-def _block_rows(text: str, state: MarkdownState, width: int, theme: Theme) -> tuple[list[Line], MarkdownState]:
+def _inline_block(text: str, state: MarkdownState, theme: Theme) -> tuple[int, Line, Line, MarkdownState] | None:
+    """For a list item or a paragraph line: where in `text` its inline text starts, the prefix of its first row and
+    of every other, and the state after it. None for a heading, a rule, a quote or a table row."""
     indent = _leading_spaces(text)
     body = text[indent:]
-    if indent <= _MAX_BLOCK_INDENT:
-        heading = _heading_text(body)
-        if heading is not None:
-            return wrap_prefixed(_inline_spans(heading, theme.heading, theme), (), (), width), replace(state, list_indent=0)
-        if _is_rule(body):
-            return [(Span(RULE * width, theme.dim),)], replace(state, list_indent=0)
-        if body.startswith(">"):
-            return _quote_rows(body, width, theme), state
+    if body.startswith("|") or indent <= _MAX_BLOCK_INDENT and (
+        _heading_text(body) is not None or _is_rule(body) or body.startswith(">")
+    ):
+        return None
     pad: Line = (Span(" " * indent),) if indent else ()
-    if body.startswith("|"):
-        return wrap_prefixed((Span(body, theme.text),), pad, pad, width), state
     item = _list_item(body)
     if item is not None:
         marker, content = item
         column = indent + cell_width(marker)
         first = (*pad, Span(marker, theme.muted))
-        rows = wrap_prefixed(_inline_spans(content, theme.text, theme), first, (Span(" " * column),), width)
-        return rows, replace(state, list_indent=column)
+        return len(text) - len(content), first, (Span(" " * column),), replace(state, list_indent=column)
     if not indent:
         state = replace(state, list_indent=0)
     elif state.list_indent:
         pad = (Span(" " * state.list_indent),)  # a continuation line hangs under its item's text
-    return wrap_prefixed(_inline_spans(body, theme.text, theme), pad, pad, width), state
+    return indent, pad, pad, state
+
+
+def _block_rows(text: str, state: MarkdownState, width: int, theme: Theme) -> tuple[list[Line], MarkdownState]:
+    inline = _inline_block(text, state, theme)
+    if inline is not None:
+        start, first, rest, after = inline
+        return wrap_prefixed(inline_spans(text[start:], theme.text, theme), first, rest, width), after
+    indent = _leading_spaces(text)
+    body = text[indent:]
+    if indent <= _MAX_BLOCK_INDENT:
+        heading = _heading_text(body)
+        if heading is not None:
+            return wrap_prefixed(inline_spans(heading, theme.heading, theme), (), (), width), replace(state, list_indent=0)
+        if _is_rule(body):
+            return [(Span(RULE * width, theme.dim),)], replace(state, list_indent=0)
+        if body.startswith(">"):
+            return _quote_rows(body, width, theme), state
+    pad: Line = (Span(" " * indent),) if indent else ()
+    return wrap_prefixed((Span(body, theme.text),), pad, pad, width), state  # a table row
 
 
 def _quote_rows(body: str, width: int, theme: Theme) -> list[Line]:
@@ -230,7 +336,7 @@ def _quote_rows(body: str, width: int, theme: Theme) -> list[Line]:
         if rest.startswith(" "):
             rest = rest[1:]
     bar: Line = (Span(QUOTE_BAR * depth, theme.quote),)
-    return wrap_prefixed(_inline_spans(rest, theme.quote, theme), bar, bar, width)
+    return wrap_prefixed(inline_spans(rest, theme.quote, theme), bar, bar, width)
 
 
 # ── fenced code ───────────────────────────────────────────────────────────
@@ -295,6 +401,27 @@ def _diff_fence_rows(text: str, state: MarkdownState, width: int, theme: Theme) 
 
 
 # ── inline ────────────────────────────────────────────────────────────────
+
+
+def _decided(text: str, index: int) -> bool:
+    """Whether what `inline_spans` makes of the mark at `index` stays so however `text` goes on: a closer found, and
+    the character after it that a closer is checked against, or a mark that can open nothing."""
+    end, ch = len(text), text[index]
+    if ch == "\\":
+        return index + 1 < end
+    if ch == "`":
+        code = _code_span(text, index)
+        return code is not None and code[1] < end
+    if ch == "[":
+        if _link(text, index) is not None:
+            return True
+        close = text.find("]", index + 1)
+        return close >= 0 and close + 1 < end and text[close + 1] != "("
+    emphasis = _emphasis(text, index)
+    if emphasis is not None:
+        return emphasis[2] < end
+    marker = text[index : index + 2] if text[index : index + 2] in ("**", "__") else ch
+    return index + 2 < end and not _opens_emphasis(text, index, marker)
 
 
 def _code_span(text: str, start: int) -> tuple[str, int] | None:
@@ -366,10 +493,18 @@ def _emphasis(text: str, start: int) -> tuple[str, bool, int] | None:
         search = close + 1
 
 
-def _inline_spans(text: str, style: Style, theme: Theme) -> list[Span]:
-    """Inline markup in one line of block text, as spans over the block's `style`."""
+def inline_spans(text: str, style: Style, theme: Theme, stops: list[tuple[int, int]] | None = None) -> list[Span]:
+    """Inline markup in one line of block text, as spans over the block's `style`.
+
+    With `stops`, each place `text` can be cut at is added to it as (index in
+    `text`, characters shown before it): a word that opens after a space, at
+    the top level, with all that comes before it decided however the text
+    goes on (`_decided`). The spans then break at each stop, which wrapping
+    them does not see (`wrap_line` joins a style's neighbouring runs).
+    """
     spans: list[Span] = []
     plain: list[str] = []
+    settled, counted, shown = True, 0, 0
 
     def take_plain() -> None:
         if plain:
@@ -379,6 +514,14 @@ def _inline_spans(text: str, style: Style, theme: Theme) -> list[Span]:
     index = 0
     while index < len(text):
         ch = text[index]
+        if stops is not None and settled:
+            if index and text[index - 1] == " " and ch != " " and len(clusters(" " + ch)) == 2:  # ch joins no space
+                take_plain()
+                shown += sum(len(span.text) for span in spans[counted:])
+                counted = len(spans)
+                stops.append((index, shown))
+            if ch in _INLINE_MARKS:
+                settled = _decided(text, index)
         if ch == "\\" and text[index + 1 : index + 2] in _ESCAPABLE:
             plain.append(text[index + 1])
             index += 2
@@ -410,7 +553,7 @@ def _inline_spans(text: str, style: Style, theme: Theme) -> list[Span]:
                 take_plain()
                 inner, strong, index = emphasis
                 inner_style = replace(style, bold=True) if strong else replace(style, italic=True)
-                spans.extend(_inline_spans(inner, inner_style, theme))
+                spans.extend(inline_spans(inner, inner_style, theme))
                 continue
         plain.append(ch)
         index += 1

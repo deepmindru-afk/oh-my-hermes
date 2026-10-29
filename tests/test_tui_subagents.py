@@ -219,6 +219,12 @@ class FoldTests(unittest.TestCase):
         self.assertEqual((agent.tool_count, agent.last_tool, list(agent.log)), (0, "", []))
         self.assertEqual(agent.name, "find usages of")
 
+    def test_a_name_leaves_off_the_punctuation_its_last_word_ended_on(self) -> None:
+        # Found live: `↪ steering child beta:: …` and `· Interrupted child alpha:.` from goals `child beta: …`.
+        for goal, name in (("child alpha: count to ten slowly", "child alpha"), ("fix the bug, then test", "fix the bug"),
+                           ("review;", "review"), ("...", "...")):
+            self.assertEqual(Agent("a1", "running", 0.0, goal=goal).name, name, goal)
+
     def test_spawn_requested_queues_and_start_then_times_the_run_not_the_wait(self) -> None:
         roster = Roster()
         feed(roster, "spawn_requested", 1.0)

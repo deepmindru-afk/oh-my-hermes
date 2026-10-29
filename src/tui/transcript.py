@@ -104,7 +104,7 @@ from .diff_view import DIFF_FILE, FILE_ARROW, DiffLine, diff_rows, parse_inline_
 from .gateway import Event
 from . import gateway_contract as contract
 from .gateway_contract import TOOL_CALL_BRIDGE
-from .markdown import MarkdownState, clean_text, render_lines, wrap_prefixed
+from .markdown import GrowingLine, MarkdownState, clean_text, inline_spans, render_growing, render_lines, wrap_prefixed
 from .style import NO_COLOR, Line, Span, Style, fill
 from .slash import slash_spans, slash_token_ranges
 from .theme import TOOL_FAMILIES, Theme, kind_style, on_band
@@ -231,13 +231,16 @@ class CommandBlock:
 
     Open (`done` False) while the command may still print; the app closes it
     once the command's calls are answered, and appending any other block
-    closes it too. `whole` keeps the output uncut.
+    closes it too. `whole` keeps the output uncut. `markup` when Hermes' reply
+    is among it: Hermes writes its command replies for a chat, in Markdown, so
+    the output's inline markup is drawn (`**Alpha Work**` bold).
     """
 
     command: str
     parts: list[tuple[str, str]] = field(default_factory=list)
     whole: bool = False
     done: bool = False
+    markup: bool = False
 
 
 @dataclass
@@ -356,6 +359,8 @@ def _last_line(text: str) -> str:
 
 
 def _is_blank(line: str) -> bool:
+    if line.isprintable():  # nothing in it `clean_text` drops or expands: a streaming line is not cleaned each frame
+        return not line.strip()
     return not clean_text(line).strip()
 
 
@@ -730,9 +735,11 @@ def _drafted_row(group: ToolGroup, name: str) -> ToolRow | None:
 
 
 def _text_rows(
-    text: str, style: Style, first: Line, rest: Line, width: int, max_rows: int | None = None
+    text: str, style: Style, first: Line, rest: Line, width: int, max_rows: int | None = None,
+    markup: Theme | None = None,
 ) -> list[Line]:
-    """Plain text (no markdown), each source line wrapped, `first` before the very first row.
+    """Plain text (no markdown), each source line wrapped, `first` before the very first row; with `markup`, the
+    theme to draw each line's inline markup in (`inline_spans`), lines still wrapped as they are.
 
     Each source line wraps on its own, so with `max_rows` only the last lines
     that cover that many rows are wrapped; the rows end as all of them would.
@@ -747,7 +754,8 @@ def _text_rows(
         if _is_blank(source):
             rows: list[Line] = [()]  # never the first row: leading blank lines were dropped
         else:
-            rows = wrap_prefixed((Span(clean_text(source), style),), first if index == 0 else rest, rest, width)
+            spans = inline_spans(clean_text(source), style, markup) if markup else (Span(clean_text(source), style),)
+            rows = wrap_prefixed(spans, first if index == 0 else rest, rest, width)
         wrapped.append(rows)
         count += len(rows)
     return [row for rows in reversed(wrapped) for row in rows]
@@ -931,7 +939,8 @@ def _command_rows(block: CommandBlock, width: int, theme: Theme, expanded: bool)
         roles = on_band(theme, band) if band is not None else theme
         style = {NOTICE_WARN: roles.warn, NOTICE_ERROR: roles.error, OUTPUT_FAILED: roles.error}.get(level, roles.text)
         lead = rest if output else _output_leads(roles)[0]
-        part = _text_rows(_OUTPUT_GLYPHS.get(level, "") + text, style, lead, rest, width)
+        part = _text_rows(_OUTPUT_GLYPHS.get(level, "") + text, style, lead, rest, width,
+                          markup=roles if block.markup else None)
         output.extend(_banded(part, band) if band is not None else part)
     if not expanded and not block.whole and len(output) > OUTPUT_PREVIEW_ROWS:
         hidden = len(output) - OUTPUT_PREVIEW_ROWS
@@ -1291,6 +1300,7 @@ class Transcript:
         # row limit and theme it was for, so a frame that changed nothing (a spinner tick) renders nothing.
         self._version = 0
         self._live_held: tuple[tuple[int, int, int | None, tuple[bool, ...]], Theme, list[Line]] | None = None
+        self._growing = GrowingLine()  # the streaming line's rows above a cut, kept from frame to frame
         self._handlers: dict[str, Callable[[dict[str, Any]], None]] = {
             "message.start": self._on_message_start,
             "message.delta": self._on_message_delta,
@@ -1412,18 +1422,22 @@ class Transcript:
         self.command = block
         return block
 
-    def add_output(self, text: str, level: str = NOTICE_INFO, *, command: str = "", whole: bool = False) -> None:
+    def add_output(
+        self, text: str, level: str = NOTICE_INFO, *, command: str = "", whole: bool = False, markup: bool = False,
+    ) -> None:
         """A command's output: under its open echo, or, once that echo has closed, under a repeat of `command`.
 
-        With no echo open and no `command` named, it is a notice.
+        With no echo open and no `command` named, it is a notice. `markup` for
+        Hermes' reply, whose inline Markdown the echo's output then draws.
         """
         open_command = self._open_command()
         if open_command is not None:
             open_command.parts.append((text, level))
             open_command.whole = open_command.whole or whole
+            open_command.markup = open_command.markup or markup
             self._version += 1
         elif command:
-            self.add_aside(CommandBlock(command, [(text, level)], whole, done=True))
+            self.add_aside(CommandBlock(command, [(text, level)], whole, done=True, markup=markup))
         else:
             self._append(NoticeBlock(text, level))
 
@@ -1624,6 +1638,32 @@ class Transcript:
         if new_lines[:taken] == old_lines[:taken]:
             block.text = text
 
+    def _split_steered_reply(self, block: AssistantBlock, text: str) -> AssistantBlock:
+        """The block `text`, the turn's last model call, settles into: a new one when a steer split the stream.
+
+        Hermes reads a steer it took before its next model call, and when the
+        reply streaming then made no tool call, nothing seals it before the
+        next call streams on under the same block (no `message.interim`).
+        `message.complete` carries the last call's text only, so the streamed
+        text it ends is that call's, and what streamed before it is the
+        earlier reply: that stays a block of its own, the steer row goes under
+        it, and the rest is a new block. The block is kept whole when no steer
+        waits or a line already taken would move.
+        """
+        final, streamed = text.strip(), block.text.rstrip()
+        steered = any(isinstance(held, SteerBlock) and held.state == STEER_QUEUED and not held.agent for held in self._held)
+        if not (steered and final and len(streamed) > len(final) and streamed.endswith(final)):
+            return block
+        head = streamed[: len(streamed) - len(final)]
+        head_lines, taken = _display_lines(head), self._taken_lines_of(block)
+        if not head.strip() or taken > len(head_lines) or head_lines[:taken] != _display_lines(block.text)[:taken]:
+            return block
+        tail = block.text[len(head) :]
+        block.text, block.done = head, True
+        reply = AssistantBlock(tail)
+        self._append(reply)  # under the steer, which the sealed block let go
+        return reply
+
     def _repeats_turn_answer(self, text: str) -> bool:
         lines = _display_lines(text)
         return any(
@@ -1667,7 +1707,7 @@ class Transcript:
         bare_error = status == "error" and _is_bare_error(text, error)
         block = self._live(AssistantBlock)
         if block is not None and not bare_error:
-            self._settle_text(block, text)
+            self._settle_text(self._split_steered_reply(block, text), text)
         elif block is None and not bare_error and text.strip() and not self._repeats_turn_answer(text):
             self._append(AssistantBlock(text))
         self._close_live()
@@ -1939,8 +1979,10 @@ class Transcript:
             if index == self._cursor and isinstance(block, AssistantBlock):
                 rest = _display_lines(block.text)[self._cursor_lines :]
                 opens_block = self._cursor_lines == 0
-                block_lines = _marked(render_lines(rest, self._cursor_state, _reply_width(width), theme)[0], opens_block,
-                                      theme, width, block.model)
+                reply_rows = self._growing_rows(rest, _reply_width(width), theme)
+                if max_rows is not None and len(reply_rows) > max_rows:  # its top rows are above the rows asked for
+                    reply_rows, opens_block = reply_rows[-max_rows:], False
+                block_lines = _marked(reply_rows, opens_block, theme, width, block.model)
             else:  # only the last block can be live thinking, the one kind the limit shortens, so it gets all of it
                 block_lines = block_rows(block, width, theme, self.details_expanded and not block.done, max_rows, now,
                                          glint)
@@ -1954,6 +1996,14 @@ class Transcript:
                 rows.append(())
             rows.extend(block_lines)
             seen = True
+        return rows
+
+    def _growing_rows(self, sources: list[str], width: int, theme: Theme) -> list[Line]:
+        """The rows of a reply's untaken `sources`, the last of them the line still streaming: drawn through
+        `_growing`, so a frame wraps only that line's last rows (`render_growing`)."""
+        rows, state = render_lines(sources[:-1], self._cursor_state, width, theme)
+        if sources:
+            rows += render_growing(sources[-1], state, width, theme, self._growing)[0]
         return rows
 
     def dropped_rows(self, width: int, theme: Theme, dropped: int | None = None) -> list[Line]:
