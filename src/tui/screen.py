@@ -655,14 +655,15 @@ class LiveRegion:
     def _papering(self, ambient: Sequence[Cell], rows: int, lead: Sequence[str] = ()) -> str:
         """The bytes that paint `ambient`'s cells that fall on a blank cell (`_blank_starts`) and blank the ones
         painted before that are no longer lit, only those that changed, after `lead`, then park the cursor where the
-        region left it; "" where nothing changed. Each cell is its glyph in its colour on the terminal's own
-        background, the look's ground."""
+        region left it; "" where nothing changed. Each cell is its half block in its colour over its background
+        (`Cell.bg`), or the terminal's own background, the look's ground, where it has none; blanking a cell writes a
+        plain space, so the ground shows there again."""
         starts, width = self._blank_starts(rows), self._width or 0
         cells: dict[tuple[int, int], str] = {}
         for cell in ambient:
             start = starts.get(cell.row)
             if start is not None and start <= cell.col < self._margin + width:
-                cells[cell.row, cell.col] = Style(fg=cell.fg).sgr() + cell.char + SGR_RESET
+                cells[cell.row, cell.col] = Style(fg=cell.fg, bg=cell.bg).sgr() + cell.char + SGR_RESET
         ops = [*lead, *(cursor_at(*at) + glyph for at, glyph in cells.items() if self._paper.get(at) != glyph)]
         ops += [cursor_at(*at) + " " for at in self._paper if at not in cells]
         self._paper, self._papered_at = cells, (width, rows)

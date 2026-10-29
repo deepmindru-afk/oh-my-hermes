@@ -51,7 +51,9 @@ from omh.tui.theme import (
     with_prompt_band,
 )
 from omh.tui.theme import MARK_STEPS, WORD_ROLES, WORD_STEPS
-from omh.tui.wallpaper import AMBIENT_CONTRAST, LIT_CEILING, SCENES, Cell, scene
+from omh.tui.wallpaper import (
+    AMBIENT_CONTRAST, CLEAR, FULL, LIT_CEILING, LOWER, SCENES, SPRITES, UPPER, Cell, scene,
+)
 from omh.tui.width import cell_width
 from test_tui_modes import make_app, notices, type_text
 import test_tui_working_glow as glow_tests
@@ -62,6 +64,20 @@ MARK = "░"  # the test scene's glyph: every cell of the screen lit with it, so
 SIZES = ((150, 42), (80, 24), (100, 30), (200, 60), (80, 60), (250, 24))
 
 
+class Recording(VTScreen):
+    """The VT screen, keeping the attributes of every row it scrolls off into the scrollback, as the scrollback
+    keeps its text: a background left on a scrolled row shows there although its text is a space."""
+
+    def __init__(self, rows: int, cols: int) -> None:
+        super().__init__(rows, cols)
+        self.scrolled_attrs: list[tuple] = []
+
+    def _line_feed(self) -> None:
+        if self._row >= self.rows - 1:
+            self.scrolled_attrs.append(tuple(self._attrs[0]))
+        super()._line_feed()
+
+
 @contextlib.contextmanager
 def ambiguous_wide():
     """The VT screen drawing East Asian Ambiguous characters two cells wide, as a terminal with that option set does."""
@@ -70,6 +86,11 @@ def ambiguous_wide():
                            lambda cluster: 2 if len(cluster) == 1 and unicodedata.east_asian_width(cluster) == "A"
                            else narrow(cluster)):
         yield
+
+
+ROLES = {  # each bitmap's letters, as its comment in `wallpaper` names them
+    "MOON": "abc", "SPARKLE": "sw", "BLOSSOM": "pqc", "PETAL": "pq", "FLAME": "roy", "SUN": "oyw", "JELLYFISH": "ebwt",
+}
 
 
 class Clock:
@@ -83,6 +104,32 @@ class Clock:
 def everywhere(look: str, cols: int, rows: int, seconds: float, light: bool) -> tuple[Cell, ...]:
     """A scene that lights every cell of the screen: whatever of it lands where it may not, shows."""
     return tuple(Cell(row, col, MARK, "#445566") for row in range(rows) for col in range(cols))
+
+
+CLOTH = "#7A1F3D"  # the colour of the pixels below that are a space on it
+
+
+def everywhere_on_cloth(look: str, cols: int, rows: int, seconds: float, light: bool) -> tuple[Cell, ...]:
+    """A scene of pixels that are a space on their colour, lighting every cell: a blank that leaves the colour on
+    shows nothing to a text check, so these tests look for the colour."""
+    return tuple(Cell(row, col, FULL, CLOTH, CLOTH) for row in range(rows) for col in range(cols))
+
+
+def clothed(attrs: list[list[tuple]] | list[tuple]) -> bool:
+    """Whether any cell of these rows carries a background of any colour (an SGR 48), the cloth or another a blank
+    was written with."""
+    def background(params: tuple) -> bool:
+        at = 0
+        while at < len(params):
+            if params[at] in (38, 48, 58):  # an extended colour: its own 2;r;g;b or 5;n arguments follow
+                if params[at] == 48:
+                    return True
+                at += 5 if params[at + 1:at + 2] == (2,) else 3
+            else:
+                at += 1
+        return False
+
+    return any(background(cell) for row in attrs for cell in row)
 
 
 class SceneTests(unittest.TestCase):
@@ -119,17 +166,55 @@ class SceneTests(unittest.TestCase):
                     lit = len(scene(look, cols, rows, step * 0.73, False))
                     self.assertLessEqual(lit, LIT_CEILING * cols * rows, (look, cols, rows, step))
 
-    def test_a_scene_is_plain_one_cell_characters_dimmer_than_words_on_its_ground(self) -> None:
+    def test_a_scene_is_half_block_pixels_dimmer_than_words_on_its_ground(self) -> None:
+        # Pixel art (owner's choice): `▀` over `▄`, a space on the colour where a cell's two pixels match; no text.
         for look in LAUNCH_PRESETS:
             for light in (False, True):
                 ground = look_ground(look, light)
                 for step in range(40):
                     for cell in scene(look, 150, 42, step * 1.3, light):
+                        self.assertIn(cell.char, (UPPER, LOWER, FULL), (look, cell))
                         self.assertEqual(cell_width(cell.char), 1, (look, cell))
-                        self.assertTrue(cell.char.isascii(), (look, cell))
-                        self.assertGreater(contrast_ratio(cell.fg, ground), 1.0, (look, cell))
-                        self.assertLessEqual(contrast_ratio(cell.fg, ground), AMBIENT_CONTRAST, (look, cell))
+                        if cell.char == LOWER:
+                            self.assertIsNone(cell.bg, "a bottom pixel alone has the ground above it")
+                        if cell.char == FULL:
+                            self.assertEqual(cell.bg, cell.fg, "two pixels of one colour: a space on it")
+                        for colour in (cell.fg, cell.bg):
+                            if colour is not None:
+                                self.assertGreater(contrast_ratio(colour, ground), 1.0, (look, cell))
+                                self.assertLessEqual(contrast_ratio(colour, ground), AMBIENT_CONTRAST, (look, cell))
                         self.assertLess(AMBIENT_CONTRAST, TEXT_CONTRAST)
+
+    def test_the_bitmaps_are_well_formed(self) -> None:
+        # Every frame's rows are one length, frames of one motif are one size, and each letter is a role its scene
+        # colours (`ROLES`) or CLEAR.
+        for name, art in SPRITES.items():
+            frames = art if isinstance(art[0], tuple) else (art,)
+            with self.subTest(sprite=name):
+                sizes = {(len(frame), len(frame[0])) for frame in frames}
+                self.assertEqual(len(sizes), 1 if name not in ("SPARKLE", "PETAL", "FLAME") else len(sizes), sizes)
+                for frame in frames:
+                    self.assertEqual(len({len(line) for line in frame}), 1, frame)
+                    letters = {letter for line in frame for letter in line} - {CLEAR}
+                    self.assertLessEqual(letters, set(ROLES[name]), (name, letters))
+                    self.assertLessEqual(len(letters), 5, "three to five colours a motif")
+
+    def test_aurora_reads_in_a_short_launch_band(self) -> None:
+        # On the README's launch screen aurora's card (a box per section) ends about two thirds down (row 31 of 48
+        # at 180x48, measured with the README runner's skills), leaving the band's lower rows only. The curtains fill
+        # the band whole, so at least a fifth of those rows' cells are lit at any moment (before: about an eighth).
+        for cols, rows in ((180, 48), (160, 60)):
+            first, last = round(rows * 0.66), rows - 6  # under the card, over the composer
+            for seconds in (0.0, 3.0, 7.0, 11.0):
+                lit = sum(1 for cell in scene("aurora", cols, rows, seconds, False) if first <= cell.row <= last)
+                with self.subTest(size=(cols, rows), seconds=seconds):
+                    self.assertGreaterEqual(lit, 0.2 * (last - first + 1) * cols)
+
+    def test_the_motifs_move(self) -> None:
+        # Each frame-animated motif shows another frame within a second, and every scene changes within a second.
+        for look in LAUNCH_PRESETS:
+            with self.subTest(look=look):
+                self.assertNotEqual(scene(look, 150, 42, 10.0, False), scene(look, 150, 42, 10.9, False))
 
     def test_a_small_screen_has_no_scene(self) -> None:
         self.assertEqual(scene("moonlit", 79, 30, 1.0, False), ())
@@ -207,12 +292,15 @@ class RegionTests(unittest.TestCase):
         written: list[str] = []
         screen = VTScreen(12, 40)
         region = LiveRegion(lambda text: (written.append(text), screen.feed(text)), at_top=True)
-        cells = (Cell(7, 3, "*", "#556677"), Cell(8, 9, ".", "#556677"))
+        cloth = Cell(9, 1, FULL, CLOTH, CLOTH)
+        cells = (Cell(7, 3, "*", "#556677"), Cell(8, 9, ".", "#556677"), cloth)
         region.render(self.LINES, (2, 7), 40, screen_rows=12, ambient=cells)
+        self.assertIn("48;2;122;31;61m", "".join(written), "a pixel's background is painted")
+        self.assertTrue(clothed([screen._attrs[9]]))
         written.clear()
         region.paint_ambient(cells, 12)
         self.assertEqual(written, [])
-        region.paint_ambient((Cell(7, 3, "+", "#556677"), Cell(8, 9, ".", "#556677")), 12)
+        region.paint_ambient((Cell(7, 3, "+", "#556677"), Cell(8, 9, ".", "#556677"), cloth), 12)
         self.assertEqual(len(written), 1)
         self.assertNotIn("9;10H", written[0], "the unchanged cell is not written")
         self.assertEqual((screen.line(7)[3], screen.line(8)[9]), ("+", "."))
@@ -270,12 +358,33 @@ class RegionTests(unittest.TestCase):
 
     def test_random_frames_never_cover_text_or_reach_the_scrollback(self) -> None:
         # Seeded random frames, flushes, inserted rows, ticks and starting places, with and without the glow's margin
-        # and the rows above painted: the screen with the glyph taken out is the plain run's, no glyph is in the
-        # scrollback, and every glyph on screen is one the region tracks (after the review's fuzz).
-        for seed in range(48):
-            wide = seed >= 40  # the last few on a terminal that draws ambiguous characters wide, over such text
+        # and the rows above painted, of half-block pixels (`▀` over a background, a space on its colour, `▄`): every
+        # cell the region does not hold is the plain run's, text and attributes (so blanking takes a background off
+        # too), every cell it holds shows a pixel, and every row the screen scrolls off reaches the scrollback as the
+        # plain run's did, text and attributes (after the review's fuzz).
+        for seed in range(72):
+            wide = seed >= 40  # the rest on a terminal that draws ambiguous characters (the half blocks) wide
             with ambiguous_wide() if wide else contextlib.nullcontext():
                 self.random_frames(seed, wide)
+
+    @staticmethod
+    def pixel_cells(rnd: random.Random, rows: int, cols: int, wide: bool) -> tuple[Cell, ...]:
+        """About seven cells in ten lit with pixels; on an ambiguous-wide screen only `▀` and `▄` (drawn two cells
+        wide there) and never in the last column, where a two-cell glyph does not fit."""
+        cells = []
+        for row in range(rows):
+            for col in range(cols - 1 if wide else cols):
+                if rnd.random() < 0.7:
+                    kind = rnd.random()
+                    if wide:
+                        cells.append(Cell(row, col, UPPER if kind < 0.5 else LOWER, "#445566", "#223344"))
+                    elif kind < 0.4:
+                        cells.append(Cell(row, col, UPPER, "#445566", "#223344"))
+                    elif kind < 0.7:
+                        cells.append(Cell(row, col, FULL, "#556677", "#556677"))
+                    else:
+                        cells.append(Cell(row, col, LOWER, "#667788"))
+        return tuple(cells)
 
     def random_frames(self, seed: int, wide: bool) -> None:
         rnd = random.Random(seed)
@@ -284,7 +393,7 @@ class RegionTests(unittest.TestCase):
         margin = int(footer)
         start = rnd.choice(["top", "row", "none"])
         place = {"at_top": True} if start == "top" else {"start_row": rnd.randrange(rows)} if start == "row" else {}
-        painted, plain = VTScreen(rows, cols), VTScreen(rows, cols)
+        painted, plain = Recording(rows, cols), Recording(rows, cols)
         if start != "top":
             shell = "shell\r\n" * rnd.randrange(rows) if start == "none" else f"\x1b[{place['start_row'] + 1};1H"
             for screen in (painted, plain):
@@ -293,8 +402,7 @@ class RegionTests(unittest.TestCase):
         width, screen_rows = cols - 2 * margin, rows - footer
         lines: list = []
         for step in range(50):
-            ambient = tuple(Cell(r, c, MARK, "#445566") for r in range(rows) for c in range(cols)
-                            if rnd.random() < 0.7)
+            ambient = self.pixel_cells(rnd, rows, cols, wide)
             if rnd.random() < 0.15:
                 regions[0].paint_ambient(ambient, screen_rows)
             else:
@@ -315,24 +423,40 @@ class RegionTests(unittest.TestCase):
                                   ambient_above=rnd.random() < 0.7)
                 regions[1].render(lines, cursor, width, flush=flush, screen_rows=screen_rows)
             where = f"seed {seed} step {step}"
-            self.assertEqual([line.replace(MARK, " ").rstrip() for line in painted.lines()],
-                             [line.rstrip() for line in plain.lines()], where)
-            self.assertFalse(any(MARK in line for line in painted.scrollback), where)
-            marks = {(row, col) for row in range(rows) for col, cell in enumerate(painted._text[row])
-                     if cell == MARK}  # by cell, where a wide glyph takes two
-            self.assertEqual(marks, set(regions[0]._paper), where)
+            held = set(regions[0]._paper)
+            for row in range(rows):
+                for col in range(cols):
+                    seen, wanted = (painted._text[row][col], painted._attrs[row][col]), \
+                        (plain._text[row][col], plain._attrs[row][col])
+                    if wide:  # a two-cell glyph spills into the cell on its right: text cells must be untouched
+                        if wanted[0] not in (" ", "", _vt_screen.CONTINUATION):
+                            self.assertEqual(seen, wanted, (where, row, col))
+                    elif (row, col) in held:
+                        self.assertIn(seen[0], (UPPER, LOWER, FULL), (where, row, col))
+                        self.assertTrue(seen[1], (where, row, col))
+                    else:
+                        self.assertEqual(seen, wanted, (where, row, col))
+            if wide:
+                self.assertEqual([line.replace(UPPER, "").replace(LOWER, "").rstrip() for line in painted.scrollback],
+                                 [line.rstrip() for line in plain.scrollback], where)
+            else:
+                self.assertEqual(painted.scrollback, plain.scrollback, where)
+                self.assertEqual(painted.scrolled_attrs, plain.scrolled_attrs, where)
 
     def test_clearing_the_region_takes_the_cells_above_it_off_too(self) -> None:
         # Exit from the launch screen (nothing to flush) and Ctrl+Z only clear the region: the cells beside the logo
         # above its top must go with it, or the shell's next lines scroll them into the scrollback.
-        screen, region = self.region()
+        # The pixels are spaces on their colour, so taking them off must take the colour off too.
+        screen = Recording(12, 40)
+        region = LiveRegion(screen.feed, at_top=True)
         region.render([(Span("> "),)], (0, 2), 40, flush=[(Span("logo row"),), (Span("card row"),)],
-                      screen_rows=12, ambient=everywhere("", 40, 12, 0, False), ambient_above=True)
-        self.assertIn(MARK, screen.line(0))
+                      screen_rows=12, ambient=everywhere_on_cloth("", 40, 12, 0, False), ambient_above=True)
+        self.assertTrue(clothed([screen._attrs[0]]))
         region.clear()
-        self.assertNotIn(MARK, "".join(screen.lines()))
+        self.assertFalse(clothed(screen._attrs))
         screen.feed("\r\n".join(f"$ shell {index}" for index in range(20)))
-        self.assertFalse(any(MARK in line for line in screen.scrollback))
+        self.assertGreater(len(screen.scrolled_attrs), 0)
+        self.assertFalse(clothed(screen.scrolled_attrs))
 
 
 class AppWallpaperTests(unittest.TestCase):
@@ -658,19 +782,18 @@ class AppWallpaperTests(unittest.TestCase):
         self.assertEqual(short[:8], [], f"{len(short)} inks under their floor")
 
     def test_exit_and_a_stop_from_the_launch_screen_leave_no_glyph(self) -> None:
+        # Pixels that are spaces on their colour: what is left must carry neither a glyph nor the colour.
         for way in ("exit", "stop"):
-            with self.subTest(way=way), mock.patch.object(app_module, "scene", everywhere):
+            with self.subTest(way=way), mock.patch.object(app_module, "scene", everywhere_on_cloth):
                 app = self.launch()
                 screen = app.terminal.screen
-                self.assertIn(MARK, "".join(screen.lines()))
+                self.assertTrue(clothed(screen._attrs))
                 if way == "exit":
                     app._shutdown()
                 else:
                     with mock.patch.object(app_module.signal, "SIGTSTP", 20, create=True):
                         app._suspend()
-                self.assertNotIn(MARK, "".join(screen.lines()), "nothing left to scroll into the shell's scrollback")
-                screen.feed("\r\n".join(f"$ shell {index}" for index in range(60)))
-                self.assertFalse(any(MARK in line for line in screen.scrollback))
+                self.assertFalse(clothed(screen._attrs), "nothing left to scroll into the shell's scrollback")
 
     def launch(self):
         from test_tui_app import FakePoller, ScriptedTerminal
@@ -773,6 +896,29 @@ class GlowWithWallpaperTests(glow_tests.AppGlowTests):
         self.assertIn(MARK, "".join(screen.lines()))
         self.assertTrue(app.region._paper)
         self.assertFalse(any(MARK in line for line in screen.scrollback))
+
+    def test_the_real_art_and_the_glow_keep_their_own_cells(self) -> None:
+        # The glow's tests above stand a mark in for the scenes; here a real scene's half blocks, which are glyphs the
+        # glow draws as well, so the checks go by place: the art never takes the glow's edge, the glow lights the
+        # edge, and no half block of either reaches the scrollback.
+        rows, cols = 42, 150
+        app, clock = glow_tests.AppGlowTests.app(self, {**glow_tests.GLOW_ON, "OMH_TUI_WALLPAPER": "1"}, rows, cols)
+        app.adopt_background(glow_tests.BACKGROUND)
+        app.launch_look = "moonlit"
+        self.busy(app, clock, flushes=40)
+        screen = app.terminal.screen
+        edge = {(row, col) for row in range(rows) for col in range(cols)
+                if row in (0, rows - 1) or col in (0, cols - 1)}
+        lit_edge = art = False
+        for _ in range(int(glow_tests.LOOP_SECONDS / glow_tests.TICK_SECONDS)):  # the glow once round
+            clock.at += glow_tests.TICK_SECONDS
+            app._render()
+            self.assertFalse(set(app.region._paper) & edge, "the art keeps off the glow's edge")
+            lit_edge = lit_edge or any(screen._text[row][col] in glow_tests.GLYPHS for row, col in edge)
+            art = art or any(screen._text[row][col] in (UPPER, LOWER) for row, col in app.region._paper)
+            self.assertFalse(any({UPPER, LOWER} & set(line) for line in screen.scrollback))
+        self.assertGreater(len(screen.scrollback), 0, "the turn's output scrolled")
+        self.assertTrue(lit_edge and art, (lit_edge, art))
 
 
 if __name__ == "__main__":

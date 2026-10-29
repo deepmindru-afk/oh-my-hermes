@@ -873,15 +873,18 @@ run and approval decision stays Hermes'; the screen is OMH's.
   saved.
 - Each launch look has a living wallpaper: the TUI sets the terminal's
   background to the look's own colour (OSC 11) while it runs and keeps a
-  scene moving in the screen's blank cells, one or two motifs drawn big in
-  dense characters with light particles round them. moonlit is deep navy
-  with a large crescent moon whose glow pulses, clouds drifting and stars
-  twinkling; sakura a dusky plum with a blossoming branch from the top-right
-  corner and petals falling; aurora deep teal with tall curtains of light
-  waving; ember a dark warm brown with a campfire, its flames flickering and
-  sparks rising; gold a large sun whose rays turn, and motes; violet large
-  soft bokeh drifting; graphite rain over a puddle that ripples; spectrum a
-  prism with a beam of light fanning out into five hues. A terminal with a
+  scene moving in the screen's blank cells, drawn as pixel art in the
+  brand's pixel-aura style: half blocks, two square pixels to a cell (`▀`
+  over a background, `▄`, and a space on a background where both pixels
+  match; nothing else is drawn), solid square tiles that scatter out to
+  single ones, and four-point `+` sparkles that grow and fade. spectrum is
+  the pixel aura itself; moonlit is deep navy with a crescent moon in a
+  pixel halo, soft tile clouds and sparkle stars; sakura a dusky plum with
+  blossom clusters and falling petals; aurora deep teal with ribbons of
+  scattered tiles; ember a dark warm brown with a flame flickering in a
+  warm glow and rising embers; gold a sun in a breathing glow; violet
+  pastel jellyfish with pulsing bells; graphite a cloud raining into a
+  rippling puddle. A terminal with a
   light background gets each look's pale ground instead.
   The theme is measured against that ground, and every word and mark also
   keeps its floor against the terminal's own background, which the rows

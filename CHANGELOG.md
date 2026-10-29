@@ -6,6 +6,29 @@ All notable changes will be documented here.
 
 ![Sprite Forge patch notes](https://raw.githubusercontent.com/rlaope/oh-my-hermes/main/assets/omh-sprite-forge-patch-notes.png)
 
+- **The living wallpaper is pixel art, in the brand's pixel-aura style.**
+  The scenes drew their motifs in characters (`%t;:`, rings of `O`), which
+  read as broken text. Every scene is now drawn in half blocks, two square
+  pixels to a cell (`▀` in the top pixel's colour over the bottom one's,
+  `▄`, and a space on the colour where both match, since a block glyph
+  leaves the terminal's line spacing as a stripe), in the language of the
+  `oh-my-hermes` pixel-aura short: a mosaic of solid square tiles, dense in
+  the middle and scattering out to single tiles, with four-point `+`
+  sparkles that grow and fade. spectrum is the pixel aura itself, in the
+  short's violet, pink, cyan, mint and periwinkle; the other looks keep
+  their motif in the same language, from small bitmaps kept as data: a clean
+  crescent moon in a pixel halo with soft tile clouds, pastel jellyfish with
+  pulsing bells, a sun in a breathing glow, blossom clusters with falling
+  petals, ribbons of scattered tiles, a flickering flame in a warm glow with
+  rising embers, and a cloud raining into a rippling puddle. The motifs sit
+  low on the right, where the launch card and a working session's rows leave
+  the screen blank, and a big screen (140×40 or more) draws the sprites' art
+  pixels two pixels square. The rules are unchanged: blank cells only, never
+  in the scrollback, at most a sixth of the screen lit, no pixel past 3:1
+  against the ground; colours keep their hue under that cap (mixed from a
+  dark shade rather than into the ground) and a motif's shades are spread
+  within it instead of collapsing onto it.
+
 - **A game now passes visual QA only when it boots, answers input and keeps
   running, and a scene is looked at after every change that affects what
   renders.** While building, `frontend` captures the affected surface (for a
