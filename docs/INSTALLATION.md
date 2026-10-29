@@ -873,20 +873,28 @@ run and approval decision stays Hermes'; the screen is OMH's.
   saved.
 - Each launch look has a living wallpaper: the TUI sets the terminal's
   background to the look's own colour (OSC 11) while it runs and keeps a
-  small, sparse scene moving in the screen's blank cells. moonlit is deep
-  navy with a crescent moon, twinkling stars and slow clouds; sakura a dusky
-  plum with falling petals; aurora deep teal with wavy ribbons of light;
-  ember a dark warm brown with rising sparks; gold floating motes; violet
-  drifting bokeh; graphite soft rain; spectrum a slow prism shimmer. A
-  terminal with a light background gets each look's pale ground instead.
+  scene moving in the screen's blank cells, one or two motifs drawn big in
+  dense characters with light particles round them. moonlit is deep navy
+  with a large crescent moon whose glow pulses, clouds drifting and stars
+  twinkling; sakura a dusky plum with a blossoming branch from the top-right
+  corner and petals falling; aurora deep teal with tall curtains of light
+  waving; ember a dark warm brown with a campfire, its flames flickering and
+  sparks rising; gold a large sun whose rays turn, and motes; violet large
+  soft bokeh drifting; graphite rain over a puddle that ripples; spectrum a
+  prism with a beam of light fanning out into five hues. A terminal with a
+  light background gets each look's pale ground instead.
   The theme is measured against that ground, so every colour keeps its
   contrast floor. The scene is drawn only on blank cells: the tail of each
   row to the right of its text, the rows under a short session and the
-  launch screen's empty area, never over text, never on the rows already
-  printed above, and never into the scrollback (it is taken off before
-  anything scrolls). It repaints only the cells that changed, every 0.1 s,
-  and stands still with reduced motion. It shows at truecolor, on a terminal
-  that answered the background query at start, and not under `NO_COLOR`.
+  launch screen's empty area, never over text, never on the transcript's
+  rows, and never into the scrollback (a cell a scroll would carry there is
+  taken off first). At most a sixth of the screen is lit, and no cell is
+  brighter than 3:1 against the ground. It repaints only the cells that
+  changed, every 0.1 s, leaves alone the tail of a row that is repainted
+  every frame (the working row's spinner), and stands still with reduced
+  motion; a screen under 80×24 keeps the ground with no scene. It shows at
+  truecolor, on a terminal that answered the background query at start, and
+  not under `NO_COLOR`.
   The terminal's own background comes back on every way out: on exit
   (normal, a crash, or a signal), while the job is stopped with Ctrl+Z (set
   again when it continues), and as soon as the wallpaper is turned off.

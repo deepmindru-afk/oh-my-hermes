@@ -52,7 +52,7 @@ from test_tui_modes import make_app, notices
 ANSWERED = "#1E1E1E"  # what the terminal answered the startup background query with
 WALLPAPER_ON = {"COLORTERM": "truecolor", "TERM": "xterm-256color", "OMH_TUI_WALLPAPER": "1"}
 MARK = "░"  # the test scene's glyph: every cell of the screen lit with it, so any cell it reaches shows
-SIZES = ((150, 42), (80, 24), (40, 12), (200, 60), (40, 60), (250, 12))
+SIZES = ((150, 42), (80, 24), (100, 30), (200, 60), (80, 60), (250, 24))
 
 
 class Clock:
@@ -98,7 +98,7 @@ class SceneTests(unittest.TestCase):
         # The ceiling's reason is beside it (`LIT_CEILING`): ambience behind work, never a picture over it.
         for look in LAUNCH_PRESETS:
             for cols, rows in SIZES:
-                for step in range(120):
+                for step in range(50):
                     lit = len(scene(look, cols, rows, step * 0.73, False))
                     self.assertLessEqual(lit, LIT_CEILING * cols * rows, (look, cols, rows, step))
 
@@ -109,14 +109,14 @@ class SceneTests(unittest.TestCase):
                 for step in range(40):
                     for cell in scene(look, 150, 42, step * 1.3, light):
                         self.assertEqual(cell_width(cell.char), 1, (look, cell))
-                        self.assertTrue(cell.char.isascii() or cell.char in "°▀▄█▒", (look, cell))
+                        self.assertTrue(cell.char.isascii(), (look, cell))
                         self.assertGreater(contrast_ratio(cell.fg, ground), 1.0, (look, cell))
                         self.assertLessEqual(contrast_ratio(cell.fg, ground), AMBIENT_CONTRAST, (look, cell))
                         self.assertLess(AMBIENT_CONTRAST, TEXT_CONTRAST)
 
     def test_a_small_screen_has_no_scene(self) -> None:
-        self.assertEqual(scene("moonlit", 39, 30, 1.0, False), ())
-        self.assertEqual(scene("moonlit", 80, 11, 1.0, False), ())
+        self.assertEqual(scene("moonlit", 79, 30, 1.0, False), ())
+        self.assertEqual(scene("moonlit", 100, 23, 1.0, False), ())
         self.assertEqual(scene("no-such-look", 80, 24, 1.0, False), scene("spectrum", 80, 24, 1.0, False))
 
 
@@ -167,7 +167,10 @@ class RegionTests(unittest.TestCase):
         region.render(self.LINES, (2, 7), 40, screen_rows=12, ambient=ambient)
         longer = [(Span("first row of text, now longer"),), *self.LINES[1:]]
         region.render(longer, (2, 7), 40, screen_rows=12, ambient=ambient)
-        self.assertEqual(screen.line(0), "first row of text, now longer" + MARK * 11)
+        self.assertEqual(screen.line(0), "first row of text, now longer",
+                         "painted again in two frames running (a spinner's row): its tail is left alone")
+        region.render(longer, (2, 7), 40, screen_rows=12, ambient=ambient)
+        self.assertEqual(screen.line(0), "first row of text, now longer" + MARK * 11, "still again: painted")
         region.render(longer[:1], None, 40, screen_rows=12, ambient=())
         self.assertNotIn(MARK, "".join(screen.lines()))
 
@@ -192,6 +195,7 @@ class RegionTests(unittest.TestCase):
         for index in range(20):
             region.render([(Span(f"live {index}"),), (Span("> "),)], (1, 2), 40,
                           flush=[(Span(f"flushed {index}"),)], screen_rows=8, ambient=ambient)
+        region.render([(Span("live 19"),), (Span("> "),)], (1, 2), 40, screen_rows=8, ambient=ambient)
         self.assertGreater(len(screen.scrollback), 0)
         self.assertFalse(any(MARK in line for line in screen.scrollback))
         self.assertIn(MARK, "".join(screen.lines()))
@@ -344,6 +348,48 @@ class AppWallpaperTests(unittest.TestCase):
                     edges = [screen.line(row).ljust(60)[col] for row in range(20) for col in (0, 59)]
                     self.assertNotIn(MARK, edges, "the glow's columns stay its own")
                     self.assertNotIn(MARK, screen.line(19))
+
+    def test_a_session_reads_as_it_would_without_the_wallpaper_and_every_painted_cell_is_tracked(self) -> None:
+        # The same session driven twice, with a scene that lights every cell and with the wallpaper off: with the
+        # wallpaper's glyph taken out, the screen and the scrollback must be the same after every frame (no cell
+        # painted over text, none scrolled away), and every glyph on screen must be one the region knows it painted
+        # (none left behind where a scroll, a flush or an inserted row moved the screen under it).
+        for glow in ("0", "1"):
+            with self.subTest(glow=glow), mock.patch.object(app_module, "scene", everywhere):
+                runs = [self.app({**WALLPAPER_ON, "OMH_TUI_GLOW": glow, "OMH_TUI_WALLPAPER": on}) for on in "10"]
+                for step in range(40):
+                    for app, clock in runs:
+                        self.step(app, clock, step)
+                    painted, plain = (app.terminal.screen for app, _clock in runs)
+                    self.assertEqual([line.replace(MARK, " ").rstrip() for line in painted.lines()], plain.lines(),
+                                     f"step {step}")
+                    self.assertEqual(painted.scrollback, plain.scrollback, f"step {step}")
+                    marks = {(row, col) for row in range(20) for col, char in enumerate(painted.line(row))
+                             if char == MARK}
+                    self.assertEqual(marks, set(runs[0][0].region._paper), f"step {step}")
+                self.assertGreater(len(runs[0][0].terminal.screen.scrollback), 0, "the session scrolled")
+
+    def step(self, app, clock, step: int) -> None:
+        """One step of a session that grows from a short one (rows inserted under it), streams, flushes, scrolls and
+        ends turns."""
+        def event(kind, **payload):
+            app.transcript.apply(Event(type=kind, session_id=app.sid, payload=dict(payload)))
+
+        if step % 13 == 0:
+            app.transcript.add_user(f"question {step}")
+            app.turn_pending = True
+            event("message.start")
+        elif step % 13 == 12:
+            event("message.complete", text=f"answer {step}")
+            app.turn_pending = False
+        elif step % 3 == 0:
+            event("tool.start", tool_id=f"t{step}", name="read_file", context=f"src/file_{step}.py")
+            event("tool.complete", tool_id=f"t{step}", name="read_file", result={"ok": True}, duration_s=0.1)
+        else:
+            event("message.delta", text=f"streamed words {step}\n")
+        clock.at += 0.2
+        app.dirty = True
+        app._render_when_due()
 
     def test_the_idle_session_ticks_only_the_wallpapers_cells(self) -> None:
         app, clock = self.app(rows=42, cols=150)

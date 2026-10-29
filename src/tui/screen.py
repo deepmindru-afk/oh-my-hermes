@@ -226,10 +226,15 @@ class LiveRegion:
         self._above_blank: deque[int | None] = deque(maxlen=FLUSHED_KEPT)
         self._framed_at: tuple[int, int] | None = None  # (cols, rows) of the screen the edge frame is painted on
         self._frame_cells: dict[tuple[int, int], str] = {}  # (row, col) -> the painted bytes of the frame there
-        self._paper: dict[tuple[int, int], str] = {}  # (row, col) -> the painted bytes of a wallpaper cell there
+        self._paper: dict[tuple[int, int], str] = {}  # (row, col) -> a wallpaper cell's glyph bytes (colour, char)
         self._papered_at: tuple[int, int] | None = None  # (width, rows) of the screen the wallpaper is painted on
         self._painted_over: tuple[list[int], int | None] = ([], None)  # the last frame's rows painted; erased from
         self._ambient_above = False  # the wallpaper may paint the rows this region flushed above it (`render`)
+        self._inserted: tuple[int, int] | None = None  # the last frame's rows inserted with IL: (at, count)
+        # The caller's rows the last two frames both painted again (a spinner's, a clock's): the wallpaper leaves their
+        # tails alone, since every repaint erases the tail and the cells there would be painted again each frame.
+        self._busy_rows: set[int] = set()
+        self._last_painted: set[int] = set()  # the caller's rows the last frame painted
         self._lead = lead  # written first, in the first write's synchronized update
         self._rows: list[str] = []  # painted bytes of each row the region holds
         self._row = 0  # hardware cursor row, relative to the region's top
@@ -334,6 +339,7 @@ class LiveRegion:
             return
         self._move_to(at, ops)
         ops.append(insert_lines(count))
+        self._inserted = (at, count)
         self._rows = self._rows[:at] + [""] * count + self._rows[at:]
         self._lines = self._lines[:at] + ((),) * count + self._lines[at:]
 
@@ -381,6 +387,7 @@ class LiveRegion:
             self._move_to(len(rows), ops)
             ops.append(ERASE_BELOW)
             erased = len(rows) if erased is None else erased
+        self._busy_rows, self._last_painted = set(painted_rows) & self._last_painted, set(painted_rows)
         self._painted_over = (painted_rows, erased)
         hidden = cursor is None
         last = max(len(rows), 1) - 1
@@ -434,20 +441,27 @@ class LiveRegion:
             lines = (*lines, ())
         grows = len(lines) > len(self._rows)
         ops = self._unframe() if flush or grows or edge is None or (edge.cols, rows) != self._framed_at else []
-        if flush or grows or ambient is None or (max(width, 1), rows) != self._papered_at:
+        moving: tuple[int, int, int] | None = None
+        if ambient is None or rows is None or (max(width, 1), rows) != self._papered_at:
             ops = self._unpaper() + ops
+        elif flush or grows:
+            moving, lifting = self._before_moving(rows, len(flush), len(lines))
+            ops = lifting + ops
+        self._inserted = None
         if flush:
             ops += self._flush(flush, width)
         written, painted = self._compose(lines, cursor, width, ops, rows)
+        if moving is not None and rows is not None:
+            self._carry(moving, rows)
         self._forget_painted_over(rows)
+        if ambient is not None and rows is not None:  # before the edge frame, which wins any cell it lights
+            papering = self._papering(ambient, rows)
+            if papering:
+                written, painted = written + papering, True
         if edge is not None and rows is not None:
             framing = self._frame(edge, rows, full=painted)
             if framing:
                 written, painted = written + framing, True
-        if ambient is not None and rows is not None:
-            papering = self._papering(ambient, rows)
-            if papering:
-                written, painted = written + papering, True
         self._send(written, painted)
 
     def paint_ambient(self, ambient: Sequence[Cell], screen_rows: int) -> None:
@@ -556,10 +570,10 @@ class LiveRegion:
     def _blank_starts(self, rows: int) -> dict[int, int]:
         """Screen row -> the first column of its blank cells, for the rows the wallpaper may paint on a screen `rows`
         tall: the tail of each of the caller's rows past its text (not a band's, whose background runs to the edge,
-        and on the caret's row only past the caret), and the region's footer and the rows under the region whole;
-        above the region only where `ambient_above` was asked, the tails of the rows it flushed there. With a footer
-        (the working glow's frame) the screen's top and last rows stay the frame's. Empty where the region's place is
-        not certain."""
+        nor one the last two frames both painted again, and on the caret's row only past the caret), and the
+        region's footer and the rows under the region whole; above the region only where `ambient_above` was asked,
+        the tails of the rows it flushed there. With a footer (the working glow's frame) the screen's top and last
+        rows stay the frame's. Empty where the region's place is not certain."""
         top, width = self._top(rows), self._width
         if top is None or width is None or not self._rows:
             return {}
@@ -571,7 +585,7 @@ class LiveRegion:
                 if start is not None:
                     starts[row] = start
         for index, line in enumerate(self._lines[:caller]):
-            if not (line and is_fill(line[-1])):
+            if index not in self._busy_rows and not (line and is_fill(line[-1])):
                 starts[top + index] = self._margin + min(line_width(line), width)
         for row in range(top + caller, rows):
             starts[row] = self._margin
@@ -594,9 +608,8 @@ class LiveRegion:
         for cell in ambient:
             start = starts.get(cell.row)
             if start is not None and start <= cell.col < self._margin + width:
-                glyph = Style(fg=cell.fg).sgr() + cell.char + SGR_RESET
-                cells[cell.row, cell.col] = cursor_at(cell.row, cell.col) + glyph
-        ops = [*lead, *(painted for at, painted in cells.items() if self._paper.get(at) != painted)]
+                cells[cell.row, cell.col] = Style(fg=cell.fg).sgr() + cell.char + SGR_RESET
+        ops = [*lead, *(cursor_at(*at) + glyph for at, glyph in cells.items() if self._paper.get(at) != glyph)]
         ops += [cursor_at(*at) + " " for at in self._paper if at not in cells]
         self._paper, self._papered_at = cells, (width, rows)
         top = self._top(rows)
@@ -607,6 +620,46 @@ class LiveRegion:
         back = cursor_at(top + parked[0], self._margin + parked[1])
         shown = "" if self._hidden else SHOW_CURSOR
         return "".join([HIDE_CURSOR, AUTOWRAP_OFF, *ops, AUTOWRAP_ON, back, shown])
+
+    def _before_moving(self, rows: int, flushed: int, height: int) -> tuple[tuple[int, int, int] | None, list[str]]:
+        """Before a write that flushes `flushed` lines and draws a `height`-row frame: (where the region's top is, how
+        many lines are flushed, how many rows the screen will scroll), for `_carry` to move the painted cells with
+        the screen afterwards, and the bytes that blank the cells the scroll would carry into the scrollback (the
+        cursor then back on the region's row). The scroll is worked out as the region works out its top: the top
+        moves down by the lines flushed, less what the screen scrolls."""
+        top = self._top(rows)
+        if top is None:
+            return None, self._unpaper()
+        shift, floor = self._shift, self._floor
+        if flushed:
+            shift, floor = self._flushed(shift, floor, flushed)
+        after = self._top_rows(rows, shift, self._framed(floor, height) if height else floor)[0]
+        scroll = max(top + flushed - after, 0)
+        lifted = [at for at in self._paper if at[0] < scroll]
+        if not lifted:
+            return (top, flushed, scroll), []
+        for at in lifted:
+            del self._paper[at]
+        self._parked = None
+        ops = [cursor_at(*at) + " " for at in lifted]
+        return (top, flushed, scroll), [AUTOWRAP_OFF, *ops, cursor_at(top + self._row, self._margin), AUTOWRAP_ON]
+
+    def _carry(self, moving: tuple[int, int, int], rows: int) -> None:
+        """The painted cells where the write just made moved them: the rows the flushed lines covered are gone, the
+        rest went up as far as the screen scrolled, and rows inserted with IL pushed the cells under them down (off
+        the screen's end, where IL drops them, not into the scrollback)."""
+        top, flushed, scroll = moving
+        after = self._top(rows)
+        kept: dict[tuple[int, int], str] = {}
+        for (row, col), glyph in self._paper.items():
+            if top <= row < top + flushed:
+                continue
+            row -= scroll
+            if self._inserted is not None and after is not None and row >= after + self._inserted[0]:
+                row += self._inserted[1]
+            if 0 <= row < rows:
+                kept[row, col] = glyph
+        self._paper = kept
 
     def _unpaper(self) -> list[str]:
         """The bytes that take the painted wallpaper cells off, queued before a write that could scroll them into the
