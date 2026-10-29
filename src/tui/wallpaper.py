@@ -429,11 +429,11 @@ def _sakura(canvas: _Canvas, palette: LogoPalette, seconds: float) -> None:
         centre_y = top + (bottom - top) * (0.2 + 0.25 * index)
         centre_x = cols - (0.08 + 0.12 * index) * cols * (1 - RIGHT) * 2
         _aura(canvas, centre_y, centre_x, 14 * scale, 30 * scale, (stops[1], stops[0], stops[1]), 61 + index,
-              breath=1 + 0.04 * sway, fill=0.22)
+              breath=1 + 0.03 * sway, fill=0.22)
         for blossom in range(5):
             y = centre_y + (_noise(index * 7 + blossom, 62) - 0.5) * 9 * scale - 2 * scale
             x = centre_x + (blossom - 2) * 6 * scale + (_noise(index * 7 + blossom, 63) - 0.5) * 3 * scale \
-                - 2 * scale + sway
+                - 2 * scale
             canvas.sprite(y, x, BLOSSOM, petals, scale)
     for index in range(_count(cols, canvas.rows, 140)):
         fall = 3.5 + 3.0 * _noise(index, 1)
@@ -458,7 +458,7 @@ def _aurora(canvas: _Canvas, palette: LogoPalette, seconds: float) -> None:
         glow = _wave(seconds, 9, col / (cols * 0.6))
         if glow < 0.25:
             continue
-        crest = top + reach * (0.15 + 0.15 * math.sin(TAU * (col / (cols * 0.4) + seconds / 4)))
+        crest = top + reach * (0.15 + 0.15 * math.sin(TAU * (col / (cols * 0.4) + seconds / 7)))
         length = reach * (0.4 + 0.3 * glow)
         colour = _pastel(stops[min(int(((col / cols + seconds / 40) % 1) * len(stops)), len(stops) - 1)])
         for down in range(int(length)):
@@ -476,17 +476,17 @@ def _ember(canvas: _Canvas, palette: LogoPalette, seconds: float) -> None:
     stops = _logo_stops(palette)
     _top, bottom = canvas.band()
     scale = canvas.scale()
-    flame = _frame(FLAME, seconds, 0.15)
+    flame = _frame(FLAME, seconds, 0.25)
     wide, tall = len(flame[0]) * scale, len(flame) * scale
     left, flame_top = int(cols * 0.8) - wide // 2, bottom - tall
     _aura(canvas, bottom - tall * 0.35, left + wide / 2, tall * 1.1, wide * 2.6, (stops[0], stops[1], stops[2]), 81,
-          breath=1 + 0.06 * _wave(seconds, 1.3, 0.0), fill=0.6)
+          breath=1 + 0.05 * _wave(seconds, 3.0, 0.0), fill=0.6)
     colours = {"r": canvas.tone(_pastel(stops[-1]), 0.9), "o": canvas.tone(_pastel(stops[2]), 1.0),
                "y": canvas.tone(_pastel(stops[0]), 1.0)}
     canvas.sprite(flame_top, left, flame, colours, scale)
-    for index in range(_count(cols, canvas.rows, 160)):
+    for index in range(_count(cols, canvas.rows, 320)):
         height = canvas.height * (0.3 + 0.4 * _noise(index, 1))
-        risen = (seconds * (6.0 + 6.0 * _noise(index, 2)) + _noise(index, 3) * height) % height
+        risen = (seconds * (4.0 + 3.0 * _noise(index, 2)) + _noise(index, 3) * height) % height
         share = risen / height
         x = left + wide / 2 + (_noise(index, 4) - 0.5) * wide * 1.4 \
             + 3 * math.sin(TAU * (seconds / 2 + _noise(index, 5))) * share
