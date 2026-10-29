@@ -13,19 +13,24 @@ All notable changes will be documented here.
   `+ N other commands`; a directory change (`cd`, `pushd`, `popd`) or a
   variable assignment (`T=/`, `printf -v`, `${T:=/}`) now stays listed
   whenever a listed command comes after it, and `echo`-like noise still
-  folds. When rows run short the spacing and the rule go first, then the
-  rows fold step by step, the last one before each risky command going
-  last, then every row that is not risky; a `▲` row is never cut while
-  another command's row shows, and no command that may change something
-  is hidden where the slot used to show it. A here-document body inside
-  `$(…)`, such as a commit or PR body, is read as text. A download run
-  as a script (`curl … | sh`, `bash <(curl …)`, `eval "$(curl …)"`,
-  `sh -c "$(wget -qO- …)"`, and inside a `-c` script, a substitution or
-  after `then`), decoded text piped into a shell (`base64 -d | sh`,
-  `xxd -r`, `echo | tr`, `openssl … -d`) and `chmod` with a mode that lets
-  others write (`777`, `666`, `o+w`, `a+w`) now get their own `▲` row, the
-  cases Hermes' approval table flags; `echo "$(curl …)"`, `x=$(curl …)`
-  and `diff <(curl a) <(curl b)` do not.
+  folds. When rows run short and Hermes named a risk OMH found, the
+  spacing and the rule go first, then the rows fold step by step, the
+  last one before each risky command going last, then every row that is
+  not risky: a `▲` row is never cut while another command's row shows,
+  and at the same number of `▲` rows no command that may change something
+  is hidden where the slot used to show it. When Hermes named none,
+  nothing folds and the slot lists and cuts from the end as before, risky
+  rows too. A quoted here-document body (`<<'EOF'`) inside `$(…)`, such
+  as a commit or PR body, is read as text; an unquoted one's `$(…)` and
+  backticks are read for what they run, and a `<<` inside `$((…))` is a
+  shift. A download run as a script (`curl … | sh`, `bash <(curl …)`,
+  `eval "$(curl …)"`, `sh -c "$(wget -qO- …)"`, and inside a `-c` script,
+  a substitution or after `then`), decoded text piped into a shell
+  (`base64 -d | sh`, `xxd -r`, `echo | tr`, `openssl … -d`), `find
+  -delete` or `-exec rm`, and `chmod` with a mode that lets others write
+  (`777`, `666`, `o+w`, `a+w`) now get their own `▲` row, the cases
+  Hermes' approval table flags; `echo "$(curl …)"`, `x=$(curl …)`,
+  `diff <(curl a) <(curl b)` and `find … -print` do not.
 
 - **A light goes round the OMH TUI's screen while a turn runs.** It runs
   along the terminal's whole edge, clockwise, once every four seconds, with

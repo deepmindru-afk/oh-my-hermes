@@ -96,9 +96,11 @@ def _word_start(text: str, index: int) -> bool:
     return index == 0 or text[index - 1].isspace() or text[index - 1] in ";&|()<>"
 
 
-def _heredoc(command: str, index: int) -> tuple[str, int, bool]:
-    """The here-document `<<` at `index` opens: its delimiter with the quotes taken off, the index past it, and
-    whether its closing line may be indented with tabs (`<<-`). No delimiter for a `<<` that opens none (`1<<2`)."""
+def _heredoc(command: str, index: int) -> tuple[str, int, bool, bool]:
+    """The here-document `<<` at `index` opens: its delimiter with the quotes taken off, the index past it, whether
+    its closing line may be indented with tabs (`<<-`), and whether the delimiter is quoted (`'EOF'`, `"EOF"`,
+    `\\EOF`), which keeps the body from running its substitutions. No delimiter for a `<<` that opens none
+    (`1<<2`)."""
     end = index + 2
     tabs = command.startswith("-", end)
     end += tabs
@@ -119,7 +121,50 @@ def _heredoc(command: str, index: int) -> tuple[str, int, bool]:
             word.append(char)
         end += 1
     opens = start < len(command) and (command[start] in "'\"\\_" or command[start].isalpha())
-    return ("".join(word) if opens else ""), end, tabs
+    quoted = any(char in "'\"\\" for char in command[start:end])
+    return ("".join(word) if opens else ""), end, tabs, quoted
+
+
+def _arithmetic_end(text: str, index: int) -> int:
+    """The index past the `))` that closes the arithmetic `$((` or `((` at `index`, or the end of `text`; a `<<`
+    inside is a shift, not a here-document."""
+    depth = 0
+    index = text.index("((", index)
+    while index < len(text):
+        depth += {"(": 1, ")": -1}.get(text[index], 0)
+        index += 1
+        if depth == 0:
+            return index
+    return len(text)
+
+
+def _arithmetic(text: str, index: int) -> bool:
+    """Whether an arithmetic expansion (`$((`) or command (`((` starting a word) opens at `index`."""
+    return text.startswith("$((", index) or (text.startswith("((", index) and _word_start(text, index))
+
+
+def _body_substitutions(body: str) -> list[str]:
+    """The command substitutions (`$(…)`, `` `…` ``) in the here-document `body` of an unquoted delimiter, which the
+    shell runs as it reads the body; a backslash escapes the next character."""
+    found: list[str] = []
+    index = 0
+    while index < len(body):
+        if body[index] == "\\":
+            index += 2
+        elif body.startswith("$((", index):
+            index = _arithmetic_end(body, index)
+        elif body.startswith("$(", index):
+            end = _closing(body, index + 2)
+            found.append(body[index : end + 1])
+            index = end + 1
+        elif body[index] == "`":
+            end = body.find("`", index + 1)
+            end = len(body) if end < 0 else end
+            found.append(body[index : end + 1])
+            index = end + 1
+        else:
+            index += 1
+    return found
 
 
 def _heredoc_end(command: str, index: int, pending: list[tuple[str, bool]]) -> int:
@@ -144,8 +189,8 @@ def _scan(command: str) -> list[tuple[str, str, bool]]:
     parts: list[tuple[list[str], list[str]]] = []
     written: list[str] = []
     read: list[str] = []
-    opener = written  # the command a pending here-document's body belongs to
-    pending: list[tuple[str, bool]] = []
+    opener, opener_read = written, read  # the command a pending here-document's body belongs to
+    pending: list[tuple[str, bool, bool]] = []
     quote = ""
     index = 0
     while index < len(command):
@@ -167,18 +212,26 @@ def _scan(command: str) -> list[tuple[str, str, bool]]:
             written.append(command[index:end])
             index = end
             continue
+        elif _arithmetic(command, index):
+            end = _arithmetic_end(command, index)
+            written.append(command[index:end])
+            read.append(command[index:end])
+            index = end
+            continue
         elif command.startswith("<<", index) and not command.startswith("<<<", index):
-            delimiter, end, tabs = _heredoc(command, index)
+            delimiter, end, tabs, quoted = _heredoc(command, index)
             if delimiter:
-                pending.append((delimiter, tabs))
-                opener = written
+                pending.append((delimiter, tabs, quoted))
+                opener, opener_read = written, read
                 written.append(command[index:end])
                 read.append(command[index:end])
                 index = end
                 continue
         elif char == "\n" and pending:
-            end = _heredoc_end(command, index, pending)
+            end = _heredoc_end(command, index, [(delimiter, tabs) for delimiter, tabs, _ in pending])
             opener.append(command[index:end])
+            if not all(quoted for _, _, quoted in pending):  # an unquoted delimiter's body runs its substitutions
+                opener_read.extend(" " + text for text in _body_substitutions(command[index:end]))
             pending = []
             index = end
             continue
@@ -320,6 +373,17 @@ def _chmod(args: list[str]) -> list[str]:
     return []
 
 
+def _find(args: list[str]) -> list[str]:
+    """`find` deletes what it matches with `-delete`, or with `rm` run by `-exec`, `-execdir`, `-ok` or `-okdir`
+    (tools/approval_detection.py:358, :367)."""
+    for index, arg in enumerate(args):
+        runs_rm = arg in ("-exec", "-execdir", "-ok", "-okdir") and args[index + 1 : index + 2] != [] and (
+            args[index + 1].rsplit("/", 1)[-1] == "rm")
+        if arg == "-delete" or runs_rm:
+            return ["recursive delete"]
+    return []
+
+
 def _git(args: list[str]) -> list[str]:
     index = 0
     while index < len(args) and args[index].startswith("-"):
@@ -350,7 +414,7 @@ def _git(args: list[str]) -> list[str]:
 
 
 # The closed table: a program's name, and what reads its arguments for the risks it names.
-RISKS: dict[str, Callable[[list[str]], list[str]]] = {"rm": _rm, "git": _git, "chmod": _chmod}
+RISKS: dict[str, Callable[[list[str]], list[str]]] = {"rm": _rm, "git": _git, "chmod": _chmod, "find": _find}
 # A download run as a script (`_runs_download`, or a pipe from `_FETCHERS` into `_SHELLS`), and decoded text piped
 # into a shell (`_decodes`).
 REMOTE_SCRIPT = "runs a downloaded script"
@@ -369,6 +433,7 @@ HERMES_NAMES = {
         "recursive delete of home directory",
         "xargs with rm",
         "find -exec/-execdir rm",
+        "find -delete",
     ),
     "force-pushes": (
         "git force push (rewrites remote history)",
@@ -429,6 +494,9 @@ def _closing(text: str, index: int) -> int:
         if char == "\\":
             index += 2
             continue
+        if inside != "`" and _arithmetic(text, index) and (inside == ")" or text.startswith("$((", index)):
+            index = _arithmetic_end(text, index)
+            continue
         if inside != ")":  # in a double quote only `$(` and a backtick open; in a backtick span nothing does
             if char == inside:
                 closers.pop()
@@ -444,7 +512,7 @@ def _closing(text: str, index: int) -> int:
             index = len(text) if end < 0 else end + 1
             continue
         if text.startswith("<<", index) and not text.startswith("<<<", index):
-            delimiter, end, tabs = _heredoc(text, index)
+            delimiter, end, tabs, _ = _heredoc(text, index)
             if delimiter:
                 pending.append((delimiter, tabs))
                 index = end
@@ -515,17 +583,18 @@ def _runs_text(word: str) -> bool:
 
 def _shell_operand(args: list[str]) -> tuple[bool, int]:
     """Whether a shell's options in `args` include `-c`, and the index of its first operand (`len(args)` when it has
-    none): the script it runs, from `-c` or a file. Options end at the first operand, so `bash run.sh -c x` passes
-    `-c` to `run.sh`; `-o`, `-O`, `--rcfile` and `--init-file` take a value, and a `<` redirect is no operand."""
+    none): the script it runs, from `-c` or a file. Options start with `-` or `+` (`+x`) and end at the first
+    operand, so `bash run.sh -c x` passes `-c` to `run.sh`; `-o`, `+o`, `-O`, `+O`, `--rcfile` and `--init-file`
+    take a value, and a `<` redirect is no operand."""
     runs = False
     index = 0
     while index < len(args):
         arg = args[index]
         if arg == "<":
             index += 1
-        elif arg in ("-o", "-O", "--rcfile", "--init-file"):
+        elif arg in ("-o", "+o", "-O", "+O", "--rcfile", "--init-file"):
             index += 2
-        elif arg.startswith("-") and arg != "-":
+        elif arg[:1] in ("-", "+") and arg not in ("-", "+"):
             runs = runs or _runs_text(arg)
             index += 1
         else:
@@ -543,7 +612,8 @@ def _runs_download(stages: list[list[str]], substituted: list[tuple[str, str]]) 
     """Whether the pipe `stages` (substitutions masked, `_substitutions`) hand a download to what runs it as a
     script: a shell, `eval`, `source` or `.` reading a process substitution that downloads (`bash <(curl …)`, :314),
     `eval`, `source` or `.` given a command substitution that does (`eval "$(curl …)"`, :316), or a shell given one
-    as the script its `-c` runs (`sh -c "$(curl …)"`). A shell's later operands are its script's arguments."""
+    as the script its `-c` runs (`sh -c "$(curl …)"`), or reading one as its input (`bash -s -- a < <(curl …)`). A
+    shell's later operands are its script's arguments."""
     fetching = {str(number) for number, (_, body) in enumerate(substituted) if _fetches(body)}
     if not fetching:
         return False
@@ -555,6 +625,10 @@ def _runs_download(stages: list[list[str]], substituted: list[tuple[str, str]]) 
         elif program in _SHELLS:
             runs, index = _shell_operand(words[1:])
             read = words[1 + index : 2 + index]
+            stdin = [after for before, after in zip(words, words[1:]) if before == "<"]
+            if any(substituted[int(number)][0] == "<(" for word in stdin for number in word.split("\x00")[1::2]
+                   if number in fetching):
+                return True
         else:
             continue
         for word in read:

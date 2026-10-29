@@ -53,6 +53,7 @@ body from its end.
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from dataclasses import dataclass, field, replace
 import json
 import os
@@ -665,10 +666,16 @@ class PromptSlot:
         Hermes sent it instead (`whole_lines`). Each fold step's body is drawn
         spaced, then with its rule alone, then bare, and cut from its end by
         `_fit`; a cut that leaves out a `▲` row while another command's row
-        shows is never drawn, nor a step that saves no row over the one before
+        shows is not drawn, nor a step that saves no row over the one before
         unless cut. Of the rest, the one that shows the most `▲` rows, then the
-        most commands that may change something, is drawn; on a tie a layout
-        that fits beats a cut, then the less folded, then the better spaced.
+        most commands that may change something, is drawn. On a tie a layout
+        that fits beats a cut, the less folded and then the better spaced
+        first; of two cuts, the one that shows fewer commands that change
+        nothing wins, so a row more never trades a listed command for a fold.
+
+        When Hermes' description names no risk found, nothing folds: the slot
+        lists every command and, short of rows, cuts from the end, risky rows
+        too, as it did before the fold steps.
         """
         description = str(self.params.get("description") or "dangerous command")
         command = str(self.params.get("command") or "")
@@ -690,7 +697,7 @@ class PromptSlot:
         indent: Line = (Span("  ", theme.code),)
         if whole:
             rows = wrap_prefixed((Span(command, theme.code),), indent, indent, width) if command else []
-            bodies = [(rows, ["!"] * len(rows))]
+            bodies = [(rows, [("!", 0)] * len(rows))]
         else:
             # Folding hides commands, so only when what Hermes flagged is one of the risky rows that stay.
             folds = FOLD_STEPS if command_risk.names_a_found_risk(found, description) else 0
@@ -699,41 +706,60 @@ class PromptSlot:
         blank: Line = ()
         choices = self._approval_choice_rows(width, theme)
         listed = [row for choice in choices for row in choice]
-        candidates: list[tuple[list[Line], list[str], int]] = []
-        shortest = None
+        def scored(kinds: list[tuple[str, int]], kept: int, fits: bool) -> tuple[int, int, bool, int] | None:
+            shown: dict[str, set[int]] = {kind: set() for kind in (RISK_MARK, "…", "!", "", "+")}
+            for kind, index in kinds[:kept]:
+                shown[kind].add(index)
+            if (shown["!"] or shown[""] or shown["+"]) and any(kind in (RISK_MARK, "…") for kind, _ in kinds[kept:]):
+                return None  # a `▲` row would go while another command's row shows
+            return len(shown[RISK_MARK]), len(shown["!"]), fits, 0 if fits else -len(shown[""])
+
+        best: tuple[tuple[int, int, bool, int], list[Line]] | None = None
+        built: list[tuple[list[Line], list[tuple[str, int]]]] = []  # the steps' bodies, built only as far as needed
         for body, kinds in bodies:
-            if shortest is None or len(body) < shortest:  # a fold that saves no row hides a command for nothing
-                shortest = len(body)
-                candidates.extend(([*framed, *listed], kinds, len(body)) for framed in (
-                    [*head, blank, *body, blank, rule, blank], [*head, *body, rule], [*head, *body],
-                ) if len(framed) + len(listed) <= max_rows)
-        for body, kinds in bodies:
+            built.append((body, kinds))
+            if len(built) == 1:
+                everything = (sum(1 for kind, _ in kinds if kind == RISK_MARK),
+                              len({index for kind, index in kinds if kind == "!"}), True, 0)
+            elif len(body) >= min(len(earlier) for earlier, _ in built[:-1]):
+                continue  # a fold that saves no row hides a command for nothing
+            for framed in ([*head, blank, *body, blank, rule, blank], [*head, *body, rule], [*head, *body]):
+                score = scored(kinds, len(body), True) if len(framed) + len(listed) <= max_rows else None
+                if score is not None and (best is None or score > best[0]):
+                    best = (score, [*framed, *listed])
+            if best is not None and best[0] == everything:
+                return best[1]  # nothing a cut could show more of
+        tried: set[tuple[tuple[str, int], ...]] = set()
+        for body, kinds in built:
+            if tuple(kinds) in tried:
+                continue  # a step that folds nothing more draws the same cut
+            tried.add(tuple(kinds))
             drawn, kept = self._fitted(head, body, choices, max_rows, width, theme)
-            candidates.append((drawn, kinds, kept))
-        best: tuple[tuple[int, int], list[Line]] | None = None
-        for drawn, kinds, kept in candidates:
-            shown, cut = kinds[:kept], kinds[kept:]
-            if any(kind in ("!", "", "+") for kind in shown) and any(kind in (RISK_MARK, "…") for kind in cut):
-                continue  # a `▲` row would go while another command's row shows
-            score = (shown.count(RISK_MARK), shown.count("!"))
-            if best is None or score > best[0]:
+            score = scored(kinds, kept, False)
+            if score is not None and (best is None or score > best[0]):
                 best = (score, drawn)
-        return best[1] if best else self._fit(head, bodies[-1][0], choices, max_rows, width, theme)
+        return best[1] if best else self._fit(head, built[-1][0], choices, max_rows, width, theme)
 
     def _command_bodies(self, found: list[command_risk.Segment], width: int, theme: Theme,
-                        folds: int) -> list[tuple[list[Line], list[str]]]:
-        """The command's rows at each fold step from 0 to `folds`, each with what every row is: `RISK_MARK` for a risky
-        command's first row and `…` for the rest of it, `!` for a command that may change something, `""` for one that
-        changes nothing (`Segment.foldable`), and `+` for the folded row. Each command in order: a risky one after a `▲` (on one line, wrapped, never cut), any other as written
+                        folds: int) -> Iterator[tuple[list[Line], list[tuple[str, int]]]]:
+        """The command's rows at each fold step from 0 to `folds`, built as asked for, each with what every row is
+        and the index of its command: `RISK_MARK` for a risky command's first row and `…` for the rest of it, `!` for
+        a command that may change something, `""` for one that changes nothing (`Segment.foldable`), and `+` for the
+        folded row (-1).
+        Each command in order: a risky one after a `▲` (on one line, wrapped, never cut), any other as written
         (its own line breaks kept), wrapped; each command is wrapped once. From step 1, other commands give way to one
         `+ N other commands` row naming their programs: at 1 those that change nothing (`Segment.foldable`); at 2 also
         a directory change or an assignment (`Segment.sets_state`) other than the last one before each risky command;
         at 3 every one of those; at 4 every command not risky. With none risky, every command is listed as written."""
         if not any(segment.risks for segment in found):
             indent: Line = (Span("  ", theme.code),)
-            rows = [row for segment in found
-                    for row in wrap_prefixed((Span(segment.text, theme.code),), indent, indent, width)]
-            return [(rows, ["!"] * len(rows))]
+            rows, kinds = [], []
+            for index, segment in enumerate(found):
+                wrapped_rows = wrap_prefixed((Span(segment.text, theme.code),), indent, indent, width)
+                rows.extend(wrapped_rows)
+                kinds.extend([("!", index)] * len(wrapped_rows))
+            yield rows, kinds
+            return
         home = os.path.expanduser("~")
         # A risky command is never cut at the width: on a narrow slot it wraps under its mark.
         mark: Line = (Span("  "), Span(RISK_MARK, replace(theme.error, bold=True)))
@@ -752,10 +778,9 @@ class PromptSlot:
             if segment.risks and last >= 0:
                 aiming.add(last)
                 last = -1
-        bodies: list[tuple[list[Line], list[str]]] = []
         for fold in range(folds + 1):
-            rows: list[Line] = []
-            kinds: list[str] = []
+            rows = []
+            kinds = []
             others: list[command_risk.Segment] = []
             for index, segment in enumerate(found):
                 if not segment.risks and (
@@ -764,16 +789,16 @@ class PromptSlot:
                     others.append(segment)
                 else:
                     rows.extend(wrapped[index])
-                    kinds.extend([RISK_MARK, *["…"] * (len(wrapped[index]) - 1)] if segment.risks
-                                 else ["" if segment.foldable else "!"] * len(wrapped[index]))
+                    kind = "" if segment.foldable else "!"
+                    kinds.extend([(RISK_MARK, index), *[("…", index)] * (len(wrapped[index]) - 1)] if segment.risks
+                                 else [(kind, index)] * len(wrapped[index]))
             if others:
                 lead = Span(OTHER_COMMANDS.format(count=len(others), s="s" if len(others) != 1 else ""), theme.muted)
                 names = truncate("(" + ", ".join(dict.fromkeys(segment.head for segment in others)) + ")",
                                  max(width - cell_width(lead.text) - cell_width(OTHER_HINT), 0))
                 rows.append(truncate_line((lead, Span(names, theme.faint), Span(OTHER_HINT, theme.hint)), width))
-                kinds.append("+")
-            bodies.append((rows, kinds))
-        return bodies
+                kinds.append(("+", -1))
+            yield rows, kinds
 
     def _approval_choice_rows(self, width: int, theme: Theme) -> list[list[Line]]:
         """Each choice as its rows: its icon and label in its tone (`APPROVAL_TONES`), wrapped under the icon; the
