@@ -25,6 +25,7 @@ import json
 import os
 from pathlib import Path
 import sqlite3
+import subprocess
 import sys
 import time
 import unittest
@@ -1609,6 +1610,22 @@ class AppTests(FixtureRoot):
         self.assertEqual(len(FakeReader.instances), 1, "the board opened again reuses its one reader")
         self.assertFalse(FakeReader.instances[0].stopped)
         self.assertEqual(client.calls, [], "the board sends nothing to the gateway")
+
+    def test_the_tui_loads_the_board_only_when_it_opens(self) -> None:
+        # QA P2: importing the TUI loaded this module (and its readers' imports) for a board most sessions never open.
+        code = ("import sys\nfrom test_tui_modes import make_app\n"
+                "app, _client = make_app()\napp._take_board()\napp._render()\n"  # a loop tick with the board closed
+                "print('omh.tui.bot_board' in sys.modules)")
+        done = subprocess.run([sys.executable, "-P", "-c", code], capture_output=True, text=True, timeout=120,
+                              env={**os.environ, "PYTHONPATH": os.pathsep.join([str(Path(__file__).parent),
+                                                                               os.environ.get("PYTHONPATH", "")])})
+        self.assertEqual((done.returncode, done.stdout.strip()), (0, "False"), done.stderr)
+        FakeReader.instances = []
+        app, _client = make_app(environ=self.environ)
+        with patch.object(bot_board, "BoardReader", FakeReader):
+            app._on_input(CTRL_S)
+        self.assertIsInstance(app.pager, BotBoard)
+        self.assertEqual(len(FakeReader.instances), 1, "the board's own reader, made when it opened")
 
     def test_bots_opens_the_board_and_leaves_no_echo(self) -> None:
         app, client = self.app()
