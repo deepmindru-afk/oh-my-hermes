@@ -10,7 +10,7 @@ BASE = Path(__file__).resolve().parent
 sys.path.insert(0, str(BASE / "lib"))
 
 from common import CONDITIONS, load_object  # noqa: E402
-from corpus import generate_public  # noqa: E402
+from corpus import SPLITS, generate_public  # noqa: E402
 from runner import doctor, execute_one, run_matrix  # noqa: E402
 
 
@@ -34,7 +34,7 @@ def main(argv: list[str] | None = None) -> int:
         command.add_argument("--manifest", type=Path, default=BASE / "manifest.json")
         command.add_argument("--model", action="append")
         command.add_argument("--condition", choices=CONDITIONS, default="baseline")
-        command.add_argument("--split", choices=("development", "evaluation", "lsp-ab"), default="development")
+        command.add_argument("--split", choices=SPLITS, default="development")
         command.add_argument("--output", type=Path)
         command.add_argument("--omh-executable", default="omh")
         command.add_argument("--hermes-executable", default="hermes")
@@ -44,9 +44,9 @@ def main(argv: list[str] | None = None) -> int:
         )
         command.add_argument(
             "--edit-surface",
-            choices=("patch", "hashline", "lsp"),
+            choices=("patch", "hashline", "lsp", "impact"),
             default="patch",
-            help="Edit surface for hermes_current_session harness: 'patch' (default, builtin file toolset), 'hashline' (plugin toolset omh-hashline with OMH_HASHLINE_TOOLS=1) or 'lsp' (file,terminal plus plugin toolset omh-lsp).",
+            help="Edit surface for hermes_current_session harness: 'patch' (default, builtin file toolset), 'hashline' (plugin toolset omh-hashline with OMH_HASHLINE_TOOLS=1), 'lsp' (file,terminal plus plugin toolset omh-lsp) or 'impact' (as lsp, for the impact-check arm whose profile turns impact_check on; its edit rule is the patch rule).",
         )
         command.add_argument(
             "--edit-directive",

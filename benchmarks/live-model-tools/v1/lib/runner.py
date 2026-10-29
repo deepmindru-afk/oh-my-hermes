@@ -146,6 +146,7 @@ def execute_one(
         failure_receipt: dict[str, object] | None = None
         trial_task_digest = instance.fixture_digest
         trial_prompt_digest: str | None = None
+        session_id: str | None = None
         observation: dict[str, object] = {
             "status": "offline_fake",
             "tools": None,
@@ -246,6 +247,8 @@ def execute_one(
             raw_prompt_digest = trial.get("prompt_digest")
             trial_prompt_digest = raw_prompt_digest if isinstance(raw_prompt_digest, str) else None
             observation = dict(trial["observation"])
+            raw_session_id = trial.get("session_id")
+            session_id = raw_session_id if isinstance(raw_session_id, str) else None
         else:
             raise ValueError("harness must be fake, omh, or hermes_current_session")
 
@@ -276,6 +279,7 @@ def execute_one(
             "head_omitted_blocks": head_omitted_blocks(condition),
             "route": route,
             "observation": observation,
+            "session_id": session_id,
             "failure_receipt": failure_receipt,
             "grade": grade,
             "final_tree_digest": tree_digest(workspace),

@@ -554,6 +554,60 @@ Results describe this pinned corpus, OMH version, Hermes version, provider,
 model id and conditions only. They do not establish universal model
 superiority.
 
+### 2026-10-30 impact check: callers broken by an edit, off vs on (`impact_check` + `lsp_diagnostics`)
+
+One question, from oh-my-pi's workspace diagnostics: when an edit changes a definition, does
+telling the model which files that import it now have new type errors help it fix every caller?
+Hermes checks diagnostics only for the file an edit wrote.
+
+How the check works (opt-in, setting `impact_check` or env `OMH_IMPACT_CHECK`): on the turn's
+first `patch` / `write_file` of an existing `.py` file, `pre_tool_call` finds up to 30 workspace
+files that import it (an `ast` import scan, following one package re-export) and records their
+language-server errors. At the turn's first stop, `pre_verify` re-checks those files against the
+disk and, when an error appeared that the baseline did not have, continues the turn with at most
+15 lines of `path:line: message`. It says nothing otherwise. `lsp_diagnostics(path|glob)` joins the
+opt-in `omh-lsp` toolset so the model can re-check.
+
+The setup:
+
+- Split `impact-ab` (`--split impact-ab`; the evaluation corpus and its digest are unchanged),
+  four templates, 3 seeds each, 12 instances per model per arm. Only the edited module has a test
+  in the workspace; the controller exercises every caller in a fresh interpreter.
+  - `I-SIGNATURE`: a required parameter added to a function called directly, through an alias,
+    through the module and through a package re-export under another name.
+  - `I-RETURN-SHAPE`: a dict return turned into a frozen dataclass, read by key in three modules
+    (alias, module attribute, `.get`).
+  - `I-KWARG`: a keyword-only parameter renamed; one caller passes it through `**options`, which
+    a type checker cannot see, one through a module alias.
+  - `I-CONTROL`: an edit that breaks no caller, next to an importer with an unrelated
+    pre-existing type error. The check must stay silent.
+- Both arms: `--edit-directive` (the patch rule, byte-identical in both arms),
+  `--git-init-workspace`, `--test-env`, effort `medium`. Arm `off` is `--edit-surface patch`
+  (toolsets `file,terminal`); arm `on` is `--edit-surface impact` (toolsets
+  `file,terminal,omh-lsp`, profile settings `impact_check: true` and `lsp_tools: true`, so the
+  four `omh-lsp` tools are listed). Two profiles that differ only in those settings, the toolset
+  and the OMH home; `agent.max_turns: 120` and `tools.tool_search` off in both.
+- Subscription routes only. Claude through the local CPA proxy (`claude-proxy`), GPT through
+  Hermes `openai-codex`. Weak: `claude-haiku-4-5-20251001`, `claude-haiku-5-5`, `gpt-5.6-luna`
+  (the smallest model the Codex subscription served on 2026-10-30). Strong: `claude-sonnet-5-5`,
+  `claude-opus-5-5`, `gpt-6.1-sol` (the Codex flagship).
+
+The merge gate, fixed here before the first live run:
+
+- Weak models, on at least off + 3 (summed over the three weak models).
+- Strong models, on at least off - 1 (summed over the three strong models).
+- No on-arm run above 3x its pair's median tokens (the off arm's median for the same model and
+  template).
+- The note fired in at least half of the on-arm sessions with a broken caller. Over the three
+  edit templates, a session counts as having a broken caller when the note fired or its final
+  tree still fails the controller's check; a note "fired" when the profile's log has an
+  `impact_check round_end` line for the session with `new_errors` above 0.
+- 0 notes on `I-CONTROL`.
+- Added round-end latency, p95 of the check's own time at `pre_verify` (the `ms` of the same log
+  line), at most 20 s.
+
+A failed clause means the feature does not merge; the result is recorded here as the DAP run was.
+
 ### 2026-10-29 debugging: builtin `patch` vs a debugpy tool (`omh-dap`), gate failed
 
 One question, from oh-my-pi's `debug` tool: does giving the model a debugger (breakpoints,

@@ -9,6 +9,7 @@ attribute is looked up with ``getattr``; an absent one means ``lsp_unavailable``
 from __future__ import annotations
 
 import os
+import time
 from typing import Any, Callable
 
 REQUEST_TIMEOUT = 20.0
@@ -107,6 +108,48 @@ def request(
         raise BridgeError("server_unavailable", f"language server request failed ({type(exc).__name__})") from None
 
 
+def diagnostics(paths: list[str], sync: list[str] = (), timeout: float = REQUEST_TIMEOUT) -> dict[str, list[dict[str, Any]] | None]:
+    """Fresh diagnostics for each of ``paths``: ``{path: [diagnostic, ...]}``; ``None`` = no verdict in time.
+
+    Every path in ``sync`` and then in ``paths`` is re-sent from disk first, so the server
+    judges the files against what the disk holds now, including the modules they import.
+    One deadline covers all the waits; a path the server did not answer for maps to
+    ``None``, which callers must read as "unknown", never as "clean". Paths the service
+    does not handle are left out. Raises ``BridgeError`` like ``request``.
+    """
+    svc, reason = available()
+    if svc is None:
+        raise BridgeError("lsp_unavailable", reason or "lsp_unavailable")
+    targets = [path for path in dict.fromkeys(paths) if svc.enabled_for(path)]
+    if not targets:
+        return {}
+
+    async def run() -> dict[str, list[dict[str, Any]] | None]:
+        client = await svc._get_or_spawn(targets[0])
+        if client is None:
+            raise BridgeError("server_unavailable", "the language server could not be started for this file")
+        for path in sync:
+            if path not in targets and os.path.isfile(path) and svc.enabled_for(path):
+                await client.open_file(path, language_id=_language_id(svc, path))
+        versions = {path: await client.open_file(path, language_id=_language_id(svc, path)) for path in targets}
+        deadline = time.monotonic() + timeout
+        out: dict[str, list[dict[str, Any]] | None] = {}
+        for path, version in versions.items():
+            remaining = deadline - time.monotonic()
+            fresh = remaining > 0 and await client.wait_for_diagnostics(path, version, timeout=remaining)
+            out[path] = list(client.diagnostics_for(path, fresh_only=True)) if fresh else None
+        return out
+
+    try:
+        return svc._loop.run(run(), timeout=timeout + 10)
+    except BridgeError:
+        raise
+    except TimeoutError:
+        raise BridgeError("timeout", f"the language server did not answer within {int(timeout)} s") from None
+    except Exception as exc:  # noqa: BLE001
+        raise BridgeError("server_unavailable", f"language server request failed ({type(exc).__name__})") from None
+
+
 def notify_changed(abs_path: str, paths: list[str]) -> None:
     """Re-sync ``paths`` with the server after OMH wrote them; errors are ignored."""
     try:
@@ -127,4 +170,4 @@ def notify_changed(abs_path: str, paths: list[str]) -> None:
         return
 
 
-__all__ = ["REQUEST_TIMEOUT", "BridgeError", "available", "in_git_worktree", "notify_changed", "request"]
+__all__ = ["REQUEST_TIMEOUT", "BridgeError", "available", "diagnostics", "in_git_worktree", "notify_changed", "request"]
