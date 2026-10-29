@@ -57,10 +57,10 @@ omh setup
   A hundred-plus `omh-*` specialists: frontend, backend, Rust, security review, verification gates.<br>
   You never call them; the router loads the right ones into the run as tool calls.
 
-- **Semantic rename for Python, opt-in.**<br>
-  `lsp_definition`, `lsp_references` and `lsp_rename` ask the language server Hermes already runs instead of searching text.<br>
-  Aliases, re-exports and shadowed names get renamed correctly, and smaller models gain the most.<br>
-  Off by default; turn on `lsp_tools` in the OMH plugin settings ([measurement](benchmarks/live-model-tools/v1/README.md)).
+- **LSP in the loop.**<br>
+  Definitions, references and renames come from the language server, not from text search.<br>
+  The model renames what the code means, not what the text matches: aliases, re-exports and shadowed names included.<br>
+  Off by default; enable `lsp_tools` in the OMH plugin settings.
 
 - **Long-term memory you can trust.**<br>
   Nothing is remembered silently: each candidate is kept, refused or deferred with a written reason.<br>
