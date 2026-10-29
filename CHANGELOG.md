@@ -6,6 +6,13 @@ All notable changes will be documented here.
 
 ![Sprite Forge patch notes](https://raw.githubusercontent.com/rlaope/oh-my-hermes/main/assets/omh-sprite-forge-patch-notes.png)
 
+- **The working glow no longer blanks the screen's top row.** While a turn
+  ran, the OMH TUI painted the whole top row as the light's track, so that
+  row's text (the logo's first line on the launch screen, or the oldest
+  row of a short session) was hidden for the whole turn. The row's own text
+  is now painted again under the light, and only the cells the light
+  reaches cover it.
+
 - **`/glow off` turns the OMH TUI's working glow off, and it now shows in a
   short session too.** `/glow on|off` (alone, it switches) is saved beside
   the theme under the OMH home, so it holds in every later session;
