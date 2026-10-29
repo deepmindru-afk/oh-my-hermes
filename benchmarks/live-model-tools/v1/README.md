@@ -651,8 +651,15 @@ What it shows, and what it does not:
   origin/main `5cc1ed311`, Hermes Agent v0.22.5 (`bf0203a794`), one on/off profile pair per model,
   6 models in parallel, 2026-10-30 02:02-02:26 KST. 144 of 144 records completed; none failed,
   timed out or was retried.
+- After the run, an independent review changed the plugin (`985bec3c3`). The baseline now fits
+  the host hook timeout, state does not carry across turns, bare module names no longer match the
+  standard library, and deleted modules are not baselined. Under the new rules the impact-ab
+  importers resolve the same: 6 per `I-SIGNATURE` instance and 4 per `I-CONTROL` instance. A live
+  re-smoke on that commit (haiku 4.5, on arm, 6 runs) passed 3 / 3 `I-SIGNATURE`, with a note in
+  each, and 3 / 3 `I-CONTROL` with no note. The table above is from the plugin as of `c5e4fc02c`.
 - Python and pyright only. The type checker cannot follow `**options`, `getattr` or string
-  dispatch; those callers still break silently. n = 12 per model per arm.
+  dispatch, so those callers still break silently. A deleted or moved module is not checked.
+  n = 12 per model per arm.
 
 ### 2026-10-29 debugging: builtin `patch` vs a debugpy tool (`omh-dap`), gate failed
 
