@@ -42,8 +42,15 @@ LEADS = {
     "skin tone": "👍🏻",  # painted 2, counted 4
     "vs16": "☀️",  # painted 2, counted 1 or 3
     "flag": "🇰🇷",  # two regional indicators, one glyph
-    "kirat rai": "\U00016D63\U00016D67",  # two letters NFC writes as one (U+16D69)
 }
+# Two Kirat Rai letters NFC writes as one (U+16D69). The script is Unicode 16: an interpreter whose unicodedata is
+# older (Python 3.11 has Unicode 14) composes nothing here, so the pair is two units there and the cases that count
+# on one are run only where NFC composes it. No other letter NFC composes with the one before it outside Hangul,
+# which joins as a zero-width jamo anyway, so Unicode 14 has no such pair to test instead.
+KIRAT_RAI = "\U00016D63\U00016D67"
+KIRAT_RAI_COMPOSES = unicodedata.normalize("NFC", KIRAT_RAI) == "\U00016D69"
+WHERE_KIRAT_RAI_COMPOSES = {"kirat rai": KIRAT_RAI} if KIRAT_RAI_COMPOSES else {}
+LEADS.update(WHERE_KIRAT_RAI_COMPOSES)
 KITTY = {"TERM": "xterm-kitty"}
 # A cluster of two or more code points whose first is not in the rest of the page, for a cut to fall inside.
 CUT_LEADS = {
@@ -52,7 +59,7 @@ CUT_LEADS = {
     "flag": "🇰🇷",
     "combining mark": "z\u0301",
     "decomposed hangul": "\u1112\u1161\u11ab",
-    "kirat rai": "\U00016D63\U00016D67",  # two letters NFC writes as one (U+16D69)
+    **WHERE_KIRAT_RAI_COMPOSES,
 }
 
 
@@ -238,16 +245,23 @@ class PagerSelectionTests(unittest.TestCase):
                     self.assertEqual(sgr.sub("", paint_line(_reversed(line, low, high), 10)),
                                      sgr.sub("", paint_line(line, 10)))
 
-    def test_a_kirat_rai_pair_is_one_unit_as_written_and_leaves_the_rest_of_the_span_as_written(self) -> None:
-        # NFC composes these two letters (U+16D63 U+16D67 is U+16D69, U+16D67 U+16D67 is U+16D68), so they are one
-        # unit both written and painted; before, the span's units did not pair and its copy fell back to NFC whole.
-        for text in ("\U00016D63\U00016D67", "\U00016D67\U00016D67", "\U00016D63\U00016D67\U00016D67",
-                     "a\U00016D63\U00016D67", "\U0001F1F0\U00016D67\U00016D67"):
+    def test_kirat_rai_units_as_written_pair_with_the_painted_ones_and_the_span_copies_as_written(self) -> None:
+        # Whatever this interpreter's NFC does with these letters, the units as written are the painted units, so a
+        # span holding them (an NFD path beside them) is copied as written; before, the units did not pair where NFC
+        # composes the pair, and the whole span fell back to NFC.
+        for text in (KIRAT_RAI, "\U00016D67\U00016D67", "\U00016D63\U00016D67\U00016D67", "a" + KIRAT_RAI,
+                     "\U0001F1F0\U00016D67\U00016D67"):
             with self.subTest(text=text):
                 self.assertEqual([nfc(unit) for unit in clusters_as_written(text)], clusters(text))
-        text = "/tmp/e\u0301te\u0301 \U00016D63\U00016D67"
+        text = "/tmp/e\u0301te\u0301 " + KIRAT_RAI
         self.assertEqual("".join(cell.text for cell in _cells((Span(text),))), text)
-        self.assertEqual(subagents._cut("aaaa\U00016D63\U00016D67 tail", 5), "aaaa" + subagents.CUT_MARK)
+
+    @unittest.skipUnless(KIRAT_RAI_COMPOSES, "this interpreter's unicodedata predates Kirat Rai (Unicode 16)")
+    def test_a_kirat_rai_pair_nfc_composes_is_one_unit_and_never_cut_apart(self) -> None:
+        # U+16D63 U+16D67 is U+16D69 and U+16D67 U+16D67 is U+16D68 under NFC: one unit written and painted.
+        self.assertEqual(clusters_as_written(KIRAT_RAI), [KIRAT_RAI])
+        self.assertEqual(clusters_as_written("\U00016D63\U00016D67\U00016D67"), ["\U00016D63\U00016D67\U00016D67"])
+        self.assertEqual(subagents._cut("aaaa" + KIRAT_RAI + " tail", 5), "aaaa" + subagents.CUT_MARK)
 
     def test_the_logs_pager_paints_and_copies_what_stderr_shows(self) -> None:
         now = [100.0]
