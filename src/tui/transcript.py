@@ -26,8 +26,9 @@ it. Three kinds of block hang on a rail in the left gutter (`RAIL`: one cell
 painted in the block's colour and a space; a painted cell meets the ones above
 and below it, so a block's rail is one line, and each cell holds a space, so a
 terminal's selection copies no bar with the text): your prompt's in dim grey,
-each tool call's in its state's colour, and a reply's in the skin's accent, the
-banner's colour (`Theme.brand`). Nothing has a band behind it.
+each tool call's in the launch look's `Theme.accent` (a failed or denied one's
+red, as its band is; its mark says every other state), and a reply's in the
+skin's accent, the banner's colour (`Theme.brand`). Nothing has a band behind it.
 
 A slash command the person runs is a block of its own: `❯ /name arg` on the prompt's dim
 rail, in the hint colour, then what it printed under `⎿`, each part in its level's colour
@@ -1048,7 +1049,7 @@ def _within(row: Line, width: int) -> Line:
 
 
 def _state_style(status: str, theme: Theme, dim: bool = False) -> Style:
-    """A call's state as a colour: its mark's and its rail's."""
+    """A call's state as a colour: its mark's (its rail is `_rail_style`'s)."""
     if status == TOOL_OK:
         return theme.ok
     if status in (TOOL_ERROR, TOOL_DENIED):
@@ -1056,6 +1057,11 @@ def _state_style(status: str, theme: Theme, dim: bool = False) -> Style:
     if status == TOOL_RUNNING:
         return theme.dim if dim else theme.running
     return theme.dim
+
+
+def _rail_style(status: str, theme: Theme) -> Style:
+    """A call's rail: red when it failed or was denied, as its band is, else the launch look's accent."""
+    return theme.error if status in (TOOL_ERROR, TOOL_DENIED) else theme.accent
 
 
 def _tool_mark(status: str, theme: Theme, dim: bool = False) -> Span:
@@ -1191,7 +1197,7 @@ def _folded_row(unit: list[ToolRow], width: int, theme: Theme, now: float | None
 def _tool_rows(
     group: ToolGroup, width: int, theme: Theme, expanded: bool, now: float | None = None, glint: bool = False,
 ) -> list[Line]:
-    """Each call on a rail in its state's colour: its own row (what ran, on what), what the person answered it right
+    """Each call on a rail (`_rail_style`): its own row (what ran, on what), what the person answered it right
     under that, and what it printed under them, a blank row between two calls; a run of plumbing calls is one row,
     unfolded again by `expanded`. A group with no call shows nothing. With `glint` (the aura moves) and `now`, a
     recall's output rows carry the band that sweeps them once."""
@@ -1215,7 +1221,7 @@ def _tool_rows(
                 own.extend(diff_rows(lines, inner, theme, full=expanded, lead=_output_leads(theme)[0]))
             else:
                 own.extend(_output_rows(tool, inner, theme, expanded, now if glint else None))
-        rail = _rail(_state_style(status, theme))
+        rail = _rail(_rail_style(status, theme))
         rows.extend([*([()] if rows else []), *(_within((*rail, *row), width) for row in own)])
     return rows
 
