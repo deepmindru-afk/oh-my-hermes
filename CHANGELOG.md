@@ -440,6 +440,31 @@ All notable changes will be documented here.
   three. A one-line text paste sent at once joins its prompt the same way.
   Esc, or Ctrl+C, gives the held prompt back. A paste Hermes never answers
   holds the prompt only until it expires.
+- **`omh doctor` and the probe read the skill pack you actually run, on a
+  migrated install too (#2358, reported by @yqm-307; #2378, reported by
+  @mazzy89).** A managed install serves its skills from a generation behind
+  the `current` pointer, and a host migrated from the 3.x layout keeps
+  `~/.omh/skills` as a frozen copy. Three read-only diagnostics looked at
+  that copy instead. The `workflow_engine_reach` advice measured it, so a
+  migrated host was told `dag-ulw` was not installed (it postdates the
+  copy) and a host without the copy was told no install existed; neither
+  report could change, since `omh update` never touches the copy. It now
+  measures the pack doctor resolved, and an unmeasurable install names the
+  file or directory that was missing. The plugin's standalone probe matched
+  only the copy's path in `config.yaml`, which registers the pointer, so it
+  reported the managed skills unregistered; it now accepts the pointer, a
+  generation's pack, the recorded pack and the copy, matched by real path,
+  and checks for `omh-routing` in the pack in use. The chat status card
+  carried the same mistake. Separately, `omh doctor` run from the 3.x
+  bootstrap venv stopped at once with `support refuses symlink component:
+  .../generations/bootstrap-legacy/skills`, because it read the support
+  files through that generation's link and the support reader refuses every
+  link. Doctor now reads through the link the way `omh update` does, so the
+  full report prints. A link the installer would also refuse is a blocking
+  `skills_dir_link` check that names it, and any other refused path fails
+  `local_modifications` and `guidance_projection` with the reason, while
+  every other check still runs. The advice still never moves doctor's
+  status or exit code.
 
 ## 4.0.3 - 2026-10-27
 
