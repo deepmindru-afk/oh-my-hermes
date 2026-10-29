@@ -16,6 +16,17 @@ All notable changes will be documented here.
   prints the rows it measured instead of rendering the kept blocks twice (a long session's settled resize
   about 270 -> 205 ms); and the bot board's module loads when the board opens, not with the TUI.
 
+- **`/glow off` turns the OMH TUI's working glow off, and it now shows in a
+  short session too.** `/glow on|off` (alone, it switches) is saved beside
+  the theme under the OMH home, so it holds in every later session;
+  `omh theme glow on|off` saves the same choice from the shell, and
+  `omh theme glow` shows it. `OMH_TUI_GLOW=0` still holds it off in one
+  terminal. The light used to be
+  drawn only once the session filled the screen; it now goes round a
+  session of any length, over the blank rows under it. A prompt's band no
+  longer runs into the right margin the glow keeps: it ends one column in,
+  as it starts one column in on the left.
+
 - **A light goes round the OMH TUI's screen while a turn runs.** It runs
   along the terminal's whole edge, clockwise, once every four seconds, with
   a round head and a trail in the launch look's logo colours that fades
