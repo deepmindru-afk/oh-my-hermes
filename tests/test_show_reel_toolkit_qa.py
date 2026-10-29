@@ -49,7 +49,7 @@ class TechnicalQATests(unittest.TestCase):
 
     def test_motion_freeze_is_distinct_from_annotated_intentional_hold(self):
         api = load("motion_check.py")
-        frames = [bytes([32]*16)] * 4
+        frames = [bytes([32]*16)] * 9  # Eight 0.25 s comparisons: a 2 s freeze.
         report = api["analyze_frames"](frames, fps=4)
         self.assertEqual(report["verdict"], "REVISE")
         intentional = api["analyze_frames"](frames, fps=4, holds=[{"start": 0, "end": 1, "reason": "reading hold reviewed in storyboard"}])
