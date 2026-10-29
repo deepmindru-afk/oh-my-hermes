@@ -27,7 +27,7 @@ _COMMON = {
     "occurrence": {"type": "integer", "minimum": 1, "default": 1, "description": "Nth match of symbol on the line"},
 }
 
-LSP_DEFINITION_SCHEMA = {
+OMH_LSP_DEFINITION_SCHEMA = {
     "name": "lsp_definition",
     "description": "Go to the definition of the symbol at path:line via the language server.",
     "parameters": {
@@ -36,7 +36,7 @@ LSP_DEFINITION_SCHEMA = {
     },
 }
 
-LSP_REFERENCES_SCHEMA = {
+OMH_LSP_REFERENCES_SCHEMA = {
     "name": "lsp_references",
     "description": (
         "Every semantic use of the symbol at path:line across the workspace, including its "
@@ -48,7 +48,7 @@ LSP_REFERENCES_SCHEMA = {
     },
 }
 
-LSP_RENAME_SCHEMA = {
+OMH_LSP_RENAME_SCHEMA = {
     "name": "lsp_rename",
     "description": (
         "Rename the symbol at path:line everywhere it is used (imports, re-exports, all files) "
@@ -389,9 +389,9 @@ def lsp_rename_handler(args: dict[str, Any], **kwargs: object) -> str:
 
 
 __all__ = [
-    "LSP_DEFINITION_SCHEMA",
-    "LSP_REFERENCES_SCHEMA",
-    "LSP_RENAME_SCHEMA",
+    "OMH_LSP_DEFINITION_SCHEMA",
+    "OMH_LSP_REFERENCES_SCHEMA",
+    "OMH_LSP_RENAME_SCHEMA",
     "LSP_TOOLSET",
     "_lsp_tools_enabled",
     "_workspace_root",
