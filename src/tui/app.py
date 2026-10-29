@@ -560,6 +560,8 @@ WALLPAPER_ENV_NOTICE = "Living wallpaper kept {state}; OMH_TUI_WALLPAPER=0 holds
 WALLPAPER_UNAVAILABLE_NOTICE = ("Living wallpaper kept {state}; it shows only at truecolor, on a terminal that reported "
                                 "its background colour.")
 WALLPAPER_USAGE_NOTICE = "Use /wallpaper on or /wallpaper off; /wallpaper alone switches it."
+WALLPAPER_SIDE_NOTICE = ("Living wallpaper held off: /theme {mode} names a {mode} background on a {side} "
+                         "terminal, whose text colour would not read on a {mode} ground; /theme auto shows it again.")
 LAUNCH_SESSION_NOTICE = "Launch look {name} for this session; there is no OMH home to keep it in."
 LAUNCH_SAVE_FAILED_NOTICE = "Launch look {name} for this session; it could not be saved to {path}: {error}"
 LAUNCH_SWATCH_STEPS = 6  # the colours a look's swatch shows in the /theme picker
@@ -1636,6 +1638,7 @@ class App(ModesMixin, AgentViewMixin):
         self.wallpaper = self._saved_wallpaper()
         self.background_answered: str | None = None
         self.ground_set: str | None = None
+        self.rows_ground: str | None = None  # the ground the session's rows were printed on (set by a full redraw)
         self.ambient_at = 0.0  # when the wallpaper's cells were last painted, on `clock`
         self._take_size()
         self.region = self._new_region()
@@ -2102,6 +2105,7 @@ class App(ModesMixin, AgentViewMixin):
         self.background = answered or background_from_colorfgbg(named)
         self.background_named_dark = self.background is None and colorfgbg_names_dark(named)
         self.theme = self._themed()
+        self.rows_ground = self._ground()
 
     def clear_launch_screen(self, row: int | None) -> None:
         """Push the rows above the cursor off the screen, erase the scrollback, and start the region on the top row.
@@ -2159,7 +2163,7 @@ class App(ModesMixin, AgentViewMixin):
         if self._ground() is not None and self.background_answered is not None:
             # On the wallpaper's ground: the rows printed now outlive it (they show on the terminal's own background
             # after exit), so every word and mark also keeps its floor against that.
-            looked = readable_on(looked, skin, self.background_answered)
+            looked = readable_on(looked, skin, surface, self.background_answered)
         return self._painted(looked)
 
     def _skin(self) -> SkinTheme:
@@ -5637,6 +5641,8 @@ class App(ModesMixin, AgentViewMixin):
         self.theme = self._themed()
         if choice in BACKGROUND_MODES:
             self.transcript.add_notice(f"Theme {self.theme.name} {self._background_text()}.")
+            if self._wallpaper_side_held():
+                self._say_wallpaper_side_held()
         else:
             self.transcript.add_notice(f"Theme {self.theme.name} applies to this session; `omh theme` keeps it.")
         self._full_redraw()
@@ -5724,20 +5730,28 @@ class App(ModesMixin, AgentViewMixin):
 
     def _preview_launch(self) -> None:
         """Draw the shown look where it shows: on the launch screen, the logo by a full redraw and the live card in
-        the region; past it, the compact preview above the picker (`_launch_preview`) needs only the next frame.
-        Where the wallpaper shows, the look's ground becomes the whole screen's background, so the session is printed
-        again in colours measured against it."""
+        the region; past it, the compact preview above the picker (`_launch_preview`) needs only the next frame. Where
+        the wallpaper shows, the next frame sets the highlighted look's ground (OSC 11) and nothing more: the session
+        is printed again on a new ground once, as the picker closes (`_redraw_launch`, `_close_launch_preview`)."""
         self.theme = self._themed()  # a sent prompt's band in the shown look
-        if self.card_state == CARD_LIVE or self._ground() is not None:
+        if self.card_state == CARD_LIVE:
+            self._full_redraw()
+        self.dirty = True
+
+    def _close_launch_preview(self) -> None:
+        """The /theme picker closed on Esc after a move: the look in use is drawn again, and the session printed
+        again only where that is needed (the launch card shows, or the ground differs from the one its rows are on)."""
+        self.theme = self._themed()
+        if self.card_state == CARD_LIVE or self._ground() != self.rows_ground:
             self._full_redraw()
         self.dirty = True
 
     def _redraw_launch(self) -> None:
         """Draw a look kept: as the preview does, and once the launch is past it, the logo and the kept card in
         scrollback again by a full redraw while the whole session still fits one, as `/theme <name>` repaints; and
-        whenever the wallpaper shows, since the ground under the rows already printed changed."""
+        wherever the wallpaper's ground is no longer the one the session's rows were printed on."""
         if self.card_state == CARD_LIVE or (self.in_launch_session and not self.transcript.left_out) \
-                or self._ground() is not None:
+                or self._ground() != self.rows_ground:
             self._full_redraw()
         self.dirty = True
 
@@ -5766,7 +5780,7 @@ class App(ModesMixin, AgentViewMixin):
         elif action == LAUNCH_CLOSE:
             self.launch_picker = None
             if picker.highlighted != picker.current:
-                self._preview_launch()
+                self._close_launch_preview()
         self.dirty = True
 
     def _take_launch_clickable(self, budget: Budget, cols: int, rows: int) -> None:
@@ -5949,6 +5963,7 @@ class App(ModesMixin, AgentViewMixin):
         # The clear homes the cursor, so the next first frame starts on the screen's top row; it goes out in that
         # frame's synchronized update, so the blank screen never shows.
         self.region = self._new_region(at_top=True, lead=CLEAR_SCREEN_AND_SCROLLBACK)
+        self.rows_ground = self._ground()
         self.transcript.retake_tail(self.size[0], self.theme, REDRAW_TAIL_ROWS)
         if self.banner_record is not None:
             self.banner_facts = dict(self.banner_record)
@@ -6174,6 +6189,18 @@ class App(ModesMixin, AgentViewMixin):
                 and (self.background_mode == BACKGROUND_AUTO
                      or (self.background_mode == BACKGROUND_LIGHT) == is_light(answered)))
 
+    def _wallpaper_side_held(self) -> bool:
+        """Whether the wallpaper would show but for `/theme light` or `dark` naming the other side from the terminal's
+        own background."""
+        answered = self.background_answered
+        return (self.wallpaper and self.environ.get(WALLPAPER_ENV) != WALLPAPER_OFF and answered is not None
+                and self.color_depth == TRUECOLOR and self.background_mode != BACKGROUND_AUTO
+                and (self.background_mode == BACKGROUND_LIGHT) != is_light(answered))
+
+    def _say_wallpaper_side_held(self) -> None:
+        side = "light" if self.background_answered is not None and is_light(self.background_answered) else "dark"
+        self.transcript.add_notice(WALLPAPER_SIDE_NOTICE.format(mode=self.background_mode, side=side))
+
     def _ground_light(self) -> bool:
         """Whether the wallpaper takes the look's light ground: the terminal's own background is light, so its
         foreground, picked for that background, stays readable on the ground."""
@@ -6244,6 +6271,8 @@ class App(ModesMixin, AgentViewMixin):
                 self.transcript.add_notice(WALLPAPER_KEPT_NOTICE.format(state=state, path=path))
         if self.wallpaper and self.environ.get(WALLPAPER_ENV) == WALLPAPER_OFF:
             self.transcript.add_notice(WALLPAPER_ENV_NOTICE.format(state=state))
+        elif self.wallpaper and self._wallpaper_side_held():
+            self._say_wallpaper_side_held()
         elif self.wallpaper and not self._wallpaper_shown():
             self.transcript.add_notice(WALLPAPER_UNAVAILABLE_NOTICE.format(state=state))
         self.theme = self._themed()

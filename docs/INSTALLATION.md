@@ -885,8 +885,12 @@ run and approval decision stays Hermes'; the screen is OMH's.
   light background gets each look's pale ground instead.
   The theme is measured against that ground, and every word and mark also
   keeps its floor against the terminal's own background, which the rows
-  printed during the session show on after exit. Changing the look past the
-  launch screen prints the session again on the new ground. The scene is
+  printed during the session show on after exit. Keeping another look past
+  the launch screen prints the session again on its ground, once; moving
+  through the `/theme` picker only changes the background, and Esc puts
+  the look in use back with nothing printed again. A `/theme light` or
+  `/theme dark` that holds the wallpaper off says so and names
+  `/theme auto`. The scene is
   drawn only on rows that are wholly blank: the rows under a short session,
   the launch screen's empty area, and two cells past the end of the logo
   and card rows while the launch card shows. A row with text never gets a

@@ -25,7 +25,7 @@ from omh.skin_pack import (
 )
 from omh.tui import app as app_module
 from omh.tui.gateway import Event
-from omh.tui.keys import CHAR, DOWN, ENTER, Key
+from omh.tui.keys import CHAR, DOWN, ENTER, ESCAPE, Key
 from omh.tui.screen import LiveRegion
 from omh.tui.style import TRUECOLOR, Span, Style
 from omh.tui.terminal import background_restore, background_set
@@ -42,9 +42,11 @@ from omh.tui.theme import (
     launch_palette,
     launch_styles,
     look_ground,
+    readable_on,
     with_launch_look,
     with_prompt_band,
 )
+from omh.tui.theme import MARK_STEPS, WORD_ROLES, WORD_STEPS
 from omh.tui.wallpaper import AMBIENT_CONTRAST, LIT_CEILING, SCENES, Cell, scene
 from omh.tui.width import cell_width
 from test_tui_modes import make_app, notices, type_text
@@ -123,17 +125,22 @@ class SceneTests(unittest.TestCase):
 
 class GroundContrastTests(unittest.TestCase):
     def test_every_role_passes_its_floor_on_every_looks_ground(self) -> None:
+        # Built as the app builds it on a ground (`App._themed`): the look's roles, then `readable_on`, which lifts the
+        # stepped colours (a catch row's mark is the logo's colours as they are) against the ground as well.
         short = []
         for skin in SKIN_THEMES:
             for look in LAUNCH_PRESETS:
                 for light in (False, True):
                     ground = look_ground(look, light)
-                    theme = with_launch_look(with_prompt_band(build_theme(skin, ground), skin, ground, look), skin,
-                                             ground, look)
+                    theme = readable_on(with_launch_look(with_prompt_band(build_theme(skin, ground), skin, ground, look),
+                                                         skin, ground, look), skin, ground)
                     inks = [(role, getattr(theme, role).fg, TEXT_CONTRAST) for role in TEXT_ROLES]
                     inks += [(role, getattr(theme, role).fg, EDGE_CONTRAST) for role in GLYPH_ROLES]
                     inks += [("catch_words", theme.catch_words.fg, TEXT_CONTRAST)]
                     inks += [("kinds", style.fg, TEXT_CONTRAST) for style in theme.kinds]
+                    inks += [(role, style.fg, EDGE_CONTRAST) for role in MARK_STEPS for style in getattr(theme, role)]
+                    inks += [(role, style.fg, TEXT_CONTRAST) for role in WORD_STEPS for style in getattr(theme, role)
+                             if style.fg]
                     styles = launch_styles(skin, ground, launch_palette(look, ground))
                     inks += [("brand", styles.brand.fg, TEXT_CONTRAST), ("label", styles.label.fg, TEXT_CONTRAST),
                              ("edge", styles.edge.fg, EDGE_CONTRAST)]
@@ -497,19 +504,36 @@ class AppWallpaperTests(unittest.TestCase):
                         for fg in foregrounds[light]:
                             self.assertGreaterEqual(contrast_ratio(fg, ground), 7.0)
 
-    def test_a_look_change_past_the_launch_prints_the_session_again_on_the_new_ground(self) -> None:
-        for change in ("keep", "preview"):
-            with self.subTest(change=change):
-                app, clock = self.app()
-                self.busy(app, clock, flushes=2)
-                with mock.patch.object(app, "_full_redraw", wraps=app._full_redraw) as redraw:
-                    if change == "keep":
-                        app._keep_launch_look("moonlit")
-                    else:
-                        app._theme("")
-                        app._on_input(Key(DOWN))
-                    redraw.assert_called()
-                self.assertEqual(app._surface(), app._ground())
+    def test_a_look_change_past_the_launch_prints_the_session_again_on_the_new_ground_once(self) -> None:
+        # Browsing the picker only moves the ground (OSC 11) and the preview: no erase of the scrollback, no reprint
+        # per arrow key. Enter on another look prints the session again once, on its ground; Esc back to the look in
+        # use prints nothing again.
+        clear = "\x1b[3J"
+        app, clock = self.app()
+        self.busy(app, clock, flushes=4)
+        app.turn_pending = False
+        app._render()
+        app._theme("")
+        app._render()
+        before = len(app.terminal.writes)
+        for _ in range(3):
+            app._on_input(Key(DOWN))
+            app._render()
+        browsing = "".join(app.terminal.writes[before:])
+        self.assertNotIn(clear, browsing, "a move erases nothing")
+        self.assertIn(background_set(app._ground()), browsing, "a move sets the highlighted look's ground")
+        app._on_input(Key(ENTER))
+        app._render()
+        kept = "".join(app.terminal.writes[before:])
+        self.assertEqual(kept.count(clear), 1, "Enter on another look prints the session again, once")
+        self.assertEqual(app.rows_ground, app._ground())
+        app._theme("")
+        app._render()
+        before = len(app.terminal.writes)
+        for key in (Key(DOWN), Key(ESCAPE)):
+            app._on_input(key)
+            app._render()
+        self.assertNotIn(clear, "".join(app.terminal.writes[before:]), "Esc puts the ground back: nothing to reprint")
 
     def test_on_the_ground_every_role_also_reads_on_the_terminals_own_background(self) -> None:
         # The rows printed on the ground stay in the terminal after exit, on the background it reported.
@@ -522,14 +546,13 @@ class AppWallpaperTests(unittest.TestCase):
                     app.launch_look = look
                     theme, ground = app._themed(), app._ground()
                     for surface in (ground, own):
-                        for role in (*TEXT_ROLES, "slash", "catch_words"):
-                            fg = getattr(theme, role).fg
-                            if fg and contrast_ratio(fg, surface) < TEXT_CONTRAST:
-                                short.append((own, look, surface, role, round(contrast_ratio(fg, surface), 2)))
-                        for role in GLYPH_ROLES:
-                            fg = getattr(theme, role).fg
-                            if fg and contrast_ratio(fg, surface) < EDGE_CONTRAST:
-                                short.append((own, look, surface, role, round(contrast_ratio(fg, surface), 2)))
+                        inks = [(role, getattr(theme, role), TEXT_CONTRAST) for role in (*TEXT_ROLES, *WORD_ROLES)]
+                        inks += [(role, getattr(theme, role), EDGE_CONTRAST) for role in GLYPH_ROLES]
+                        inks += [(role, style, TEXT_CONTRAST) for role in WORD_STEPS for style in getattr(theme, role)]
+                        inks += [(role, style, EDGE_CONTRAST) for role in MARK_STEPS for style in getattr(theme, role)]
+                        short += [(own, look, surface, role, round(contrast_ratio(style.fg, surface), 2))
+                                  for role, style, floor in inks
+                                  if style.fg and style.bg is None and contrast_ratio(style.fg, surface) < floor]
         self.assertEqual(short[:8], [], f"{len(short)} inks under their floor")
 
     def test_exit_and_a_stop_from_the_launch_screen_leave_no_glyph(self) -> None:
@@ -593,6 +616,16 @@ class AppWallpaperTests(unittest.TestCase):
         self.assertGreater(self.writes(app).rfind(background_set(look_ground("spectrum", False))),
                            self.writes(app).rfind(background_restore(ANSWERED)))
 
+    def test_theme_light_on_a_dark_terminal_says_it_holds_the_wallpaper_off(self) -> None:
+        app, _clock = self.app()
+        app._theme("light")
+        self.assertTrue(any("Living wallpaper held off: /theme light" in notice and "/theme auto" in notice
+                            for notice in notices(app)), notices(app))
+        app._wallpaper_command("on")
+        said = notices(app)[-1]
+        self.assertIn("/theme auto", said, "the reason it does not show, not the truecolor one")
+        self.assertNotIn("truecolor", said)
+
     def test_wallpaper_on_says_what_still_holds_it_off(self) -> None:
         app, _clock = self.app({**WALLPAPER_ON, "OMH_TUI_WALLPAPER": "0"})
         app._wallpaper_command("on")
@@ -623,11 +656,21 @@ class GlowWithWallpaperTests(glow_tests.AppGlowTests):
     """The working glow's own tests, its scrollback ones included, with the living wallpaper on as well."""
 
     def app(self, environ=glow_tests.GLOW_ON, rows=20, cols=60):
+        # The glow suite's screen is under the scenes' 80x24, so a scene that lights every cell stands in for them.
+        self.enterContext(mock.patch.object(app_module, "scene", everywhere))
         app, clock = super().app({**environ, "OMH_TUI_WALLPAPER": "1"}, rows, cols)
         app.adopt_background(glow_tests.BACKGROUND)
         if app.color_depth == TRUECOLOR:
             self.assertIsNotNone(app._ground(), "the wallpaper shows")
         return app, clock
+
+    def test_the_wallpaper_paints_beside_the_glow(self) -> None:
+        app, clock = self.app()
+        self.busy(app, clock, flushes=1)  # a short session: blank rows under it
+        screen = app.terminal.screen
+        self.assertIn(MARK, "".join(screen.lines()))
+        self.assertTrue(app.region._paper)
+        self.assertFalse(any(MARK in line for line in screen.scrollback))
 
 
 if __name__ == "__main__":
