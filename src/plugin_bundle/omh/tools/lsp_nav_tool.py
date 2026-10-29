@@ -433,6 +433,11 @@ def _diagnostic_files(requested: str, root: str) -> tuple[list[str], int]:
     return matches[:_DIAG_FILE_CAP], max(0, len(matches) - _DIAG_FILE_CAP)
 
 
+def _diag_line(item: dict[str, Any]) -> int:
+    value = ((item.get("range") or {}).get("start") or {}).get("line", 0)
+    return value + 1 if isinstance(value, int) and not isinstance(value, bool) else 0
+
+
 def lsp_diagnostics_handler(args: dict[str, Any], **kwargs: object) -> str:
     try:
         root = _root_for(kwargs)
@@ -458,15 +463,15 @@ def lsp_diagnostics_handler(args: dict[str, Any], **kwargs: object) -> str:
                 summary.append({"path": relative, "status": "no_verdict"})
                 continue
             counts = {"error": 0, "warning": 0}
-            for item in sorted(items, key=lambda d: ((d.get("range") or {}).get("start") or {}).get("line", 0)):
+            for item in sorted((d for d in items if isinstance(d, dict)), key=_diag_line):
                 severity = _SEVERITY.get(item.get("severity") or 1, "error")
                 if severity in counts:
                     counts[severity] += 1
                 rows.append({
                     "path": relative,
-                    "line": int(((item.get("range") or {}).get("start") or {}).get("line", 0)) + 1,
+                    "line": _diag_line(item),
                     "severity": severity,
-                    "message": str(item.get("message") or "").strip().splitlines()[0][:300] if item.get("message") else "",
+                    "message": (str(item.get("message") or "").strip().splitlines() or [""])[0][:300],
                     **({"code": str(item["code"])} if item.get("code") is not None else {}),
                 })
             totals["error"] += counts["error"]

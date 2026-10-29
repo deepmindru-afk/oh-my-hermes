@@ -40,12 +40,18 @@ MAX_IMPORTERS: Final = 30
 MAX_SCAN_FILES: Final = 2000
 MAX_SCAN_BYTES: Final = 512_000
 MAX_NOTE_LINES: Final = 15
-BASELINE_TIMEOUT: Final = 20.0
-ROUND_END_TIMEOUT: Final = 12.0
+# Both checks run inside host hooks that Hermes bounds (`plugins.hook_callback_timeout`, 30 s by
+# default) and fails closed on, so each total -- importer scan, server spawn and waits -- stays
+# well inside it. A baseline that runs out records nothing for that edit.
+BASELINE_TIMEOUT: Final = 8.0
+ROUND_END_TIMEOUT: Final = 10.0
+_MIN_WAIT: Final = 1.0
 _MAX_SESSIONS: Final = 64
 _MESSAGE_CHARS: Final = 200
 _EDIT_TOOLS: Final = frozenset({"patch", "write_file"})
-_V4A_HEADER: Final = re.compile(r"^\*\*\*\s*(?:Update|Delete)\s+File:\s*(.+)$", re.MULTILINE)
+# Updates only: a deleted or moved module stays open in the server, so its importers would
+# still resolve against the old copy and the check would wrongly stay silent.
+_V4A_HEADER: Final = re.compile(r"^\*\*\*\s*Update\s+File:\s*(.+)$", re.MULTILINE)
 _ON: Final = ("1", "true", "on", "yes")
 _SEVERITY_ERROR: Final = 1
 
@@ -81,12 +87,34 @@ def edit_targets(tool_name: object, args: object) -> list[str]:
     return [path for path in paths if path.endswith(".py")]
 
 
+_SOURCE_ROOT_MARKERS: Final = ("pyproject.toml", "setup.py", "setup.cfg")
+
+
+def _source_root(directory: str, root: str) -> bool:
+    """Whether absolute imports plausibly start at ``directory``: the workspace root, a ``src``
+    directory, or a directory holding project metadata."""
+    return (directory == root or os.path.basename(directory) == "src"
+            or any(os.path.isfile(os.path.join(directory, marker)) for marker in _SOURCE_ROOT_MARKERS))
+
+
 def module_names(path: str, root: str) -> set[str]:
-    """Every dotted name ``path`` could be imported as from ``root`` or one of its sub-directories."""
+    """The dotted names ``path`` is imported as from a source root (``_source_root``) at or under ``root``.
+
+    A bare suffix such as ``types`` from ``app/types.py`` is not one: it would match the standard
+    library and same-named modules elsewhere. A sibling's bare import is matched separately.
+    """
     parts = os.path.relpath(path, root).replace(os.sep, "/")[: -len(".py")].split("/")
     if parts[-1] == "__init__":
         parts = parts[:-1]
-    return {".".join(parts[index:]) for index in range(len(parts)) if parts[index:]}
+    return {".".join(parts[index:]) for index in range(len(parts))
+            if parts[index:] and _source_root(os.path.join(root, *parts[:index]), root)}
+
+
+def _sibling_name(importer: str, target: str) -> str | None:
+    """The bare name a script in ``target``'s own directory imports it by (``import helpers``)."""
+    if os.path.dirname(importer) != os.path.dirname(target) or os.path.basename(target) == "__init__.py":
+        return None
+    return os.path.basename(target)[: -len(".py")]
 
 
 def _relative_base(importer: str, node: ast.ImportFrom) -> str:
@@ -119,6 +147,9 @@ def imports_module(tree: ast.AST, importer: str, target: str, names: set[str], o
     ``only`` narrows a package ``__init__`` target to the names it re-exports: ``from pkg import x``
     counts only for such an ``x``, so importing an unrelated member of the package does not.
     """
+    sibling = _sibling_name(importer, target)
+    if sibling is not None:
+        names = names | {sibling}
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             if any(alias.name in names for alias in node.names):
@@ -127,7 +158,7 @@ def imports_module(tree: ast.AST, importer: str, target: str, names: set[str], o
             kind = _imports_from(node, importer, target, names)
             if kind == "submodule" and only is None:
                 return True
-            if kind == "module" and (only is None or any(alias.name in only for alias in node.names)):
+            if kind == "module" and (only is None or "*" in only or any(alias.name in only for alias in node.names)):
                 return True
     return False
 
@@ -153,7 +184,7 @@ def find_importers(root: str, target: str, cap: int = MAX_IMPORTERS) -> list[str
     while queue and len(found) < cap:
         current, only = queue.pop(0)
         names = module_names(current, root)
-        leaves = {name.rsplit(".", 1)[-1] for name in names}
+        leaves = {name.rsplit(".", 1)[-1] for name in names} | {os.path.basename(current)[: -len(".py")]}
         for path in files:
             if path in seen or len(found) >= cap:
                 continue
@@ -202,6 +233,17 @@ def _key(item: dict[str, Any]) -> tuple[str, str]:
     return ("" if code is None else str(code), str(item.get("message") or "").strip())
 
 
+def forget_other_turn(session_id: str, turn_id: object) -> None:
+    """Drop a session's state from an earlier turn; called for every tool call, edit or not, so a
+    turn whose first stop never reached ``pre_verify`` cannot lend its baseline to the next one."""
+    if not session_id:
+        return
+    with _lock:
+        state = _sessions.get(session_id)
+        if state is not None and state["turn"] != str(turn_id or ""):
+            del _sessions[session_id]
+
+
 def _session_state(session_id: str, turn_id: str, root: str) -> dict[str, Any]:
     with _lock:
         state = _sessions.get(session_id)
@@ -216,89 +258,129 @@ def _session_state(session_id: str, turn_id: str, root: str) -> dict[str, Any]:
 
 def baseline_before_edit(kwargs: dict[str, Any], tool_input: object) -> None:
     """``pre_tool_call``: record the importers' errors before the turn's first edit of each ``.py`` file."""
+    session_id = str(kwargs.get("session_id", "") or kwargs.get("task_id", "") or "")
+    forget_other_turn(session_id, kwargs.get("turn_id"))
     tool_name = kwargs.get("tool_name")
     if tool_name not in _EDIT_TOOLS:
         return
     targets = edit_targets(tool_name, tool_input)
-    if not targets or not enabled():
-        return
-    session_id = str(kwargs.get("session_id", "") or kwargs.get("task_id", "") or "")
-    if not session_id:
+    if not targets or not session_id or not enabled():
         return
     started = time.monotonic()
+    claimed: list[str] = []
+    pending: list[str] = []
+    state: dict[str, Any] | None = None
     try:
         root = os.path.realpath(_workspace_root(kwargs.get("task_id")) or os.getcwd())
         state = _session_state(session_id, str(kwargs.get("turn_id", "") or ""), root)
-        pending: list[str] = []
-        sync: list[str] = []
         for requested in targets:
             try:
                 path = lsp_nav.resolve_path(requested, root)
             except LspNavError:
                 continue
-            if path in state["edited"] or not os.path.isfile(path):
+            if not os.path.isfile(path) or not lsp_bridge.in_git_worktree(path):
                 continue
-            state["edited"].add(path)
-            if not lsp_bridge.in_git_worktree(path):
-                continue
-            sync.append(path)
-            room = MAX_IMPORTERS - len(state["baseline"]) - len(pending)
-            pending.extend(item for item in find_importers(root, path, max(room, 0))
-                           if item not in state["baseline"] and item not in pending)
+            with _lock:
+                if path in state["edited"]:
+                    continue
+                state["edited"].add(path)  # claimed; released below if no baseline is recorded
+                room = MAX_IMPORTERS - len(state["baseline"])
+            claimed.append(path)
+            found = find_importers(root, path, max(room, 0)) if room > 0 else []
+            with _lock:
+                # Reserve under the lock: a parallel edit's baseline of the same importer keeps the first.
+                for item in found:
+                    if item not in state["baseline"] and len(state["baseline"]) < MAX_IMPORTERS:
+                        state["baseline"][item] = None
+                        pending.append(item)
         if not pending:
             return
-        current = lsp_bridge.diagnostics(pending, sync=sync, timeout=BASELINE_TIMEOUT)
-        for path in pending:
-            found = current.get(path)
-            state["baseline"][path] = None if found is None else Counter(_key(item) for item in _errors(found))
+        remaining = BASELINE_TIMEOUT - (time.monotonic() - started)
+        if remaining < _MIN_WAIT:
+            raise BridgeError("timeout", "no time left after the importer scan")
+        # Everything this turn edited so far is synced first, so the baseline and the round-end
+        # check judge each importer against the same versions of what it imports.
+        with _lock:
+            sync = sorted(item for item in state["edited"] if os.path.isfile(item))
+        current = lsp_bridge.diagnostics(pending, sync=sync, timeout=remaining)
+        with _lock:
+            for path in pending:
+                found_diags = current.get(path)
+                if found_diags is not None:
+                    state["baseline"][path] = Counter(_key(item) for item in _errors(found_diags))
+        pending_unknown = sum(1 for path in pending if current.get(path) is None)
         _LOG.info("impact_check baseline session=%s importers=%d unknown=%d ms=%d", session_id, len(pending),
-                  sum(1 for path in pending if current.get(path) is None), (time.monotonic() - started) * 1000)
+                  pending_unknown, (time.monotonic() - started) * 1000)
     except BridgeError as exc:
+        _release(state, claimed, pending)
         _LOG.info("impact_check baseline session=%s skipped=%s", session_id, exc.code)
     except Exception as exc:  # noqa: BLE001 - never fail the edit it is watching
+        _release(state, claimed, pending)
         _LOG.warning("impact_check baseline session=%s failed=%s", session_id, type(exc).__name__)
 
 
+def _release(state: dict[str, Any] | None, claimed: list[str], reserved: list[str]) -> None:
+    """Un-claim edits and importer slots whose baseline failed, so the turn's next edit tries again."""
+    if state is None:
+        return
+    with _lock:
+        state["edited"].difference_update(claimed)
+        for path in reserved:
+            if state["baseline"].get(path, 0) is None:
+                del state["baseline"][path]
+
+
+def _line(item: dict[str, Any]) -> int:
+    value = ((item.get("range") or {}).get("start") or {}).get("line", 0)
+    return value + 1 if isinstance(value, int) and not isinstance(value, bool) else 0
+
+
 def round_end_note(session_id: str, changed_paths: object) -> str:
-    """``pre_verify`` attempt 0: the note naming new importer errors, or ``""``. Consumes the session's baseline."""
+    """``pre_verify`` attempt 0: the note naming new importer errors, or ``""``. Consumes the session's baseline.
+
+    Silent unless this turn's own ``.py`` edits (``changed_paths``) include a file the baseline was
+    taken for: a baseline the turn did not earn says nothing about the turn.
+    """
     with _lock:
         state = _sessions.pop(session_id, None) if session_id else None
     if not state:
         return ""
-    known = {path: counts for path, counts in state["baseline"].items() if counts is not None and os.path.isfile(path)}
-    if not known or not enabled():
-        return ""
-    started = time.monotonic()
-    root = state["root"]
-    sync = []
-    for item in changed_paths if isinstance(changed_paths, (list, tuple)) else ():
-        if isinstance(item, str) and item.endswith(".py"):
-            sync.append(os.path.realpath(item if os.path.isabs(item) else os.path.join(root, item)))
     try:
+        root = state["root"]
+        sync = []
+        for item in changed_paths if isinstance(changed_paths, (list, tuple)) else ():
+            if isinstance(item, str) and item.endswith(".py"):
+                sync.append(os.path.realpath(item if os.path.isabs(item) else os.path.join(root, item)))
+        if not set(sync) & state["edited"]:
+            return ""
+        known = {path: counts for path, counts in state["baseline"].items()
+                 if counts is not None and os.path.isfile(path)}
+        if not known or not enabled():
+            return ""
+        started = time.monotonic()
         current = lsp_bridge.diagnostics(list(known), sync=sync, timeout=ROUND_END_TIMEOUT)
+        new: list[tuple[str, int, str]] = []
+        for path, baseline in known.items():
+            found = current.get(path)
+            if found is None:
+                continue
+            remaining = Counter(baseline)
+            for item in sorted(_errors(found), key=_line):
+                key = _key(item)
+                if remaining[key] > 0:
+                    remaining[key] -= 1
+                    continue
+                message = (key[1].splitlines() or ["error"])[0][:_MESSAGE_CHARS]
+                new.append((os.path.relpath(path, root), _line(item), message))
+        _LOG.info("impact_check round_end session=%s importers=%d new_errors=%d files=%d ms=%d", session_id,
+                  len(known), len(new), len({row[0] for row in new}), (time.monotonic() - started) * 1000)
+        return format_note(new, recheck_tool=_lsp_tools_enabled())
     except BridgeError as exc:
         _LOG.info("impact_check round_end session=%s skipped=%s", session_id, exc.code)
         return ""
     except Exception as exc:  # noqa: BLE001 - a broken check says nothing rather than fail the turn
         _LOG.warning("impact_check round_end session=%s failed=%s", session_id, type(exc).__name__)
         return ""
-    new: list[tuple[str, int, str]] = []
-    for path, baseline in known.items():
-        found = current.get(path)
-        if found is None:
-            continue
-        remaining = Counter(baseline)
-        ordered = sorted(_errors(found), key=lambda item: ((item.get("range") or {}).get("start") or {}).get("line", 0))
-        for item in ordered:
-            key = _key(item)
-            if remaining[key] > 0:
-                remaining[key] -= 1
-                continue
-            line = int(((item.get("range") or {}).get("start") or {}).get("line", 0)) + 1
-            new.append((os.path.relpath(path, root), line, key[1].splitlines()[0][:_MESSAGE_CHARS] if key[1] else "error"))
-    _LOG.info("impact_check round_end session=%s importers=%d new_errors=%d files=%d ms=%d", session_id, len(known),
-              len(new), len({row[0] for row in new}), (time.monotonic() - started) * 1000)
-    return format_note(new, recheck_tool=_lsp_tools_enabled())
 
 
 def format_note(new: list[tuple[str, int, str]], recheck_tool: bool) -> str:
@@ -327,6 +409,7 @@ __all__ = [
     "edit_targets",
     "enabled",
     "find_importers",
+    "forget_other_turn",
     "format_note",
     "imports_module",
     "module_names",

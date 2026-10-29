@@ -50,7 +50,9 @@ class EditTargetTests(unittest.TestCase):
     def test_replace_write_and_v4a(self):
         self.assertEqual(edit_targets("patch", {"path": "src/a.py", "old_string": "x"}), ["src/a.py"])
         self.assertEqual(edit_targets("write_file", {"path": "b.py", "content": ""}), ["b.py"])
-        body = "*** Begin Patch\n*** Update File: src/a.py\n@@\n-x\n+y\n*** Update File: notes.md\n*** End Patch\n"
+        body = ("*** Begin Patch\n*** Update File: src/a.py\n@@\n-x\n+y\n*** Update File: notes.md\n"
+                "*** Delete File: src/gone.py\n*** End Patch\n")
+        # A deleted module stays open in the server; its importers would not show the break.
         self.assertEqual(edit_targets("patch", {"mode": "patch", "patch": body}), ["src/a.py"])
 
     def test_other_tools_and_files_ignored(self):
@@ -74,16 +76,23 @@ class ImporterScanTests(_Root):
         self.write("src/other.py", "from shop import billing\nimport json\n")
         self.write("src/broken.py", "from shop.pricing import (\n")
         self.write(".venv/lib/pricing_user.py", "from shop.pricing import compute_fee\n")
+        self.write("scripts/pricing.py", "")
+        self.write("scripts/gen.py", "import pricing\n")  # resolves to scripts/pricing.py, not the target
+        self.sibling = self.write("src/shop/sibling.py", "import pricing\n")
 
     def test_module_names(self):
-        self.assertEqual(module_names(self.target, self.root), {"src.shop.pricing", "shop.pricing", "pricing"})
+        self.assertEqual(module_names(self.target, self.root), {"src.shop.pricing", "shop.pricing"})
         self.assertEqual(module_names(os.path.join(self.root, "src/shop/__init__.py"), self.root), {"src.shop", "shop"})
 
     def test_finds_every_import_form_and_the_reexport(self):
         found = set(find_importers(self.root, self.target))
         package = os.path.join(self.root, "src/shop/__init__.py")
         self.assertEqual(found, {package, self.direct, self.alias, self.module, self.relative, self.dot, self.plain,
-                                 self.reexport})
+                                 self.reexport, self.sibling})
+
+    def test_star_reexport_is_followed(self):
+        self.write("src/shop/__init__.py", "from .pricing import *\n")
+        self.assertIn(self.reexport, find_importers(self.root, self.target))
 
     def test_cap(self):
         self.assertEqual(len(find_importers(self.root, self.target, cap=3)), 3)
@@ -184,6 +193,31 @@ class RoundTripTests(_Root):
         self.assertEqual(len(self.fake.calls), 1)
         self.edit(turn="t2")
         self.assertEqual(len(self.fake.calls), 2)
+
+    def test_a_turn_without_its_own_python_edit_inherits_nothing(self):
+        # Review repro: t1 baselines and never reaches pre_verify; t2 edits only a Markdown file.
+        self.edit()
+        self.fake.answers = {self.billing: [_diag(3, "Argument missing")]}
+        self.edit(path="README.md", turn="t2")
+        self.assertEqual(round_end_note("s1", [os.path.join(self.root, "README.md")]), "")
+        # Even when the stale state survives (no tool call in t2), an unrelated change list is silent.
+        self.edit()
+        self.assertEqual(round_end_note("s1", [os.path.join(self.root, "README.md")]), "")
+
+    def test_failed_baseline_is_retried_on_the_next_edit(self):
+        def boom(*args, **kwargs):
+            raise BridgeError("timeout", "slow")
+
+        with mock.patch.object(lsp_bridge, "diagnostics", boom):
+            self.edit()
+        self.edit()
+        self.assertEqual(len(self.fake.calls), 1)
+
+    def test_malformed_diagnostic_does_not_escape(self):
+        self.edit()
+        self.fake.answers = {self.report: [{"severity": 1, "message": " ", "range": {"start": {"line": None}}}]}
+        note = round_end_note("s1", [self.target])
+        self.assertIn("src/shop/report.py:0: error", note)
 
     def test_skips_non_python_unknown_tools_and_disabled(self):
         self.edit(path="notes.md")

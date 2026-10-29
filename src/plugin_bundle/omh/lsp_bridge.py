@@ -113,9 +113,11 @@ def diagnostics(paths: list[str], sync: list[str] = (), timeout: float = REQUEST
 
     Every path in ``sync`` and then in ``paths`` is re-sent from disk first, so the server
     judges the files against what the disk holds now, including the modules they import.
-    One deadline covers all the waits; a path the server did not answer for maps to
-    ``None``, which callers must read as "unknown", never as "clean". Paths the service
-    does not handle are left out. Raises ``BridgeError`` like ``request``.
+    One deadline of ``timeout`` seconds covers the spawn, the syncs and all the waits (the
+    callers run inside host hooks that fail closed on their own timeout); a path the server
+    did not answer for maps to ``None``, which callers must read as "unknown", never as
+    "clean". Paths the service does not handle are left out. Raises ``BridgeError`` like
+    ``request``.
     """
     svc, reason = available()
     if svc is None:
@@ -123,6 +125,8 @@ def diagnostics(paths: list[str], sync: list[str] = (), timeout: float = REQUEST
     targets = [path for path in dict.fromkeys(paths) if svc.enabled_for(path)]
     if not targets:
         return {}
+
+    deadline = time.monotonic() + timeout
 
     async def run() -> dict[str, list[dict[str, Any]] | None]:
         client = await svc._get_or_spawn(targets[0])
@@ -132,7 +136,6 @@ def diagnostics(paths: list[str], sync: list[str] = (), timeout: float = REQUEST
             if path not in targets and os.path.isfile(path) and svc.enabled_for(path):
                 await client.open_file(path, language_id=_language_id(svc, path))
         versions = {path: await client.open_file(path, language_id=_language_id(svc, path)) for path in targets}
-        deadline = time.monotonic() + timeout
         out: dict[str, list[dict[str, Any]] | None] = {}
         for path, version in versions.items():
             remaining = deadline - time.monotonic()
@@ -141,7 +144,7 @@ def diagnostics(paths: list[str], sync: list[str] = (), timeout: float = REQUEST
         return out
 
     try:
-        return svc._loop.run(run(), timeout=timeout + 10)
+        return svc._loop.run(run(), timeout=timeout + 2)
     except BridgeError:
         raise
     except TimeoutError:
