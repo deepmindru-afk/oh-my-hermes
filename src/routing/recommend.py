@@ -108,6 +108,10 @@ _GUARDRAIL_CANDIDATE_INJECTION_IDS = frozenset(
         "executor_runtime_readiness_before_generic_advice",
         "feedback_before_coding",
         "gateway_intent_before_feedback_triage",
+        # A game request names no UI vocabulary `frontend` triggers on ("슈팅
+        # 게임 만들어줘", "make the game feel juicier"), so the guard's boost
+        # needs a candidate to land on.
+        "game_build_before_greenfield_interview",
         # A greenfield request scores 0 on `deep-interview` by construction - the
         # user types "build a todo list", never "interview me" - so without
         # injection the guard's boost has no candidate to land on.
