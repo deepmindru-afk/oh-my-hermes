@@ -559,9 +559,10 @@ leaves strong models where they were, so the `omh-lsp` tools (`lsp_definition`,
 How the tools work: Hermes already runs pyright and other servers in `agent/lsp` for its
 post-write diagnostics, but exposes no navigation tool and sends no navigation request. The
 OMH plugin drives that same service; one bridge module is the only code that touches its
-private attributes, and Hermes core is not patched. `lsp_rename` syncs the exact bytes it will
-edit to the server and writes only if the disk still holds them (`stale_file` otherwise), and
-a rename on a line that already holds the new name answers `already_renamed`.
+private attributes, and Hermes core is not patched. The symbol is located on the given line as
+a whole identifier only. `lsp_rename` syncs the exact bytes it will edit to the server and
+writes only if the disk still holds them (`stale_file` otherwise); a rename whose symbol is
+gone from a line that already holds the new name answers `already_renamed` and writes nothing.
 
 The setup:
 
@@ -577,24 +578,31 @@ The setup:
   `lsp_definition`/`lsp_references`/`lsp_rename`; only the tool names differ),
   `--git-init-workspace` (Hermes LSP only runs inside a git worktree; every earlier run in
   this README had LSP dormant) and `--test-env` (a ready interpreter with pytest and the
-  workspace on `sys.path`, named in the task; without it weak models spent dozens of turns
-  on `pip install`).
+  workspace on `sys.path`, named in the task; without it, in the third measurement below,
+  qwen-flash spent 18 and 38 terminal calls on pip installs and venv paths after a one-call
+  rename). 0 `pip install` calls in either arm here.
 - Two profiles that differ only in the `lsp_tools` gate and OMH home; `tools.tool_search` off
   in both. `patch` stays available in the lsp arm.
 - Contamination check: 0 `lsp_*` calls in the 72 patch-arm sessions.
-- omh `feature/omh-lsp-nav` `6c7976ddb` on origin/main `7a2de348a`; Hermes Agent v0.22.5.
+- omh `feature/omh-lsp-nav` `6c7976ddb` on origin/main `7a2de348a`; Hermes Agent v0.22.5
+  (`hermes --version`; the run records do not store it).
 
 | Model | patch | lsp | patch tokens (median) | lsp tokens (median) |
 | --- | ---: | ---: | ---: | ---: |
 | `z-ai/glm-5.3` | 9 / 9 | 9 / 9 | 146,334 | 142,246 |
 | `minimax/MiniMax-M3` | 9 / 9 | 9 / 9 | 307,488 | 297,129 |
 | `deepseek/deepseek-v4.1-flash-ultrafast` | 8 / 9 | 8 / 9 | 216,575 | 178,623 |
-| `moonshotai/kimi-k3.1-pro` | 5 / 9 | 7 / 9 | 162,272 | 154,570 |
-| `x-ai/grok-4-1-fast` | 7 / 9 | 9 / 9 | 198,227 | 234,215 |
-| `qwen/qwen-flash` | 6 / 9 | 9 / 9 | 395,020 | 168,547 |
-| `openai/gpt-4o-mini` | 3 / 9 | 7 / 9 | 227,140 | 171,393 |
+| `moonshotai/kimi-k3.1-pro` | 5 / 9 | 7 / 9 | 156,655 | 154,570 |
+| `x-ai/grok-4-1-fast` | 7 / 9 | 9 / 9 | 189,137 | 218,454 |
+| `qwen/qwen-flash` | 6 / 9 | 9 / 9 | 442,883 | 168,547 |
+| `openai/gpt-4o-mini` | 3 / 9 | 7 / 9 | 235,446 | 171,393 |
 | `openai/gpt-4.1-nano` | 0 / 9 | 3 / 9 | 108,724 | 150,237 |
-| **Total** | **47 / 72** | **61 / 72** | 16.5M total | 14.4M total |
+| **Total** | **47 / 72** | **61 / 72** | 20.2M | 14.5M |
+
+Token medians are over each model's 9 runs per arm; the two failed patch runs (below) have no
+token count in their records and are left out of their model's median. Totals are the
+session-database sums for all 72 sessions per arm and include them; without the
+gpt-4o-mini timeout (3.55M) the patch total is 16.6M.
 
 Per template, patch vs lsp: `E-RENAME` 20 vs 19, `L-RENAME-ALIAS` 13 vs 20,
 `L-RENAME-SHADOW` 14 vs 22. The gain is where a text search misleads: aliases, re-exports
@@ -609,14 +617,26 @@ The merge gate, fixed before the first paid run, passes on every clause:
 
 What it shows, and what it does not:
 
-- Two patch-arm runs ended without a record (one kimi process exit, one gpt-4o-mini
-  timeout); they count as failures. No lsp-arm run failed that way.
-- This is the third lsp-arm measurement. The first (59 / 72) ran on a rename that could
-  write a corrupted file after an outside edit; an independent verifier found it and it was
-  fixed. The second and third were blocked by the token clause: once by a rename loop on
-  already-renamed lines (fixed with `already_renamed`), once by weak models fighting a missing
-  pytest (fixed with `--test-env`, applied to both arms). The table above is the only run with
-  all three fixes in place and both arms measured fresh.
+- Two patch-arm runs failed: a kimi process crash before any model call, and a gpt-4o-mini
+  timeout after 3.55M tokens. Both are recorded as `failed` and scored as fails. No lsp-arm
+  run failed that way.
+- This is the fourth lsp-arm measurement; only this one is reported as the result.
+  1. 59 / 72, gate passed, but an independent verifier made `lsp_rename` write a corrupted
+     file (preview, outside edit, apply) while reporting success. Fixed by syncing the bytes
+     it edits.
+  2. 58 / 72, token clause failed: gpt-4o-mini called `lsp_rename` 42 more times on lines it
+     had already renamed (8.2x), and qwen-flash looped on pytest setup (7.8x). Fixed the first
+     with `already_renamed`.
+  3. 63 / 72, token clause failed: qwen-flash pytest-setup loops (3.08x, 14.3x). Fixed with
+     `--test-env`, applied to both arms, so both arms were measured again.
+  4. The table above.
+- After the table's run a second verifier found that the symbol lookup fell back to a
+  substring match (`LIMIT` inside `LIMIT_ALIAS`), so a repeated `LIMIT -> MAX_LIMIT` rename
+  renamed `LIMIT_ALIAS` and reported success. Whole-identifier matching fixes it. Replaying
+  all 220 lsp calls of this run against the fixture lines they targeted, none needed the
+  substring path, so the numbers above are unchanged by the fix.
+- The gate was written into the plan before any paid run (plan 22:54 KST, first paid record
+  23:27 KST, 2026-10-28) and was not changed after.
 - Rename only. Definition and references are exercised as steps of a rename, not measured on
   their own; the corpus `lsp` class still cannot pass under `hermes_current_session`, which
   records no tool events.
