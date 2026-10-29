@@ -1756,6 +1756,9 @@ class App(ModesMixin, AgentViewMixin):
         self.bg_running: tuple[BackgroundProcess, ...] = ()
         self.bg_quiet: dict[str, float] = {}
         self.bg_done: tuple[tuple[BackgroundProcess, ...], float] | None = None
+        self.bg_drawn: int | None = None  # the row's clock second the last frame showed (`_background_second`)
+        self.bg_slot_row: int | None = None  # the row's index in the slot `_slot_lines` last made, if it made it
+        self.bg_row_shown = False  # whether the last frame drew it (the slot can be cut to fewer rows: `build_frame`)
         # The poller's refresh count at the last turn's end: an older read may predate that end (`_take_background`).
         self.bg_after = 0
         self.notification: Notification | None = None  # Hermes' out-of-band notice, shown above the composer
@@ -2283,9 +2286,9 @@ class App(ModesMixin, AgentViewMixin):
 
         Input, a wake-up from the gateway client and a resize end the wait
         sooner. Held key bytes, a spinner tick while a turn runs or the panel
-        is live, the settled resize, the debounced path completion and the
-        next agent tail call each set a deadline; without one it is
-        `IDLE_READ_SECONDS`.
+        is live, the next second of the background row's clock, the settled
+        resize, the debounced path completion and the next agent tail call
+        each set a deadline; without one it is `IDLE_READ_SECONDS`.
         """
         now = self.clock()
         due = [now + IDLE_READ_SECONDS]
@@ -2293,8 +2296,10 @@ class App(ModesMixin, AgentViewMixin):
             due.append(now + READ_TIMEOUT_SECONDS)
         if self.redraw_at is not None:
             due.append(self.redraw_at)
-        elif self._busy() or self._panel_live() or self._aura_live() or self._background_live() or self.held_submits:
+        elif self._busy() or self._panel_live() or self._aura_live() or self.held_submits:
             due.append(self.last_render + self._tick_seconds())
+        if self.redraw_at is None and (background := self._background_due_at()) is not None:
+            due.append(background)  # the background row's clock: once a second, on the second
         if self.redraw_at is None and self._wallpaper_moves():
             due.append(self.ambient_at + WALLPAPER_TICK_SECONDS)
         if self.path_due is not None and self.sid:
@@ -3378,7 +3383,8 @@ class App(ModesMixin, AgentViewMixin):
                 self._tell(action.text, action.shown, action.chips, images)
             elif steer:
                 self._steer_or_submit(action.text, action.shown, action.chips, images)
-            elif not action.text and self.bg_done is not None and self.agent_steer is None and self.rewind is None:
+            elif not action.text and self._background_live() and self.bg_done is not None and self.agent_steer is None \
+                    and self.rewind is None:
                 self._report_background()
             else:
                 self._submit(action.text, action.shown, action.chips, images=images)
@@ -6079,10 +6085,19 @@ class App(ModesMixin, AgentViewMixin):
         first seen during a turn is stamped quiet once it is over. Only a read
         that started after that refresh stamps: one taken during the turn and
         handed over after it may list a process that has since ended.
+        The empty snapshot a switch delivers decides nothing: the row stays
+        hidden until the first read of the session says whether it continues
+        the one the row was for (`HudSnapshot.earlier`, a rotation), which
+        keeps the row, or not, which starts over. A read that failed
+        (`HudSnapshot.failed`) decides nothing either: no end, no quiet stamp,
+        no change of session.
         """
+        if snapshot.payload is None or snapshot.failed:  # a failed read read nothing new (`HudPoller._read_failed`)
+            return
         if snapshot.session_id != self.bg_session:
+            if self.bg_session not in snapshot.earlier:
+                self.bg_running, self.bg_quiet, self.bg_done = (), {}, None
             self.bg_session = snapshot.session_id
-            self.bg_running, self.bg_quiet, self.bg_done = (), {}, None
         running = {process.proc_id for process in snapshot.processes}
         ended = tuple(
             process for process in self.bg_running
@@ -6117,22 +6132,58 @@ class App(ModesMixin, AgentViewMixin):
     def _background_line(self, cols: int) -> Line | None:
         """The background-process row: the first process that ended unreported (and how many more did), else the
         running one most at risk of going unnoticed (the newest Hermes will not wake the session for), else none."""
+        if not self._background_live():
+            return None
         if self.bg_done is not None:
             done, at = self.bg_done
             return finished_line(done[0], ago=self.wall_clock() - at, theme=self.theme, width=cols, more=len(done) - 1)
-        if not self.bg_running:
-            return None
-        quiet = [process for process in self.bg_running if not process.notify and not process.watched]
-        shown = (quiet or list(self.bg_running))[-1]
-        glyph = WORKING_GLYPHS[self._spinner_frame() % len(WORKING_GLYPHS)]
+        shown = self._background_shown()
+        # The glyph steps with the clock beside it, on the same second, so the row alone never needs a faster frame.
+        step = max(0, int(self.wall_clock() - shown.started_at)) if self.motion else 0
+        glyph = WORKING_GLYPHS[step % len(WORKING_GLYPHS)]
         return running_line(
             shown, more=len(self.bg_running) - 1, now=self.wall_clock(), glyph=glyph, turn_runs=self._busy(),
             theme=self.theme, width=cols,
         )
 
+    def _background_shown(self) -> BackgroundProcess:
+        """The running process the row names: the newest Hermes will not wake the session for, else the newest."""
+        quiet = [process for process in self.bg_running if not process.notify and not process.watched]
+        return (quiet or list(self.bg_running))[-1]
+
     def _background_live(self) -> bool:
-        """Whether the background-process row shows, so its spinner turns and its clock ticks."""
-        return bool(self.bg_running) or self.bg_done is not None
+        """Whether the background-process row shows, so its spinner turns and its clock ticks: not after a switch
+        until a read of the session switched to has decided whether the row is its (`_take_background`)."""
+        return self.bg_session == self.stored_id and (bool(self.bg_running) or self.bg_done is not None)
+
+    def _background_covered(self) -> bool:
+        """Whether the row is not on screen: the last frame did not draw it (a slot too short for it, a queue that
+        keeps the one row, a slot the frame cut: `bg_row_shown`), or something the slot shows instead hides it now
+        (`_slot_lines`), or the pager covers the screen."""
+        return not self.bg_row_shown or self.pager is not None or any(
+            surface is not None
+            for surface in (self.slot, self.launch_picker, self.picker, self.search, self.rewind_picker,
+                            self.model_picker)
+        )
+
+    def _background_second(self) -> int | None:
+        """The whole seconds the row's clock shows (how long the process has run, or since it finished), or None
+        when no row is visible (`_background_covered`). A frame is due for the row only when this changes."""
+        if self._background_covered() or not self._background_live():
+            return None
+        since = self.bg_done[1] if self.bg_done is not None else self._background_shown().started_at
+        return max(0, int(self.wall_clock() - since))
+
+    def _background_due(self) -> bool:
+        second = self._background_second()
+        return second is not None and second != self.bg_drawn
+
+    def _background_due_at(self) -> float | None:
+        """When, on the loop's clock, the row's clock next shows another second; None with no row visible."""
+        if self._background_second() is None:
+            return None
+        since = self.bg_done[1] if self.bg_done is not None else self._background_shown().started_at
+        return self.clock() + 1.0 - (self.wall_clock() - since) % 1.0
 
     def _retire_finished_plan(self) -> None:
         """Stop drawing a plan whose every item is done, once no turn runs, as Claude Code's list goes once done.
@@ -6367,10 +6418,9 @@ class App(ModesMixin, AgentViewMixin):
         if self.redraw_at is not None:
             return  # the screen is mid-reflow; the settled redraw paints it
         now = self.clock()
-        due = (self._busy() or self._panel_live() or self._aura_live() or self._background_live()
-               or bool(self.held_submits)) \
+        due = (self._busy() or self._panel_live() or self._aura_live() or bool(self.held_submits)) \
             and now - self.last_render >= self._tick_seconds()
-        if not (self.dirty or due):
+        if not (self.dirty or due or self._background_due()):
             if self._wallpaper_moves() and now - self.ambient_at >= WALLPAPER_TICK_SECONDS:
                 self.ambient_at = now  # only the wallpaper's cells that moved: no frame is built
                 self.region.paint_ambient(self._ambient() or (), self.size[1])
@@ -6378,6 +6428,7 @@ class App(ModesMixin, AgentViewMixin):
         self.dirty = False
         self.last_render = now
         self._render()
+        self.bg_drawn = self._background_second()  # after the frame, which says whether the row is on screen
 
     def _render(self) -> None:
         cols, rows = self.size
@@ -6385,6 +6436,7 @@ class App(ModesMixin, AgentViewMixin):
         self._write_title()
         self._sync_ground()
         if self.pager is not None:
+            self.bg_row_shown = False
             self.clickable = {}
             self._set_mouse(True, drag=True)  # the alternate screen has no scrollback to take: the pager scrolls itself
             self._refresh_agent_log()
@@ -6515,6 +6567,8 @@ class App(ModesMixin, AgentViewMixin):
                            ambient=self._ambient(), ambient_above=True)
         self.ambient_at = self.clock()
         self.frame_budget = frame.budget
+        # The frame keeps the slot's first rows (`build_frame`), and the row is the slot's last.
+        self.bg_row_shown = self.bg_slot_row is not None and self.bg_slot_row < frame.budget.slot
         self.frame_busy = busy
         if busy:
             self.view_hold = (wanted, frame.budget.agents, self._working_rows())
@@ -6817,6 +6871,7 @@ class App(ModesMixin, AgentViewMixin):
         cap = choice_cap(rows, cols) if self._composer_hidden() else slot_cap(rows, cols)
         self.menu_under = []
         self.panel_shown = False  # the plan panel is in the slot (`_menu_or_panel_lines`): it gets its blank rows
+        self.bg_slot_row = None
         if self.slot is not None:
             cap = max(cap, 1)  # on a tiny terminal a question answered with text keeps a row for its label (`allocate`)
         if cap <= 0:
@@ -6858,7 +6913,9 @@ class App(ModesMixin, AgentViewMixin):
         if self.menu_below:  # the menu goes under the composer, and the panel stays away as it does for the menu
             self.menu_under, menu = menu, []
             self.panel_shown = False
-        return menu + goal + notice + queue + waiting + background
+        lines = menu + goal + notice + queue + waiting + background
+        self.bg_slot_row = len(lines) - 1 if background else None
+        return lines
 
     def _menu_or_panel_lines(self, cols: int, cap: int) -> list[Line]:
         if cap <= 0:

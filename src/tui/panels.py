@@ -42,7 +42,7 @@ and then that header, then the plan header.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import timezone
 import json
@@ -51,6 +51,7 @@ from pathlib import Path
 import sqlite3
 import threading
 import time
+import traceback
 from typing import Any
 import unicodedata
 from urllib.parse import quote
@@ -68,6 +69,13 @@ from ..plugin_bundle.omh.iso_datetime import strict_fromisoformat
 HUD_POLL_MIN_SECONDS = 2.0
 HUD_POLL_MAX_SECONDS = 8.0
 TOKEN_WATCH_CAP = 64  # the roster's own cap: one query never names more child sessions than the agent view holds
+# A session's background-process ownership facts read off state.db on the poller thread (`HudPoller.poll_once`):
+LINEAGE_READS = 5  # reads that may ask again while the earlier segments are `unverified`
+ROUTE_READS = 5  # reads that may ask again while no row of the session is there to name its route
+PARENT_CACHE = 256  # spawning sessions decided per session; one past this is not asked and not this session's
+PARENT_READS = 5  # reads that may ask again about a spawning session state.db could not decide (`delegated_from`)
+DELEGATION_DEPTH = 8  # delegation links followed from a spawning session back to this one
+FAILURE_CHARS = 200  # a failed read's `error` in the snapshot: class, where it raised, and its repr, cut to this
 
 # The fields that drift on every poll without anything having happened: the
 # widget's VOLATILE_KEYS. A payload differing only here is still delivered (so
@@ -139,6 +147,8 @@ class HudSnapshot:
     output_tokens: Mapping[str, int] = field(default_factory=dict)
     processes: tuple[BackgroundProcess, ...] = ()
     refreshes: int = 0
+    earlier: tuple[str, ...] = ()  # the conversation's earlier segments the read verified (`earlier_segments`)
+    failed: bool = False  # a read that raised (`HudPoller._read_failed`): its processes are the last ones read
 
 
 HudReader = Callable[..., Mapping[str, Any]]
@@ -181,6 +191,12 @@ class HudPoller:
     `processes.json` (`background.read_processes`) and keeps every one it has
     seen while it still runs, so a row another interpreter's rewrite dropped
     stays until its process ends. A process starting or ending is a change.
+    The first read of a session also reads which earlier segments of its
+    conversation rotating compaction left (`earlier_segments`): their
+    processes are this session's too, and when the session switched from is
+    one of them, what was kept for it is kept on. Reads go on asking which
+    route keys Hermes recorded for those ids (`recorded_routes`) until one
+    is found, for a messaging session's processes.
     """
 
     def __init__(
@@ -206,6 +222,14 @@ class HudPoller:
         self._pending: HudSnapshot | None = None
         self._watched: tuple[str, ...] = ()
         self._processes: dict[str, BackgroundProcess] = {}
+        self._earlier: tuple[str, ...] | None = None  # None: not settled yet for this session
+        self._earlier_reads = 0
+        self._routes: tuple[str, ...] | None = None  # the route keys Hermes recorded for those ids; None: ask
+        self._route_reads = 0
+        self._parents: dict[str, bool] = {}  # spawning session id -> whether this session delegated to it (decided)
+        self._parent_asks: dict[str, int] = {}  # spawning session id -> reads that could not decide it yet
+        self._parents_for: tuple[str, ...] = ()  # the session's ids the "not delegated" answers were decided against
+        self._left: tuple[str, dict[str, BackgroundProcess]] = ("", {})  # the session switched from, its processes
         # `refresh` calls, and the most a read that started after them has accounted for: that read is kept as new.
         self._refreshes = 0
         self._refreshed = 0
@@ -233,9 +257,12 @@ class HudPoller:
         with self._lock:
             if stored_id == self._session:
                 return
+            self._left = (self._session, self._processes)  # kept on if the first read finds it an earlier segment
             self._session = stored_id
             self._generation += 1
             self._processes = {}
+            self._earlier, self._earlier_reads, self._routes, self._route_reads = None, 0, None, 0
+            self._parents, self._parent_asks, self._parents_for = {}, {}, ()
             self._last_full = ""
             self._last_structural = ""
             self._interval = HUD_POLL_MIN_SECONDS
@@ -268,6 +295,10 @@ class HudPoller:
             self._interval = HUD_POLL_MIN_SECONDS
             self._refreshes += 1
             count = self._refreshes
+            # A turn may have recorded the route (`_record_gateway_session_peer`) or delegated: ask again.
+            self._routes, self._route_reads = None, 0
+            self._parents = {parent: True for parent, owned in self._parents.items() if owned}
+            self._parent_asks = {}
         self._wake.set()
         return count
 
@@ -281,14 +312,50 @@ class HudPoller:
         """Read once for the current session and return the seconds to wait before the next read."""
         with self._lock:
             session, generation, watched, tracked = self._session, self._generation, self._watched, self._processes
-            refreshes = self._refreshes
+            refreshes, earlier, (left, carried), routes = self._refreshes, self._earlier, self._left, self._routes
+            earlier_reads, route_reads, parents = self._earlier_reads, self._route_reads, dict(self._parents)
+            asks, parents_for = dict(self._parent_asks), self._parents_for
         if not session:
             return HUD_POLL_MAX_SECONDS
         payload = self._read(session)
         # The home this read resolved, so the tokens come from the state.db the payload describes.
         home = payload.get("hermes_home")
         tokens = read_output_tokens(home, watched)
-        processes = still_running(tracked, read_processes(home if isinstance(home, str) else self._hermes_home, session))
+        process_home = home if isinstance(home, str) else self._hermes_home
+        settled_earlier: tuple[str, ...] | None = earlier
+        if earlier is None:  # until Hermes' links verify every earlier segment, or `LINEAGE_READS` reads asked
+            earlier, resolved = earlier_segments(process_home, session)
+            earlier_reads += 1
+            if left in earlier:
+                tracked, left, carried = {**carried, **tracked}, "", {}
+            if resolved or earlier_reads >= LINEAGE_READS:
+                settled_earlier, left, carried = earlier, "", {}
+        settled_routes: tuple[str, ...] | None = routes
+        if routes is None:  # until a row of the session is there, or `ROUTE_READS` reads asked; again after a turn
+            routes, found = recorded_routes(process_home, (session, *earlier))
+            route_reads += 1
+            if found or route_reads >= ROUTE_READS:
+                settled_routes = routes
+        owners = (session, *earlier)
+        if owners != parents_for:  # "not delegated" was decided against other ids (an unverified lineage, a rotation)
+            parents, asks, parents_for = {parent: True for parent, owned in parents.items() if owned}, {}, owners
+
+        def parent_owned(parent: str) -> bool:
+            if parent in parents:
+                return parents[parent]
+            if len(parents) + len(asks) >= PARENT_CACHE:
+                return False
+            answer = delegated_from(process_home, parent, owners)
+            if answer is None:  # state.db could not say (a row not there yet, a read that failed): ask again
+                asks[parent] = asks.get(parent, 0) + 1
+                if asks[parent] < PARENT_READS:
+                    return False
+                answer = False
+            asks.pop(parent, None)
+            parents[parent] = answer
+            return answer
+
+        processes = still_running(tracked, read_processes(process_home, session, earlier, routes, parent_owned))
         running = sorted(processes.values(), key=lambda process: (process.started_at, process.proc_id))
         shown = [[process.proc_id, process.notify, process.watched] for process in running]
         full = _fingerprint([payload, tokens, shown])
@@ -296,12 +363,19 @@ class HudPoller:
         with self._lock:
             if generation != self._generation:
                 return HUD_POLL_MIN_SECONDS
-            self._processes = processes
+            self._processes, self._earlier, self._left = processes, settled_earlier, (left, carried)
+            self._earlier_reads = earlier_reads
+            self._parents_for = parents_for
+            if refreshes == self._refreshes:
+                self._routes, self._route_reads = settled_routes, route_reads
+                self._parents, self._parent_asks = parents, asks
+            else:  # a refresh since this read began: the route and the sessions found not delegated are asked again
+                self._parents, self._parent_asks = {parent: True for parent, owned in parents.items() if owned}, {}
             fresh = full != self._last_full or refreshes != self._refreshed
             self._refreshed = refreshes
             if fresh:
                 self._last_full = full
-                self._pending = HudSnapshot(session, payload, self._clock(), tokens, tuple(running), refreshes)
+                self._pending = HudSnapshot(session, payload, self._clock(), tokens, tuple(running), refreshes, earlier)
             if structural != self._last_structural:
                 self._last_structural = structural
                 self._interval = HUD_POLL_MIN_SECONDS
@@ -334,8 +408,132 @@ class HudPoller:
             # Cleared before the read, so a `set_session` landing during it
             # cuts the following wait short instead of being lost.
             self._wake.clear()
-            interval = self.poll_once()
+            try:
+                interval = self.poll_once()
+            except Exception as error:  # noqa: BLE001 - classified in tests/test_broad_exception_policy.py
+                interval = self._read_failed(error)
             self._wake.wait(interval)
+
+    def _read_failed(self, error: BaseException) -> float:
+        """A read that raised past the readers' own guards (or the wake it ends with): the panel says so, naming the
+        class, where it raised and its repr (`failure_text`), so a failure that repeats is diagnosable from the screen;
+        the snapshot is `failed`, so the background row takes nothing from it (`App._take_background`: no end, no
+        quiet stamp, no session change). It calls no callback: the UI loop takes it at its next step, so nothing
+        here can raise out of the thread. The next read comes after the longest interval, and the one after it is
+        delivered whatever it reads."""
+        with self._lock:
+            session = self._session
+            if session:
+                running = tuple(sorted(self._processes.values(), key=lambda process: (process.started_at,
+                                                                                     process.proc_id)))
+                self._pending = HudSnapshot(session, {"error": failure_text(error)}, self._clock(), {}, running, 0,
+                                            self._earlier or (), failed=True)
+                self._last_full = self._last_structural = ""
+            self._interval = HUD_POLL_MAX_SECONDS
+        return HUD_POLL_MAX_SECONDS
+
+
+def failure_text(error: BaseException) -> str:
+    """`<class> at <function>:<line>: <repr>`, cut to `FAILURE_CHARS`: the innermost frame the exception passed."""
+    frames = traceback.extract_tb(error.__traceback__)
+    where = f" at {frames[-1].name}:{frames[-1].lineno}" if frames else ""
+    return truncate(f"{type(error).__name__}{where}: {error!r}", FAILURE_CHARS)
+
+def earlier_segments(hermes_home: object, session_id: str) -> tuple[tuple[str, ...], bool]:
+    """The earlier segments of `session_id`'s conversation, nearest first, as far as Hermes' compaction links verify
+    them (`live_session.compaction_ancestors`, read-only), and whether the walk resolved: an `unverified` answer
+    (a state.db that could not be read, a row not there yet) lists only the segments it verified, and may list more
+    when asked again. None, resolved, for no home. A rotation is the only way one session continues another, so a
+    session switched to that does not name the one left is another conversation."""
+    from ..plugin_bundle.omh.live_session import compaction_ancestors
+
+    if not isinstance(hermes_home, str) or not hermes_home or not session_id:
+        return (), True
+    try:
+        answer = compaction_ancestors(hermes_home, session_id)
+    except (OSError, ValueError):
+        return (), False
+    found = answer.get("ancestors")
+    segments = tuple(item for item in found if isinstance(item, str)) if isinstance(found, list) else ()
+    return segments, answer.get("status") == "resolved"
+
+
+def _state_db(hermes_home: object) -> sqlite3.Connection | None:
+    """`<hermes_home>/state.db` opened as the HUD reader opens it (`mode=ro`, a quarter-second busy wait, the path
+    quoted); None for no home, no file, or one that cannot be opened."""
+    if not isinstance(hermes_home, str) or not hermes_home:
+        return None
+    try:
+        state_db = Path(hermes_home) / "state.db"
+        if not state_db.is_file():
+            return None
+    except (OSError, ValueError):
+        return None
+    try:
+        return sqlite3.connect(f"file:{quote(str(state_db))}?mode=ro", uri=True, timeout=0.25)
+    except sqlite3.Error:
+        return None
+
+
+def delegated_from(hermes_home: object, session_id: str, owners: Collection[str]) -> bool | None:
+    """Whether `session_id` is a subagent session one of `owners` delegated to, directly or through other subagents
+    (at most `DELEGATION_DEPTH` links), read-only off state.db; None when state.db cannot say yet (no file, a row not
+    there yet, a read that failed), which the caller asks again. A link is a row whose `_delegate_from` names its
+    own `parent_session_id` (`tools/delegate_tool.py`, which stamps it once on the child): taken from the first
+    segment of the row's conversation when the child was itself rotated (`compaction_ancestors`), so a parallel
+    continuation of one of `owners` counts as theirs, as `conversation_segments` counts it. A branch or a reset is
+    another conversation and is no link."""
+    from ..plugin_bundle.omh.live_session import compaction_ancestors
+
+    if session_id in owners:
+        return True
+    connection = _state_db(hermes_home)
+    if connection is None:
+        return None
+    try:
+        current = session_id
+        for _ in range(DELEGATION_DEPTH):
+            found = compaction_ancestors(str(hermes_home), current).get("ancestors")
+            first = found[-1] if isinstance(found, list) and found and isinstance(found[-1], str) else current
+            if first in owners:
+                return True
+            row = connection.execute(
+                "SELECT parent_session_id, model_config FROM sessions WHERE id = ?", (first,)
+            ).fetchone()
+            if row is None:
+                return None
+            if not isinstance(row[0], str) or not row[0] or not isinstance(row[1], str):
+                return False
+            config = json.loads(row[1])
+            if not isinstance(config, dict) or config.get("_delegate_from") != row[0]:
+                return False
+            current = row[0]
+            if current in owners:  # the last link read is tested too
+                return True
+        return False
+    except (sqlite3.Error, OSError, ValueError, RecursionError):
+        return None
+    finally:
+        connection.close()
+
+
+def recorded_routes(hermes_home: object, session_ids: Sequence[str]) -> tuple[tuple[str, ...], bool]:
+    """The route keys Hermes recorded on `session_ids`' rows of the state.db under `hermes_home`
+    (`sessions.session_key`: a messaging chat's `agent:<namespace>:<platform>:…`, a local session's route), read-only,
+    and whether any of those rows is there (one with no key settles the question until a turn ends). No ids, no
+    home, no file, and any SQLite failure read as none, with no row seen."""
+    connection = _state_db(hermes_home) if session_ids else None
+    if connection is None:
+        return (), False
+    try:
+        rows = connection.execute(
+            f"SELECT session_key FROM sessions WHERE id IN ({','.join('?' for _ in session_ids)})", tuple(session_ids)
+        ).fetchall()
+    except sqlite3.Error:
+        return (), False
+    finally:
+        connection.close()
+    return tuple(sorted({row[0] for row in rows if isinstance(row[0], str) and row[0]})), bool(rows)
 
 
 def read_output_tokens(hermes_home: object, session_ids: Sequence[str]) -> dict[str, int]:

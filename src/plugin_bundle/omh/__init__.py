@@ -199,6 +199,11 @@ def register(ctx: _PluginContext) -> None:
         CHILD_CALIBRATION_SECTION_MAX_CHARS,
         child_calibration_section,
     )
+    from .main_calibration import (
+        MAIN_CALIBRATION_SECTION_ID,
+        MAIN_CALIBRATION_SECTION_MAX_CHARS,
+        main_calibration_section,
+    )
     from .delegation_protocol import (
         DELEGATION_PROTOCOL_SECTION,
         DELEGATION_PROTOCOL_SECTION_ID,
@@ -488,6 +493,17 @@ def register(ctx: _PluginContext) -> None:
             child_calibration_section,
             position="after_memory",
             max_chars=CHILD_CALIBRATION_SECTION_MAX_CHARS,
+        )
+    # Main-session counterpart: one per-family execution block, rendered once at
+    # session start; children are excluded and keep their own section above.
+    if not _section_already_registered(ctx, MAIN_CALIBRATION_SECTION_ID):
+        _register_optional_surface(
+            ctx,
+            "register_system_prompt_section",
+            MAIN_CALIBRATION_SECTION_ID,
+            main_calibration_section,
+            position="after_memory",
+            max_chars=MAIN_CALIBRATION_SECTION_MAX_CHARS,
         )
     _ = ctx.register_hook("pre_tool_call", pre_tool_call)
     _register_optional_hook(ctx, "on_session_start", on_session_start)
