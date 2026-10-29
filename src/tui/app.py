@@ -270,7 +270,7 @@ from .theme import (
     Theme,
     aura_moves,
     build_theme,
-    with_catch_colours,
+    with_launch_look,
     with_prompt_band,
     is_light,
     launch_palette,
@@ -2116,11 +2116,11 @@ class App(ModesMixin, AgentViewMixin):
         return without_colour(theme) if self.color_depth == NO_COLOR else theme
 
     def _themed(self) -> Theme:
-        """The skin's theme against the background, with the shown launch look's band behind a sent prompt and its
-        catch-row colours, painted."""
+        """The skin's theme against the background, with the shown launch look's band behind a sent prompt and the
+        roles it owns (`with_launch_look`), painted."""
         skin, surface, look = self._skin(), self._surface(), self._shown_look()
         banded = with_prompt_band(build_theme(skin, surface), skin, surface, look)
-        return self._painted(with_catch_colours(banded, skin, surface, look))
+        return self._painted(with_launch_look(banded, skin, surface, look))
 
     def _skin(self) -> SkinTheme:
         return theme_for_name(self.theme.name) or default_theme()
@@ -6530,7 +6530,7 @@ class App(ModesMixin, AgentViewMixin):
             if self.effort in contract.REASONING_LEVELS and self.effort != "none":  # `none` is thinking off
                 effort = THINKING_EFFORT.format(self.effort)
             interrupt = INTERRUPT_HINT if self._esc_interrupts() else ""  # else Esc means something else now
-            lead = (Span(WORKING_GLYPHS[frame % len(WORKING_GLYPHS)], self.theme.running), Span(" "),
+            lead = (Span(WORKING_GLYPHS[frame % len(WORKING_GLYPHS)], self.theme.accent), Span(" "),
                     *working_spans(text, frame, self.theme))
             # A narrow row drops whole facts, the effort first (the info line says it where it has room), then the
             # tokens, the time, and the interrupt last; only a verb too long for the row alone is cut at the edge.

@@ -57,7 +57,10 @@ from omh.tui.bot_board import (
 from omh.tui.history import HistorySearch
 from omh.tui.keys import CHAR, DOWN, ENTER, ESCAPE, LEFT, UP, Key
 from omh.skin_pack import default_theme
-from omh.tui.theme import DEFAULT_THEME, EDGE_CONTRAST, TEXT_CONTRAST, build_theme, contrast_ratio, is_light
+from omh.tui.theme import (
+    DEFAULT_THEME, EDGE_CONTRAST, LAUNCH_PRESETS, TEXT_CONTRAST, build_theme, contrast_ratio, is_light,
+    with_launch_look,
+)
 from omh.tui.style import Span
 from omh.tui.width import cluster_width, clusters, line_width
 
@@ -1229,11 +1232,17 @@ class ThemeBandTests(unittest.TestCase):
                 self.assertGreaterEqual(contrast_ratio(status.fg, status.bg), TEXT_CONTRAST, status)
 
     def test_the_highlighted_box_edge_and_the_others_read_on_light_and_dark(self) -> None:
+        # The other boxes' edge is the launch look's rule colour (owner, 2026-10-29), so every look is measured; the
+        # highlighted edge (`_highlight`) is the brand moved 3:1 away from it.
         for background in ("#FCF9FD", "#0F1B2D"):
-            theme = build_theme(default_theme(), background)
-            self.assertGreaterEqual(contrast_ratio(theme.brand.fg, background), TEXT_CONTRAST)
-            self.assertGreaterEqual(contrast_ratio(theme.rule.fg, background), EDGE_CONTRAST)
-            self.assertGreaterEqual(contrast_ratio(theme.brand.fg, theme.rule.fg), 1.5, "the highlight stands apart")
+            for look in LAUNCH_PRESETS:
+                with self.subTest(background=background, look=look):
+                    skin = default_theme()
+                    theme = with_launch_look(build_theme(skin, background), skin, background, look)
+                    self.assertGreaterEqual(contrast_ratio(theme.brand.fg, background), TEXT_CONTRAST)
+                    self.assertGreaterEqual(contrast_ratio(theme.rule.fg, background), EDGE_CONTRAST)
+                    highlight = bot_board._highlight(theme).fg
+                    self.assertGreaterEqual(contrast_ratio(highlight, theme.rule.fg), EDGE_CONTRAST, "it stands apart")
 
 
 class TableTests(FixtureRoot):
