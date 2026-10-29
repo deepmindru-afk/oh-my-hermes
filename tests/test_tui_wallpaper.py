@@ -34,6 +34,7 @@ from omh.tui.screen import TEXT_GAP, LiveRegion
 from omh.tui.style import TRUECOLOR, Span, Style
 from omh.tui.terminal import background_restore, background_set
 from omh.tui.theme import (
+    DEFAULT_LAUNCH,
     EDGE_CONTRAST,
     GLYPH_ROLES,
     LAUNCH_PALETTES,
@@ -133,8 +134,13 @@ def clothed(attrs: list[list[tuple]] | list[tuple]) -> bool:
 
 
 class SceneTests(unittest.TestCase):
-    def test_every_look_has_its_scene_and_its_own_ground_dark_and_light(self) -> None:
-        self.assertEqual(set(SCENES), set(LAUNCH_PRESETS))
+    def test_every_look_but_the_default_has_its_scene_and_each_its_own_ground_dark_and_light(self) -> None:
+        # The default look keeps only its ground (owner's choice of 2026-10-30): no picture, at any moment or size.
+        self.assertEqual(set(SCENES), set(LAUNCH_PRESETS) - {DEFAULT_LAUNCH})
+        for cols, rows in SIZES:
+            for seconds in (0.0, 3.7, 10.9, 1234.5):
+                for light in (False, True):
+                    self.assertEqual(scene(DEFAULT_LAUNCH, cols, rows, seconds, light), (), (cols, rows, seconds))
         for side, light in ((0, False), (1, True)):
             grounds = {look: look_ground(look, light) for look in LAUNCH_PRESETS}
             self.assertEqual(len(set(grounds.values())), len(LAUNCH_PRESETS), "each look its own background")
@@ -151,7 +157,7 @@ class SceneTests(unittest.TestCase):
                 self.assertGreaterEqual(contrast_ratio(look_ground(look, True), "#333333"), 7.0)
 
     def test_the_same_moment_gives_the_same_cells_and_the_scene_moves(self) -> None:
-        for look in LAUNCH_PRESETS:
+        for look in SCENES:
             with self.subTest(look=look):
                 for seconds in (0.0, 3.7, 1234.5):
                     self.assertEqual(scene(look, 150, 42, seconds, False), scene(look, 150, 42, seconds, False))
@@ -212,14 +218,14 @@ class SceneTests(unittest.TestCase):
 
     def test_the_motifs_move(self) -> None:
         # Each frame-animated motif shows another frame within a second, and every scene changes within a second.
-        for look in LAUNCH_PRESETS:
+        for look in SCENES:
             with self.subTest(look=look):
                 self.assertNotEqual(scene(look, 150, 42, 10.0, False), scene(look, 150, 42, 10.9, False))
 
     def test_a_small_screen_has_no_scene(self) -> None:
         self.assertEqual(scene("moonlit", 79, 30, 1.0, False), ())
         self.assertEqual(scene("moonlit", 100, 23, 1.0, False), ())
-        self.assertEqual(scene("no-such-look", 80, 24, 1.0, False), scene("spectrum", 80, 24, 1.0, False))
+        self.assertEqual(scene("no-such-look", 150, 42, 1.0, False), ())  # the default look's, which has none
 
 
 class GroundContrastTests(unittest.TestCase):
@@ -646,6 +652,7 @@ class AppWallpaperTests(unittest.TestCase):
 
         with mock.patch.object(app_module, "scene", moving):
             app, clock = self.app(rows=42, cols=150)
+            app.launch_look = "moonlit"
             app.dirty = True
             app._render_when_due()
             self.assertAlmostEqual(app._read_timeout(), app_module.WALLPAPER_TICK_SECONDS)
@@ -659,12 +666,24 @@ class AppWallpaperTests(unittest.TestCase):
             self.assertGreaterEqual(len(seen - {-1}), 15, "each tick moved the glyph on screen")
             self.assertEqual(app.terminal.screen.line(36).count(MARK), 1, "and took it off where it was")
 
+    def test_the_default_look_keeps_its_ground_and_an_idle_screen_never_wakes_for_it(self) -> None:
+        app, clock = self.app(rows=42, cols=150)
+        self.assertEqual(app.launch_look, DEFAULT_LAUNCH)
+        app._render()
+        self.assertIn(background_set(look_ground(DEFAULT_LAUNCH, False)), self.writes(app))
+        self.assertEqual(app._ambient(), ())
+        self.assertFalse(app._wallpaper_moves())
+        self.assertNotAlmostEqual(app._read_timeout() or 0.0, app_module.WALLPAPER_TICK_SECONDS)
+        app.launch_look = "moonlit"
+        self.assertTrue(app._wallpaper_moves(), "a look with a scene ticks")
+
     def test_no_tick_while_the_composer_holds_text(self) -> None:
         def moving(look, cols, rows, seconds, light):
             return (Cell(rows - 6, int(seconds * 4) % cols, MARK, "#445566"),)
 
         with mock.patch.object(app_module, "scene", moving):
             app, clock = self.app(rows=42, cols=150)
+            app.launch_look = "moonlit"  # a look that ticks, so only the draft holds it
             type_text(app, "a draft")
             app.dirty = True
             app._render_when_due()

@@ -316,7 +316,7 @@ from .transcript import (
     review_line,
 )
 from .wallpaper import TICK_SECONDS as WALLPAPER_TICK_SECONDS
-from .wallpaper import Cell, scene
+from .wallpaper import SCENES, Cell, scene
 from .width import cell_width, clusters, line_width, truncate, truncate_left, truncate_line
 from ..version import __version__
 
@@ -6340,11 +6340,12 @@ class App(ModesMixin, AgentViewMixin):
         return scene(self._shown_look(), *self.screen, seconds, self._ground_light())
 
     def _wallpaper_moves(self) -> bool:
-        """Whether the wallpaper's own tick paints now: it shows, with motion on, no pager or settling resize holds the
-        screen, and the composer is empty. While someone types (an IME's pre-edit sits at the caret), no tick moves
-        or hides the cursor; the frames their keys draw still bring the scene along."""
+        """Whether the wallpaper's own tick paints now: it shows, with motion on, the look has a scene (the default
+        look keeps only its ground, so an idle screen on it never wakes to paint nothing), no pager or settling
+        resize holds the screen, and the composer is empty. While someone types (an IME's pre-edit sits at the
+        caret), no tick moves or hides the cursor; the frames their keys draw still bring the scene along."""
         return (self.motion and self.pager is None and self.redraw_at is None and not self.composer.text
-                and self._ground() is not None)
+                and self._ground() is not None and self._shown_look() in SCENES)
 
     def _saved_wallpaper(self) -> bool:
         """Whether the living wallpaper is wanted: as saved under the OMH home, else on."""
