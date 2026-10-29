@@ -57,6 +57,11 @@ omh setup
   A hundred-plus `omh-*` specialists: frontend, backend, Rust, security review, verification gates.<br>
   You never call them; the router loads the right ones into the run as tool calls.
 
+- **Semantic rename for Python, opt-in.**<br>
+  `lsp_definition`, `lsp_references` and `lsp_rename` drive the language server Hermes already runs.<br>
+  On 72 measured renames, pass rate went from 47 to 61; small models from 16 to 28 of 36.<br>
+  Off by default; turn on `lsp_tools` in the OMH plugin settings ([measurement](benchmarks/live-model-tools/v1/README.md)).
+
 - **Long-term memory you can trust.**<br>
   Nothing is remembered silently: each candidate is kept, refused or deferred with a written reason.<br>
   The next session gets a recall pack ranked for its task and cut to a token budget.<br>
