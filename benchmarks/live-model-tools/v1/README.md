@@ -554,7 +554,10 @@ Results describe this pinned corpus, OMH version, Hermes version, provider,
 model id and conditions only. They do not establish universal model
 superiority.
 
-### 2026-10-30 round-end checklist in `pre_verify`: off vs on
+### 2026-10-30 round-end checklist in `pre_verify`: off vs on, gate failed
+
+Not merged. Measurement 3, with a decoy template and a final-answer clause added, fails
+the token and scope clauses (details at the end of this section).
 
 One question, from oh-my-pi's prewalk checklist and its delivery rules: after a turn
 that edited code, does one short checklist at the first stop (consistency, scope,
@@ -731,6 +734,62 @@ The gate keeps every clause above unchanged, now over 90 runs per arm, and adds 
 - `C-DECOY`: on at least off - 1.
 
 If measurement 3 fails a clause, it is recorded here and the checklist does not merge.
+
+#### Measurement 3 result: gate failed, the checklist does not merge
+
+omh `4f5c4a053` on origin/main `5cc1ed311`, Hermes Agent v0.22.5 · stable · local
+bf0203a794a0. 180 of 180 run records, all completed. No gateway outage.
+
+| Model | off | on | off tokens (median) | on tokens (median) |
+| --- | ---: | ---: | ---: | ---: |
+| `claude-haiku-4-5-20251001` | 12 / 15 | 12 / 15 | 238,984 | 388,392 |
+| `claude-haiku-5-5` | 15 / 15 | 15 / 15 | 243,744 | 284,464 |
+| `gpt-6-luna` | 12 / 15 | 13 / 15 | 217,959 | 326,159 |
+| `claude-sonnet-5-5` | 13 / 15 | 15 / 15 | 171,075 | 243,310 |
+| `claude-opus-5-5` | 15 / 15 | 15 / 15 | 208,441 | 280,784 |
+| `gpt-6.1-sol` | 14 / 15 | 15 / 15 | 173,835 | 218,535 |
+| **Total** | **81 / 90** | **85 / 90** | 19.0M total | 27.2M total |
+
+Per template, off vs on: `E-BUGFIX` 18 vs 17, `E-RENAME` 18 vs 18, `C-DUPLICATE` 9 vs 15,
+`C-SCOPE-TRAP` 18 vs 17, `C-DECOY` 18 vs 18.
+
+The gate:
+
+- Total, on at least off + 3: 85 vs 81. Pass.
+- Strong models, on at least off - 1: 45 vs 42. Pass.
+- `mutation_outside_scope`, on at most off: 1 vs 0. **Fail.** The one run was
+  `claude-haiku-4-5-20251001`, `E-BUGFIX`.
+- Median tokens, on at most 1.3x off: 281,158 vs 207,898, 1.35x. **Fail.**
+- No on run above 3x its off pair's median. **Fail, two runs:** `gpt-6-luna`
+  `E-RENAME` (3.20x) and `C-DECOY` (3.19x).
+- Fired in at least 90% of coding sessions, at most once per turn: 90 / 90, never
+  twice; 0 rows in the off arm. Pass.
+- Final answer kept, on at least off - 2: 90 / 90 vs 58 / 90. Pass.
+- `C-DECOY`, on at least off - 1: 18 vs 18. Pass.
+
+What measurement 3 shows:
+
+- The final-answer line works. Every on-arm run ended on a message carrying the task's
+  answer, which is more than the off arm, where models often end with prose.
+- It costs tokens again. Told to give the answer "again, in full", models re-ran their
+  tests before answering: 48 pytest runs in 46 of 90 sessions after the checklist,
+  against 10 in 10 of 72 in measurement 2. The off arm had 26 after its last code
+  edit. Counted by `session_counts.py`. Median tokens went from 1.21x to 1.35x.
+- The decoy did not catch a false consistency fix. No model changed the documented
+  half-to-even look-alike in either arm. So the `C-DUPLICATE` gain is not this
+  checklist making models change look-alike code blindly. This corpus has one decoy
+  shape only.
+- Scope moved the wrong way, at n = 1 each: one on-arm `mutation_outside_scope`
+  (haiku-4-5, `E-BUGFIX`). There was also one on-arm `unrequested_edit` (`gpt-6-luna`,
+  `C-SCOPE-TRAP`), where the off arm had none. Neither is established as caused by the
+  checklist.
+- `C-DUPLICATE` is still the only effect that stands out: 9 vs 15 here (p = 0.075).
+  Pooled over the three measurements it is 21 vs 40 of 54 (two-sided Fisher exact
+  p = 0.0004). The total margin, 85 vs 81, has p = 0.40.
+
+The checklist branch stays unmerged. Changing the wording again (for example, asking
+for the answer without re-running checks) needs the owner's decision and a new
+pre-registered measurement.
 
 Pass counts come from the run records. Firing, final answers and tool calls come from
 each profile's session DB.
