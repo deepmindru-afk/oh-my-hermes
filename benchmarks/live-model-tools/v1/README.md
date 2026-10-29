@@ -554,7 +554,7 @@ Results describe this pinned corpus, OMH version, Hermes version, provider,
 model id and conditions only. They do not establish universal model
 superiority.
 
-### 2026-10-30 impact check: callers broken by an edit, off vs on (`impact_check` + `lsp_diagnostics`)
+### 2026-10-30 impact check: callers broken by an edit, off vs on (`impact_check` + `lsp_diagnostics`), gate passed
 
 One question, from oh-my-pi's workspace diagnostics: when an edit changes a definition, does
 telling the model which files that import it now have new type errors help it fix every caller?
@@ -607,6 +607,52 @@ The merge gate, fixed here before the first live run:
   line), at most 20 s.
 
 A failed clause means the feature does not merge; the result is recorded here as the DAP run was.
+
+The result: every clause passes, so the check ships, off by default.
+
+| Model | off | on | off tokens (median) | on tokens (median) |
+| --- | ---: | ---: | ---: | ---: |
+| `claude-haiku-4-5-20251001` | 8 / 12 | 11 / 12 | 296,656 | 384,301 |
+| `claude-haiku-5-5` | 11 / 12 | 12 / 12 | 223,303 | 225,588 |
+| `gpt-5.6-luna` | 9 / 12 | 12 / 12 | 144,621 | 159,372 |
+| `claude-sonnet-5-5` | 11 / 12 | 12 / 12 | 166,064 | 179,680 |
+| `claude-opus-5-5` | 12 / 12 | 12 / 12 | 216,821 | 221,162 |
+| `gpt-6.1-sol` | 12 / 12 | 12 / 12 | 156,092 | 174,620 |
+| **Total** | **63 / 72** | **71 / 72** | 14.2M | 16.2M |
+
+Per template, off vs on: `I-SIGNATURE` 10 vs 18, `I-RETURN-SHAPE` 18 vs 18, `I-KWARG` 17 vs 17,
+`I-CONTROL` 18 vs 18. All of the gain is on the signature change, where the off arm left the
+alias caller and the caller through the package re-export unchanged (haiku 4.5 and gpt-5.6-luna
+0 / 3 each).
+
+- Weak models, on at least off + 3: 35 vs 28, pass.
+- Strong models, on at least off - 1: 36 vs 35, pass.
+- No on-arm run above 3x its pair's median tokens: none; the highest is 1.74x (gpt-6.1-sol
+  `I-KWARG`).
+- The note fired in 10 of the 11 on-arm sessions with a broken caller, pass. Seven
+  `I-SIGNATURE` notes and three `I-KWARG` notes; every session that got a note ended passing.
+  The one broken session without a note is haiku 4.5 `I-KWARG`, whose remaining break was the
+  caller passing the keyword through `**options`, which the type checker cannot see.
+- Notes on `I-CONTROL`: 0, pass. The importer with the pre-existing type error was not reported.
+- Round-end latency: p95 1.4 s, max 1.9 s over 72 sessions, pass. The baseline at the first
+  edit (`pre_tool_call`) added p95 1.6 s, max 4.0 s.
+
+What it shows, and what it does not:
+
+- The on arm lists the four `omh-lsp` tools. Over the scored sessions, `lsp_diagnostics` was called
+  17 times, `lsp_references` 3 times (haiku 5.5), and
+  `lsp_definition` / `lsp_rename` never. No off-arm session called an `lsp_*` tool.
+- A first full run was stopped at 73 of 144 records and is not reported: its probe ran each
+  workspace test file with a bare `runpy`, so a correct gpt-6.1-sol `I-RETURN-SHAPE` edit whose new
+  test imported pytest was scored as a fail in both arms. impact-ab now checks the definition and
+  every caller and leaves the model's own tests to the model; the matrix was rerun in full. The
+  gate was not changed.
+- The run used omh `feature/lsp-impact-check` `29940f8a5` (plugin code as of `c5e4fc02c`) on
+  origin/main `5cc1ed311`, Hermes Agent v0.22.5 (`bf0203a794`), one on/off profile pair per model,
+  6 models in parallel, 2026-10-30 02:02-02:26 KST. 144 of 144 records completed; none failed,
+  timed out or was retried.
+- Python and pyright only. The type checker cannot follow `**options`, `getattr` or string
+  dispatch; those callers still break silently. n = 12 per model per arm.
 
 ### 2026-10-29 debugging: builtin `patch` vs a debugpy tool (`omh-dap`), gate failed
 

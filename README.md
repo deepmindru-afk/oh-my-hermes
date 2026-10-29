@@ -62,6 +62,11 @@ omh setup
   Aliases, re-exports and shadowed names get renamed correctly, and smaller models gain the most.<br>
   Off by default; turn on `lsp_tools` in the OMH plugin settings ([measurement](benchmarks/live-model-tools/v1/README.md)).
 
+- **Callers an edit broke, named before the turn ends, opt-in.**<br>
+  When an edit changes a Python definition, OMH asks the language server about every file that imports it and hands back the new errors as `path:line` lines.<br>
+  Hermes checks only the file it wrote; this catches the aliased, re-exported and module-level callers. `lsp_diagnostics` re-checks a file or glob.<br>
+  Off by default; turn on `impact_check` in the OMH plugin settings ([measurement](benchmarks/live-model-tools/v1/README.md)).
+
 - **Long-term memory you can trust.**<br>
   Nothing is remembered silently: each candidate is kept, refused or deferred with a written reason.<br>
   The next session gets a recall pack ranked for its task and cut to a token budget.<br>
