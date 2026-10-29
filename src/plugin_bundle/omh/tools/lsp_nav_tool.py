@@ -289,10 +289,46 @@ def _preview_edits(root: str, targets: dict[str, list[dict[str, Any]]], expected
     return rows[:_PREVIEW_CAP]
 
 
+_DONE_HINT = ("one lsp_rename updates every reference in the workspace; do not rename the remaining "
+              "references one by one")
+
+
+def _already_renamed(args: dict[str, Any], root: str) -> str | None:
+    """The answer for a rename whose line already holds ``new_name`` instead of ``symbol``.
+
+    A model that renames reference by reference asks again for lines an earlier call already
+    rewrote; a bare symbol_not_found made it retry (measured: 42 repeats in one run). Saying the
+    work is done ends that loop without writing anything.
+    """
+    new_name = args.get("new_name")
+    if not isinstance(new_name, str) or not new_name:
+        return None
+    try:
+        path = lsp_nav.resolve_path(str(args.get("path", "") or ""), root)
+        line = _positive_int(args, "line")
+        with open(path, "rb") as handle:
+            lines = lsp_nav.split_lines(lsp_nav.decode(handle.read())[0])
+    except (_Fail, LspNavError, OSError):
+        return None
+    if not 1 <= line <= len(lines) or lsp_nav.find_symbol_column(lines[line - 1][0], new_name) is None:
+        return None
+    return json.dumps({
+        "ok": True, "applied": False, "already_renamed": True, "files": [], "total_edits": 0,
+        "hint": f"line {line} already uses {new_name!r}: nothing to do; {_DONE_HINT}",
+    }, ensure_ascii=False)
+
+
 def lsp_rename_handler(args: dict[str, Any], **kwargs: object) -> str:
     try:
         root = _root_for(kwargs)
-        path, position, _ = _target(args, root)
+        try:
+            path, position, _ = _target(args, root)
+        except _Fail as exc:
+            if exc.code == "symbol_not_found":
+                done = _already_renamed(args, root)
+                if done is not None:
+                    return done
+            raise
         new_name = args.get("new_name")
         if not isinstance(new_name, str) or not lsp_nav.valid_identifier(new_name, os.path.splitext(path)[1]):
             return _fail("invalid_name", f"{new_name!r} is not a valid identifier for {os.path.basename(path)}")
@@ -341,6 +377,7 @@ def lsp_rename_handler(args: dict[str, Any], **kwargs: object) -> str:
         return json.dumps({
             "ok": True, "applied": True, "files": [{"path": rel, "edits": n} for rel, n in written],
             "total_edits": sum(n for _, n in written),
+            "hint": f"done: every reference was renamed; {_DONE_HINT}",
         }, ensure_ascii=False)
     except _Fail as exc:
         return _fail(exc.code, exc.hint, **exc.extra)

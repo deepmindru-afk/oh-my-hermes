@@ -445,6 +445,31 @@ class HandlerTests(_Root):
         self.assertIn(stub, bridge.synced_by_method["textDocument/rename"][1])
         self.assertEqual(self.read("pkg/core.pyi"), "CAP: int\n")
 
+    def test_rename_on_already_renamed_line_says_done(self):
+        # gpt-4o-mini renamed once (every reference), then asked 42 more times per reference.
+        self.write("use.py", "from pkg.core import CAP\nprint(CAP, 'LIMIT')\n")
+        before = self.read("use.py")
+        bridge = self.fake({})
+        out = self.call(lsp_rename_handler, path="use.py", line=1, symbol="LIMIT", new_name="CAP")
+        self.assertTrue(out["ok"], out)
+        self.assertTrue(out["already_renamed"])
+        self.assertFalse(out["applied"])
+        self.assertIn("every reference", out["hint"])
+        self.assertEqual(self.read("use.py"), before)
+        self.assertEqual(bridge.calls, [])
+
+    def test_rename_symbol_missing_and_new_name_absent_still_fails(self):
+        self.fake({})
+        out = self.call(lsp_rename_handler, path="pkg/core.py", line=3, symbol="LIMIT", new_name="CAP")
+        self.assertEqual(out["error"], "symbol_not_found")
+
+    def test_applied_rename_says_every_reference_done(self):
+        self.fake({"textDocument/prepareRename": {"start": {}, "end": {}},
+                   "textDocument/rename": self.rename_edit()})
+        out = self.call(lsp_rename_handler, path="pkg/core.py", line=1, symbol="LIMIT", new_name="CAP")
+        self.assertTrue(out["applied"], out)
+        self.assertIn("every reference", out["hint"])
+
     def test_rename_resource_op_writes_nothing(self):
         edit = self.rename_edit()
         edit["documentChanges"].append({"kind": "rename", "oldUri": path_to_uri(self.use), "newUri": "file:///x.py"})
