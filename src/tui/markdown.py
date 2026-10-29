@@ -139,6 +139,8 @@ class GrowingLine:
     line: str = ""  # the line when the cut last moved: a later line goes on from it, or the cut is not used
     cut: int = 0  # where in `line` the rows above end; 0 for no cut
     dirty: str = ""  # a line `clean_text` changes: one that goes on from it is never cut, so is not checked again
+    wrapped: str = ""  # a line that took more than one row: from one that goes on from it, places to cut are noted
+    clean: str = ""  # a line `clean_text` leaves as it is: for one that goes on from it, only what was added is checked
     rows: list[Line] = field(default_factory=list)  # the rows above the cut
     rest: Line = ()  # what every row of the line but its first hangs on
     after: MarkdownState = MarkdownState()  # the state the line hands the next
@@ -169,19 +171,30 @@ def render_growing(
         memo.cut, memo.rows = 0, []
         plain = not state.in_fence and source.strip() and not _fence_open(source)
         inline = _inline_block(source, state, theme) if plain else None
+        printable = source.isprintable()  # a printable line `clean_text` leaves alone
         if inline is None or line_width(inline[1]) != line_width(inline[2]):
-            return render_line(source, state, width, theme)
-        if not source.isprintable() and clean_text(source) != source:  # a printable line `clean_text` leaves alone
-            memo.dirty = source
-            return render_line(source, state, width, theme)
+            # `render_line` would clean the line and make the checks just made: a printable one goes on from there.
+            return _block_rows(source, state, width, theme) if plain and printable else render_line(source, state,
+                                                                                                    width, theme)
+        if not printable:
+            # With no tab, `clean_text` leaves a line alone where it leaves each part of it alone.
+            added = source[len(memo.clean) :] if source.startswith(memo.clean) else source
+            if clean_text(added) != added:
+                memo.dirty = source
+                return render_line(source, state, width, theme)
+            memo.clean = source
         start, lead, memo.rest, memo.after = inline
         memo.drawn, text, cuttable = (state, width, theme), source[start:], True
+    # A line on one row has no row to cut at: until it has wrapped, it is parsed as `render_line` parses it.
+    noted = cuttable and bool(memo.wrapped) and source.startswith(memo.wrapped)
     stops: list[tuple[int, int]] = []
-    spans = _inline_spans(text, theme.text, theme, stops)
+    spans = _inline_spans(text, theme.text, theme, stops if noted else None)
     rows = wrap_prefixed(spans, lead, memo.rest, width)
     drawn = memo.rows + rows
-    if cuttable:
+    if noted:
         _move_cut(memo, source, start, spans, stops, rows, lead, width, theme)
+    elif len(rows) > 1:
+        memo.wrapped = source
     return drawn, memo.after
 
 

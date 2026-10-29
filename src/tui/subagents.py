@@ -222,9 +222,9 @@ class Agent:
 def _first_words(words: list[str], cells: int) -> str:
     """The first of `words` that fit `cells`; a first word longer than that is cut. Empty with no words.
 
-    The punctuation the last word ended on goes (`child alpha:` is `child
+    A `:` or `;` the last word ended on goes (`child alpha:` is `child
     alpha`): a name is set into sentences (`steering {name}: …`,
-    `Interrupted {name}.`), which bring their own.
+    `Interrupted {name}.`). A `.` stays, as `e.g.` and `v1.2.` keep theirs.
     """
     if not words:
         return ""
@@ -233,7 +233,7 @@ def _first_words(words: list[str], cells: int) -> str:
         if cell_width(f"{name} {word}") > cells:
             break
         name = f"{name} {word}"
-    return truncate(name.rstrip(":;,.") or name, cells)
+    return truncate(name.rstrip(":;") or name, cells)
 
 
 def _text(value: object) -> str:

@@ -950,7 +950,46 @@ class SteeredReplyTests(unittest.TestCase):
         self.step(ev("message.complete", text="Second.", status="complete"))
         self.transcript.steer_answered(block, STEER_QUEUED)
         self.step()
-        self.assertEqual(self.replies(), [("A", "First."), ("A", "Second."), ("S", "s1")])
+        self.assertEqual(self.replies(), [("A", "First."), ("S", "s1"), ("A", "Second.")])  # above the reply, not taken
+
+    def stream(self, first: str, last: str, final: str) -> list[object]:
+        """One reply streamed as `first`, a steer Hermes took, then `last`, ending on `final`."""
+        self.step(ev("message.start"))
+        self.step(ev("message.delta", text=first))
+        self.steer("s1")
+        self.step(ev("message.delta", text=last))
+        self.step(ev("message.complete", text=final, status="complete"))
+        return self.replies()
+
+    def test_the_split_is_where_the_last_call_begins_however_often_its_first_line_comes_back(self) -> None:
+        # Review 2 of #2389: the last place the final's first line occurred was taken, so a reply that came back to
+        # its first line split there and showed twice (R2), or cut a line in half (R1, R3, R12).
+        replies = (
+            ("Summary\n- fixed the Summary section\n- done", "I will look at the file."),
+            ("Done\n\nI changed x.\nDone", "I will look at the file."),
+            ("OK\nThe tests pass. OK", "I will look at the file."),
+            ("-\n- c", "Plan:\n- a\n- b\n"),
+        )
+        for last, first in replies:
+            with self.subTest(last=last):
+                self.setUp()
+                self.assertEqual(self.stream(first, last, last), [("A", first), ("S", "s1"), ("A", last)])
+
+    def test_a_footer_hermes_appended_shows_whether_or_not_the_reply_splits(self) -> None:
+        last = "Summary\n- fixed the Summary section"
+        footer = "\n\nWarning: 1 edit failed"
+        self.assertEqual(self.stream("I will look.", last, last + footer),
+                         [("A", "I will look."), ("S", "s1"), ("A", last + footer)])  # F3
+        self.setUp()  # F1: no split is found (spaces differ); the stream stays, and the footer goes under it
+        self.assertEqual(self.stream("First.", "Second  line.", "Second line." + footer)[0],
+                         ("A", "First.Second  line." + footer))
+
+    def test_one_call_whose_final_differs_inside_is_never_split(self) -> None:
+        # R4: a steer waited, but there was one call; its final changed spaces inside, and its fence came back.
+        reply = "```py\nx = 1\n```\nand then\n```py\ny = 2\n```"
+        self.assertEqual(self.stream(reply[:10], reply[10:] + "   \n\n\n", reply.replace("and then", "and  then"))[0],
+                         ("A", reply + "   \n\n\n"))
+        self.assertEqual(len([block for block in self.transcript.blocks if isinstance(block, AssistantBlock)]), 1)
 
     def test_what_came_during_the_last_call_waits_under_it(self) -> None:
         # Review of #2389: a second steer Hermes hands to the next turn, and a command echo, both rose above it.

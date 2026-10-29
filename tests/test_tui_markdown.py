@@ -505,6 +505,22 @@ class GrowingLineTests(unittest.TestCase):
                 for name, (by_line, by_growing) in calls.items():
                     self.assertLessEqual(by_growing, by_line, (opening, name))
 
+    def test_a_line_on_one_row_notes_no_place_to_cut(self) -> None:
+        # Review 2 of #2389: noting cut places on a line that has not wrapped made it dearer than `render_line`.
+        noted: list[str] = []
+        real = markdown._cluster_each
+
+        def counting(text: str, index: int) -> bool:
+            noted.append(text)
+            return real(text, index)
+
+        line, memo = "", GrowingLine()
+        with patch("omh.tui.markdown._cluster_each", counting):
+            while len(line) < 90:
+                line += "a\u200d "
+                render_growing(line, MarkdownState(), 100, THEME, memo)
+        self.assertEqual(noted, [])
+
     def test_a_long_streamed_paragraph_wraps_only_its_last_rows(self) -> None:
         wrapped: list[int] = []
         real = markdown.wrap_line

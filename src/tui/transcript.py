@@ -125,9 +125,21 @@ NOTICE_ERROR = "error"
 # What a command that failed printed: on the red band in the error colour, as a failed tool's output lines are,
 # with no mark of its own (the command's `✗` line under it has the one mark).
 OUTPUT_FAILED = "failed"
-# A Hermes reply on `App`'s allow list, whose own template marks its words: its `**…**` is drawn bold and its `…`
-# code, what is inside each as written (`_marked_spans`). Any other output is drawn as written.
+# A Hermes reply on `App`'s allow list, whose template marks one value per line: a line of a shape in TITLE_MARKS
+# draws that value bold or in the code colour, as written (`_marked_spans`); any other line is drawn as written.
 OUTPUT_MARKED = "marked"
+# The lines Hermes bf0203a794 builds its /title reply from (`locales/en.yaml` gateway.title): (what opens the line, up
+# to its mark; the mark that closes it; whether the value is code, not bold). `set_to` (:469) "✏️ Session title set:
+# **{title}**"; `current_with_title` (:471) "📌 Session: `{session_id}`" then "Title: **{title}**"; `current_no_title`
+# (:472) the same id line, then "No title set. Usage: `/title My Session Name`". A reply of no such shape (the slash
+# worker's `cli.title.set` "Session title set: {title}", en.yaml:2533; a title refused as in use,
+# hermes_state_titles.py:163) is drawn as written.
+TITLE_MARKS = (
+    ("✏️ Session title set: **", "**", False),
+    ("Title: **", "**", False),
+    ("📌 Session: `", "`", True),
+    ("No title set. Usage: `", "`", True),
+)
 
 INTERRUPTED_NOTICE = "Interrupted."
 FAILED_NOTICE = "The turn ended with an error."
@@ -386,6 +398,18 @@ def _display_lines(text: str) -> list[str]:
 def _stable_lines(text: str) -> list[str]:
     """The source lines that can no longer change: complete ones, minus trailing blanks."""
     return _without_trailing_blanks(_source_lines(text)[:-1])
+
+
+def _extension(streamed: str, text: str) -> str:
+    """What `text` adds past the end of `streamed`: the rest of `text` after the most of its lines whose words
+    `streamed` ends with, spaces aside; "" when even its first line is not there."""
+    lines = text.split("\n")
+    shown = " ".join(streamed.split())
+    for count in range(len(lines), 0, -1):
+        head = "\n".join(lines[:count])
+        if lines[count - 1].strip() and shown.endswith(" ".join(head.split())):
+            return text[len(head) :].rstrip()
+    return ""
 
 
 def _takes_in(text: str, streamed: str) -> bool:
@@ -768,25 +792,15 @@ def _text_rows(
 
 
 def _marked_spans(text: str, style: Style, theme: Theme) -> list[Span]:
-    """A line of a Hermes template: `**title**` bold up to the line's last `**`, `` `id` `` in the code colour, what
-    is inside each as written, and every other character as written. Not Markdown: a title holding `__init__`
-    or `*.py` keeps it."""
-    spans: list[Span] = []
-    while text:
-        bold, close, tick = text.find("**"), text.rfind("**"), text.find("`")
-        shut = text.find("`", tick + 1) if tick >= 0 else -1
-        if shut < 0:
-            tick = -1  # a lone backtick marks nothing
-        if bold >= 0 and close > bold and (tick < 0 or bold < tick):
-            spans += [Span(text[:bold], style), Span(text[bold + 2 : close], replace(style, bold=True))]
-            text = text[close + 2 :]
-        elif tick >= 0:
-            spans += [Span(text[:tick], style), Span(text[tick + 1 : shut], theme.code)]
-            text = text[shut + 1 :]
-        else:
-            break
-    spans.append(Span(text, style))
-    return [span for span in spans if span.text]
+    """A line of a Hermes reply on `App`'s allow list: when it has the shape of one of TITLE_MARKS, the value its
+    template marks is drawn bold or in the code colour, as written; any other line is drawn as written."""
+    for opening, closing, code in TITLE_MARKS:
+        if text.startswith(opening) and text.endswith(closing) and len(text) >= len(opening) + len(closing):
+            value = text[len(opening) : len(text) - len(closing)]
+            marked = theme.code if code else replace(style, bold=True)
+            words = opening.rstrip("*`")
+            return [span for span in (Span(words, style), Span(value, marked)) if span.text]
+    return [Span(text, style)] if text else []
 
 
 def _user_rows(block: UserBlock, width: int, theme: Theme) -> list[Line]:
@@ -1322,6 +1336,8 @@ class Transcript:
         # (`add_steer`, `add_command`).
         self._held: list[Block] = []
         self._held_at: dict[int, int] = {}  # by id: the characters of the streaming reply there when each was held
+        # By id: a steer still unanswered when a split put it above this reply (`_split_steered_reply`).
+        self._steer_slots: dict[int, AssistantBlock] = {}
         # The command whose output is being written: a notice or an output lands under its echo while it is open.
         # `add_command` sets it; the app points it at the command whose handler or call answer is running.
         self.command: CommandBlock | None = None
@@ -1423,6 +1439,12 @@ class Transcript:
 
     def steer_answered(self, block: SteerBlock, state: str, outcome: str = "") -> None:
         block.state, block.outcome = state, outcome
+        reply = self._steer_slots.pop(id(block), None)
+        at = next((index for index, kept in enumerate(self.blocks) if kept is reply), -1) if reply else -1
+        held = any(kept is block for kept in self._held)
+        if held and at >= 0 and (at > self._cursor or at == self._cursor and not self._cursor_lines):
+            self._held = [kept for kept in self._held if kept is not block]  # above the reply it came before
+            self.blocks.insert(at, block)
         self._write_held()
         self._version += 1
 
@@ -1684,30 +1706,36 @@ class Transcript:
         `message.interim`), while `message.complete` carries the last call's
         text only. So `text` is adopted only when it takes in all that
         streamed; else the reply splits where the last call's text begins
-        (`_split_steered_reply`), or, when that is not found, stays as it
-        streamed.
+        (`_split_steered_reply`); else it stays as it streamed, with what
+        `text` adds past its end (a footer Hermes appended, `_extension`).
         """
         pending = [self._held_at.get(id(held), 0) for held in self._held
                    if isinstance(held, SteerBlock) and not held.agent and held.state != STEER_REFUSED]
-        if not pending:
+        if not pending or _takes_in(text, block.text):
             self._settle_text(block, text)
-        elif _takes_in(text, block.text):
-            self._settle_text(block, text)
+            return
+        reply = self._split_steered_reply(block, text, min(pending))
+        if reply is not None:
+            self._settle_text(reply, text)
         else:
-            reply = self._split_steered_reply(block, text, min(pending))
-            if reply is not None and _takes_in(text, reply.text):
-                self._settle_text(reply, text)
+            block.text += _extension(block.text, text)
 
     def _split_steered_reply(self, block: AssistantBlock, text: str, since: int) -> AssistantBlock | None:
-        """Split the reply where the first line of `text` last begins at or after `since` (how much had streamed
-        when the steer came): the text before stays a block, the held blocks that came before the split go
-        under it, and the rest is a new live block, which is returned. None when that line is not found there,
-        or a line already taken would move.
+        """Split the reply at the first place from `since` (how much had streamed when the steer came) that opens
+        `text`'s first line and from which all that streamed is the start of `text`: the text before stays a
+        block, the held blocks that came before the split go under it, and the rest is a new live block, which
+        is returned. None when there is no such place, or a line already taken would move.
+
+        A steer still waiting for Hermes' answer that came before the split
+        keeps its place: once answered it goes in above the new block, while
+        nothing of that block is taken (`steer_answered`).
         """
         lines = _display_lines(text)
         first = lines[0].strip() if lines else ""
-        at = block.text.rfind(first, since) if first else -1
-        if at <= 0 or not block.text[:at].strip():
+        at = block.text.find(first, since) if first else -1
+        while at >= 0 and not (at > 0 and block.text[:at].strip() and _takes_in(text, block.text[at:])):
+            at = block.text.find(first, at + 1)
+        if at < 0:
             return None
         head_lines, taken = _display_lines(block.text[:at]), self._taken_lines_of(block)
         if taken > len(head_lines) or head_lines[:taken] != _display_lines(block.text)[:taken]:
@@ -1715,6 +1743,9 @@ class Transcript:
         reply = AssistantBlock(block.text[at:], model=block.model)
         block.text, block.done = block.text[:at], True
         self._write_held(upto=at)  # a steer or echo that came after the split waits under the new block
+        for held in self._held:
+            if isinstance(held, SteerBlock) and _awaits_answer(held) and self._held_at.get(id(held), 0) <= at:
+                self._steer_slots[id(held)] = reply
         self.blocks.append(reply)
         self._version += 1
         self._drop_past_cap()
@@ -1732,6 +1763,7 @@ class Transcript:
     def _on_message_start(self, payload: dict[str, Any]) -> None:
         self._close_live()
         self._turn_start = len(self.blocks)
+        self._steer_slots.clear()  # a steer answered from here on goes where any answered steer goes
         self.running = True
 
     def _on_message_delta(self, payload: dict[str, Any]) -> None:

@@ -574,10 +574,10 @@ QUEUE_HINT_GAP = 2
 # While a turn runs, the row under the queued prompts says the key that sends the oldest into the turn now, as a
 # steer, the way Claude Code says it: Ctrl+Enter where the terminal tells it from Enter, else Ctrl+J.
 SEND_NOW_HINT = "{key} to send now · ↑ to edit"
-# The Hermes commands whose reply is a template that marks its own words, drawn with those marks (`OUTPUT_MARKED`):
-# /title answers from `gateway/slash_commands_session.py::_handle_title_command` (Hermes bf0203a794, :976-996) with
-# `locales/en.yaml` gateway.title (:469 `set_to` "✏️ Session title set: **{title}**", :471-472 the current title and
-# session id). Every other reply (a quick command's stdout, /history, /status, /tools, /usage) is data, shown as it is.
+# The Hermes commands whose reply may be a template that marks its values (`OUTPUT_MARKED`): /title answers from
+# `gateway/slash_commands_session.py::_handle_title_command` (Hermes bf0203a794, :976-996), whose lines
+# `transcript.TITLE_MARKS` names; only a line of such a shape is drawn marked. Every other reply (a quick command's
+# stdout, /history, /status, /tools, /usage) is data, shown as it is.
 MARKED_REPLIES = frozenset({"title"})
 SEND_NOW_KEYS = ("ctrl+j", "ctrl+enter")  # by `App.keyboard_protocol`
 # After the person interrupts a turn the queue does not go on by itself: what Up would take back goes back into the

@@ -96,6 +96,23 @@ class CommandEchoTests(unittest.TestCase):
         answer(app, client, {"output": "📌 Session: `abc_1`\nTitle: **beta notes**"})
         self.assertEqual(drawn(app)[1:3], ["    ⎿  📌 Session: abc_1", "       Title: beta notes"])
 
+    def test_a_title_reply_of_no_marked_shape_stays_as_written(self) -> None:
+        # Review 2 of #2389: the slash worker's `cli.title.set` (en.yaml:2533) has no marks, and a title refused as in
+        # use (hermes_state_titles.py:163) quotes it, so neither may lose a `**` or a backtick.
+        for output in ("Session title set: **x** and `y`", "Title 'use `uv` sync' is already in use by session abc"):
+            app, client = make_app()
+            send(app, "/title x")
+            answer(app, client, {"output": output})
+            self.assertIn(f"    ⎿  {output}", drawn(app))
+            self.assertFalse(any(span.style.bold for row in block_rows(last(app), 100, THEME) for span in row))
+        app, client = make_app()
+        send(app, "/title")
+        answer(app, client, {"output": "📌 Session: `abc`\nNo title set. Usage: `/title My Session Name`"})
+        rows = block_rows(last(app), 100, THEME)
+        self.assertEqual(lines_text(rows)[1:], ["    ⎿  📌 Session: abc", "       No title set. Usage: /title My Session Name"])
+        self.assertEqual([span.text for row in rows for span in row if span.style == THEME.code],
+                         ["abc", "/title My Session Name"])
+
     def test_any_other_hermes_reply_is_data_and_stays_as_written(self) -> None:
         # Review of #2389: drawing every reply as Markdown ate `__init__`, `*.py`, `2*3*4` and a Windows path's `\\`.
         replies = (
@@ -118,9 +135,10 @@ class CommandEchoTests(unittest.TestCase):
             self.assertFalse(any(span.style.bold for row in block_rows(last(app), 120, THEME) for span in row))
 
     def test_only_the_title_reply_is_read_for_marks_not_omhs_own_words_under_its_echo(self) -> None:
-        block = CommandBlock("/title Alpha", [("kept **as** written", NOTICE_INFO), ("set: **Alpha**", OUTPUT_MARKED)])
+        mine, reply = "✏️ Session title set: **as** written", "✏️ Session title set: **Alpha**"
+        block = CommandBlock("/title Alpha", [(mine, NOTICE_INFO), (reply, OUTPUT_MARKED)])
         rows = block_rows(block, 80, THEME)
-        self.assertEqual(lines_text(rows)[1:], ["    ⎿  kept **as** written", "       set: Alpha"])
+        self.assertEqual(lines_text(rows)[1:], [f"    ⎿  {mine}", "       ✏️ Session title set: Alpha"])
         self.assertEqual([span.text for row in rows for span in row if span.style.bold], ["Alpha"])
 
     def test_long_output_stays_in_the_transcript_and_no_pager_opens(self) -> None:
