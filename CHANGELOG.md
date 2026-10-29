@@ -22,8 +22,10 @@ All notable changes will be documented here.
   nothing folds and the slot lists and cuts from the end as before, risky
   rows too. A quoted here-document body (`<<'EOF'`) inside `$(…)`, such
   as a commit or PR body, is read as text; an unquoted one's `$(…)` and
-  backticks are read for what they run, and a `<<` inside `$((…))` is a
-  shift. A download run as a script (`curl … | sh`, `bash <(curl …)`,
+  backticks are read for what they run, a `<<` inside `$((…))` is a
+  shift, and a here-string (`<<<`) or a nested subshell (`((cd a; rm -rf
+  b); ls)`) hides nothing after it. A download run as a script
+  (`curl … | sh`, `bash <(curl …)`,
   `eval "$(curl …)"`, `sh -c "$(wget -qO- …)"`, and inside a `-c` script,
   a substitution or after `then`), decoded text piped into a shell
   (`base64 -d | sh`, `xxd -r`, `echo | tr`, `openssl … -d`), `find

@@ -39,6 +39,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass, replace
+from functools import lru_cache
 
 # Words that run the program after them; their options that take a value consume the next word (`timeout` also
 # takes its duration).
@@ -125,17 +126,43 @@ def _heredoc(command: str, index: int) -> tuple[str, int, bool, bool]:
     return ("".join(word) if opens else ""), end, tabs, quoted
 
 
-def _arithmetic_end(text: str, index: int) -> int:
-    """The index past the `))` that closes the arithmetic `$((` or `((` at `index`, or the end of `text`; a `<<`
-    inside is a shift, not a here-document."""
-    depth = 0
-    index = text.index("((", index)
-    while index < len(text):
-        depth += {"(": 1, ")": -1}.get(text[index], 0)
-        index += 1
-        if depth == 0:
-            return index
-    return len(text)
+@lru_cache(maxsize=8)
+def _parentheses(text: str) -> dict[int, int]:
+    """Each `(` of `text` mapped to the `)` that closes it, every parenthesis counted as written; one that never
+    closes has none. Read once per text, so a line of thousands of `((` stays linear."""
+    closes: dict[int, int] = {}
+    opened: list[int] = []
+    for index, char in enumerate(text):
+        if char == "(":
+            opened.append(index)
+        elif char == ")" and opened:
+            closes[opened.pop()] = index
+    return closes
+
+
+def _arithmetic_end(text: str, index: int) -> int | None:
+    """The index past the `))` that closes the arithmetic `$((` or `((` at `index` (a `<<` inside is a shift, not a
+    here-document), or None when what opens there is read as commands instead: a `$((` that never closes, or a `((`
+    whose two parentheses do not close together or that holds a `;`, `&&`, `||` or a line break at its own level,
+    as `((cd a; rm -rf b); ls)` is two subshells."""
+    closes = _parentheses(text)
+    first = text.index("((", index)
+    outer, inner = closes.get(first), closes.get(first + 1)
+    if outer is None:
+        return None
+    if text.startswith("$", index):
+        return outer + 1
+    if inner is None or outer != inner + 1:
+        return None
+    position = first + 2
+    while position < inner:
+        if text[position] == "(" and position in closes:
+            position = closes[position] + 1  # a nested pair is not this level
+        elif text[position] in ";\n" or text.startswith(("&&", "||"), position):
+            return None
+        else:
+            position += 1
+    return outer + 1
 
 
 def _arithmetic(text: str, index: int) -> bool:
@@ -151,8 +178,8 @@ def _body_substitutions(body: str) -> list[str]:
     while index < len(body):
         if body[index] == "\\":
             index += 2
-        elif body.startswith("$((", index):
-            index = _arithmetic_end(body, index)
+        elif body.startswith("$((", index) and (end := _arithmetic_end(body, index)) is not None:
+            index = end
         elif body.startswith("$(", index):
             end = _closing(body, index + 2)
             found.append(body[index : end + 1])
@@ -212,13 +239,17 @@ def _scan(command: str) -> list[tuple[str, str, bool]]:
             written.append(command[index:end])
             index = end
             continue
-        elif _arithmetic(command, index):
-            end = _arithmetic_end(command, index)
+        elif _arithmetic(command, index) and (end := _arithmetic_end(command, index)) is not None:
             written.append(command[index:end])
             read.append(command[index:end])
             index = end
             continue
-        elif command.startswith("<<", index) and not command.startswith("<<<", index):
+        elif command.startswith("<<<", index):  # a here-string, not a here-document
+            written.append("<<<")
+            read.append("<<<")
+            index += 3
+            continue
+        elif command.startswith("<<", index):
             delimiter, end, tabs, quoted = _heredoc(command, index)
             if delimiter:
                 pending.append((delimiter, tabs, quoted))
@@ -375,12 +406,19 @@ def _chmod(args: list[str]) -> list[str]:
 
 def _find(args: list[str]) -> list[str]:
     """`find` deletes what it matches with `-delete`, or with `rm` run by `-exec`, `-execdir`, `-ok` or `-okdir`
-    (tools/approval_detection.py:358, :367)."""
-    for index, arg in enumerate(args):
-        runs_rm = arg in ("-exec", "-execdir", "-ok", "-okdir") and args[index + 1 : index + 2] != [] and (
-            args[index + 1].rsplit("/", 1)[-1] == "rm")
-        if arg == "-delete" or runs_rm:
+    (tools/approval_detection.py:358, :367). The words of a program `-exec` runs, up to its `;` or `+`, are that
+    program's: `find . -exec echo -delete ;` deletes nothing."""
+    index = 0
+    while index < len(args):
+        if args[index] in ("-exec", "-execdir", "-ok", "-okdir"):
+            if args[index + 1 : index + 2] and args[index + 1].rsplit("/", 1)[-1] == "rm":
+                return ["recursive delete"]
+            index += 1
+            while index < len(args) and args[index] not in (";", "+"):
+                index += 1
+        elif args[index] == "-delete":
             return ["recursive delete"]
+        index += 1
     return []
 
 
@@ -494,8 +532,9 @@ def _closing(text: str, index: int) -> int:
         if char == "\\":
             index += 2
             continue
-        if inside != "`" and _arithmetic(text, index) and (inside == ")" or text.startswith("$((", index)):
-            index = _arithmetic_end(text, index)
+        arithmetic = inside != "`" and _arithmetic(text, index) and (inside == ")" or text.startswith("$((", index))
+        if arithmetic and (end := _arithmetic_end(text, index)) is not None:
+            index = end
             continue
         if inside != ")":  # in a double quote only `$(` and a backtick open; in a backtick span nothing does
             if char == inside:
@@ -511,7 +550,10 @@ def _closing(text: str, index: int) -> int:
             end = text.find("'", index + 1)
             index = len(text) if end < 0 else end + 1
             continue
-        if text.startswith("<<", index) and not text.startswith("<<<", index):
+        if text.startswith("<<<", index):  # a here-string, not a here-document
+            index += 3
+            continue
+        if text.startswith("<<", index):
             delimiter, end, tabs, _ = _heredoc(text, index)
             if delimiter:
                 pending.append((delimiter, tabs))
