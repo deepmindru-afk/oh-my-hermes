@@ -580,8 +580,10 @@ The setup, fixed before the first live run:
   links the bundle at origin/main `5cc1ed311` (the branch's base), `on` links this
   branch. The bundles differ only in `verify_hooks.py`. `agent.max_turns: 120` in both.
 - Hermes runs from its own venv entry point (`~/.hermes/hermes-agent/.venv/bin/hermes
-  -p <profile>`), not the `hermes` launcher, so the bench timeout kills the process that
-  runs the agent turn.
+  -p <profile>`), not the `hermes` launcher. This does not make the bench timeout stop
+  the turn: `--oneshot` is a client, and the turn runs in the one Hermes gateway that
+  serves every profile. A runaway turn is bounded in the profile instead, by
+  `agent.max_turns: 120` and `agent.run_budget_seconds: 600`.
 - Subscription routes only: Claude through the local proxy (`claude-proxy`), GPT through
   Hermes `openai-codex`.
 
@@ -615,6 +617,74 @@ changes only that line: it asks for the command already run after the last edit,
 says to run one only if none was. It re-runs both arms on two fresh profiles
 (`cebench-off2`, `cebench-on2`), with `agent.run_budget_seconds: 600` set from the
 start. The gate does not change.
+
+Measurement 2 is the result: it passes every clause, so the checklist ships, on by
+default. omh `feature/round-end-checklist` `185abfc78` on origin/main `5cc1ed311`;
+Hermes Agent v0.22.5 · stable · local bf0203a794a0. 144 of 144 run records, all
+completed.
+
+| Model | off | on | off tokens (median) | on tokens (median) |
+| --- | ---: | ---: | ---: | ---: |
+| `claude-haiku-4-5-20251001` | 9 / 12 | 9 / 12 | 252,983 | 266,655 |
+| `claude-haiku-5-5` | 12 / 12 | 12 / 12 | 216,944 | 286,772 |
+| `gpt-6-luna` | 8 / 12 | 8 / 12 | 178,550 | 276,370 |
+| `claude-sonnet-5-5` | 10 / 12 | 12 / 12 | 171,288 | 231,342 |
+| `claude-opus-5-5` | 12 / 12 | 12 / 12 | 208,235 | 248,666 |
+| `gpt-6.1-sol` | 10 / 12 | 12 / 12 | 174,745 | 200,312 |
+| **Total** | **61 / 72** | **65 / 72** | 14.9M total | 19.3M total |
+
+Per template, off vs on: `E-BUGFIX` 17 vs 17, `E-RENAME` 18 vs 18, `C-DUPLICATE` 8 vs 12,
+`C-SCOPE-TRAP` 18 vs 18. Failure codes: `copy_not_updated` 10 vs 6,
+`mutation_outside_scope` 1 vs 1, `unrequested_edit` 0 vs 0.
+
+The gate:
+
+- Total, on at least off + 3: 65 vs 61.
+- Strong models, on at least off - 1: 36 vs 32.
+- `mutation_outside_scope`, on at most off: 1 vs 1.
+- Median tokens, on at most 1.3x off: 247,577 vs 204,806, 1.21x. No on run above 3x its
+  off pair's median.
+- Fired in 71 of 72 on-arm coding sessions (98.6%), never twice in a session; 0 rows in
+  the off arm. The one coding session without it (opus, `E-BUGFIX`) edited through
+  `patch` and `write_file` and stopped once; why the hook stayed silent there is not
+  established.
+
+Measurement 1, for the record (same setup, profiles `cebench-off`/`cebench-on`):
+
+| Model | off | on | off tokens (median) | on tokens (median) |
+| --- | ---: | ---: | ---: | ---: |
+| `claude-haiku-4-5-20251001` | 9 / 12 | 10 / 12 | 267,697 | 318,877 |
+| `claude-haiku-5-5` | 10 / 12 | 12 / 12 | 236,284 | 365,807 |
+| `gpt-6-luna` | 8 / 12 | 9 / 12 | 245,026 | 336,545 |
+| `claude-sonnet-5-5` | 9 / 12 | 11 / 12 | 171,681 | 288,278 |
+| `claude-opus-5-5` | 12 / 12 | 12 / 12 | 210,593 | 319,305 |
+| `gpt-6.1-sol` | 9 / 12 | 12 / 12 | 173,697 | 199,080 |
+| **Total** | **57 / 72** | **66 / 72** | 15.9M total | 22.0M total |
+
+`C-DUPLICATE` went from 4 to 13; the other templates were even. During measurement 1
+another session stopped the shared Hermes gateway (01:59:52 to 02:01:13 KST), which
+interrupted every running turn and failed the next runs at launch. Every cell (model,
+arm, template) with a run overlapping that window was moved aside and run again in full,
+and `agent.run_budget_seconds: 600` was added to both profiles then.
+
+What it shows, and what it does not:
+
+- The gain is in consistency: a second copy of fixed logic that the task did not name.
+  After the checklist, models searched for other uses (`search_files` and `read_file`
+  are most of the 1.8 extra calls per session in measurement 2) and fixed the copy.
+- Scope did not move: no model took the `C-SCOPE-TRAP` bait in either arm, and the one
+  `mutation_outside_scope` in each arm is `gpt-6-luna` on the same `E-BUGFIX` seed. The scope line is
+  kept because it costs one sentence, not because this corpus shows it helps.
+- Weak models gained in measurement 1 (27 to 31) and not in measurement 2 (29 to 29);
+  strong models gained in both (30 to 35, 32 to 36).
+- The verification wording is what made the token clause pass: "run a check" led 62 of
+  72 sessions to re-run passing tests; the revised line led 10 of 72 to.
+- Two measurements of one feature against one gate. The second is reported as the
+  result because the change between them was made to fix the measured cost, the way
+  the rename section above reports its fourth run. n = 12 per model per arm.
+
+Pass counts come from the run records. Firing and tool calls come from each profile's
+session DB.
 
 ### 2026-10-29 debugging: builtin `patch` vs a debugpy tool (`omh-dap`), gate failed
 
