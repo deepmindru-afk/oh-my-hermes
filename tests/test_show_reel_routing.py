@@ -320,6 +320,102 @@ class ShowReelAdmissionTests(unittest.TestCase):
     def test_a_courtesy_opener_keeps_an_asked_request(self):
         self.assertTrue(show_reel_request_admitted("Can you make a show reel?"))
 
+    def test_a_video_from_an_idea_is_admitted(self):
+        for message in (
+            "make an explainer video about how DNS works",
+            "create an animated video explaining how a CPU cache works",
+            "make a motion graphics video about the history of the internet",
+            "create a short animation about photosynthesis",
+            "make a 15 second intro animation for my youtube channel",
+            "make a logo intro animation",
+            "create a 3D animation of the solar system",
+            "make a music visualizer video for this track",
+            "make a kinetic typography video of this quote",
+            "can you make a short video explaining recursion",
+            "animate a short video about how rainbows form",
+            "create a motion graphic showing how coffee is brewed",
+            "make a 3D scene video of a city at night with three.js",
+            "render a recipe motion graphic animation showing a cocktail from empty glass to finished, 30s explainer style",
+            "create a highly professional SaaS product launch video with motion graphics",
+            "DNS 설명하는 30초 영상 만들어줘",
+            "커피 내리는 과정을 모션그래픽으로 만들어줘",
+            "새 기능 소개하는 세로 영상 하나 뽑아줘",
+            "유튜브 인트로 만들어줘",
+            "우주 배경 3D 애니메이션 만들어주세요",
+            "ブラックホールを説明する動画を作って",
+            "ロゴのイントロアニメーションを作って",
+            "30秒の縦型動画を作ってください",
+        ):
+            with self.subTest(message=message):
+                self.assertTrue(show_reel_request_admitted(message))
+
+    def test_an_idea_video_word_in_another_sense_is_not_admitted(self):
+        for message in (
+            # A bare generic noun says nothing about what the video shows.
+            "make a video",
+            "make an animation",
+            "영상 만들어줘",
+            "애니메이션 만들어줘",
+            "動画を作って",
+            # A fault, its state or a ticket as the topic is a recording.
+            "make a video of the login timeout",
+            "make a video about the login bug",
+            "make a video explaining why checkout is slow",
+            "make an animation showing the checkout freeze for QA",
+            "make a video about how to reproduce the timeout",
+            "make an explainer video about the database incident",
+            "make a video for the support ticket",
+            "make a video of the meeting",
+            # A UI element or effect inside an app is frontend work.
+            "make an animation for the signup form",
+            "make a hover animation for the cards",
+            "make a loading animation for the dashboard page",
+            "make a 3D animation for the hero section",
+            "create a logo animation in css",
+            # Causatives, chains, questions, masked and pointed-at text.
+            "make the intro animation faster",
+            "make our intro animation smoother",
+            "make a video about DNS and post it to slack",
+            "make a video about DNS, then deploy the docs",
+            "make a video about DNS?",
+            "make a video about this `error code 137`",
+            "make a video about DNS see docs/dns.md",
+            "make a video about DNS https://github.com/acme/app/issues/9",
+            "render a video of the failed build",
+            # Korean and Japanese: a fault, an edit of a file that exists, UI
+            # work, an essay intro, a question or a later clause.
+            "버그 재현하는 영상 만들어줘",
+            "로그인 에러 설명하는 영상 만들어줘",
+            "화면 녹화 영상 만들어줘",
+            "버튼 애니메이션 만들어줘",
+            "이 영상을 쇼츠로 만들어줘",
+            "이 동영상으로 쇼츠 만들어줘",
+            "에세이 인트로 만들어줘",
+            "DNS 설명하는 영상 만들어줘?",
+            "DNS 설명하는 영상 만들어줘야 해",
+            "バグを再現する動画を作って",
+            "この動画をショート動画に作って",
+            "説明動画を作って？",
+        ):
+            with self.subTest(message=message):
+                self.assertFalse(show_reel_request_admitted(message))
+
+    def test_a_video_word_does_not_name_an_image_card_or_a_connector(self):
+        # "vertical" and "graphic" are image-card modality words, and a SaaS a
+        # connector context word; beside a video noun neither names its
+        # skill's own target (`policy._names_video_output`).
+        for message, owner in (
+            ("make a short vertical video for tiktok about our new feature", "show-reel"),
+            ("create a motion graphic showing how coffee is brewed", "show-reel"),
+            ("쇼츠용 세로 영상 만들어줘", "show-reel"),
+            ("create a highly professional SaaS product launch video with motion graphics", "show-reel"),
+            ("make a vertical poster for the launch", "img-summary"),
+            ("Create a Jira ticket tracking the launch film.", "connector-operator"),
+        ):
+            with self.subTest(message=message):
+                route = route_chat_message(message, source="discord")
+                self.assertEqual((route["action"], route.get("selected_skill")), ("dispatch", owner))
+
 
 class ShowReelRoutingTests(unittest.TestCase):
     def test_wrong_dispatch_controls_never_name_show_reel(self):

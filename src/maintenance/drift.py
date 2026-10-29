@@ -932,7 +932,12 @@ def count_metrics() -> tuple[CountMetric, ...]:
             # context block (14) -- and two more characters the fold drops
             # whole (2) (+16). A sender name with a word of digits or of
             # capitals, and a first line with no sender (+3).
-            expected=1263,
+            # show-reel's idea-video lane: a fault recording, an outage topic,
+            # a support ticket, a chained Slack post, a janky UI animation, a
+            # definite causative, a recommendation, a failed-deploy animation
+            # and a quoted ask (9), a Korean video call and playback fault (2),
+            # a Japanese bug reproduction video and a Japanese summary (2) (+13).
+            expected=1276,
             # The one reviewed test pin. Every other test compares its payload
             # against build_routing_precision_demo() rather than a literal.
             sites=("tests/test_routing_precision.py",),
@@ -1472,7 +1477,13 @@ def count_metrics() -> tuple[CountMetric, ...]:
             # request dispatch frontend (+5).
             # A show-reel closed form after an acknowledgement-only channel
             # backfill, plain and under the trigger note and unverified notice (+2).
-            expected=1176,
+            # show-reel's idea-video lane: nine English videos from an idea
+            # (explainer, motion graphics, logo intro, 3D scene, the recipe
+            # motion graphic, the TikTok vertical and the SaaS launch that
+            # dispatched img-summary or connector-operator on main, a music
+            # visualizer, a data-viz animation), three Korean, one Japanese,
+            # and the display name invoked (+14).
+            expected=1190,
             # The one reviewed test pin. Every other test compares its payload
             # against build_routing_precision_demo() rather than a literal.
             sites=("tests/test_routing_precision.py",),

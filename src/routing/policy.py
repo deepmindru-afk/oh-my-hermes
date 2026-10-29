@@ -10154,7 +10154,11 @@ def _connector_operator_guard_applies(normalized_query: str, query_tokens: set[s
         return False
     if _contains_phrase(normalized_query, _CONNECTOR_OPERATOR_PHRASES):
         return True
-    connector_context = bool(_CONNECTOR_OPERATOR_CONTEXT_TOKENS & query_tokens)
+    context = _CONNECTOR_OPERATOR_CONTEXT_TOKENS & query_tokens
+    # "a SaaS product launch video" names a video about a SaaS, not an app to act in.
+    if context == {"saas"} and _names_video_output(normalized_query, query_tokens):
+        context = set()
+    connector_context = bool(context)
     connector_action = bool(_CONNECTOR_OPERATOR_ACTION_TOKENS & query_tokens)
     platform_write = _platform_connector_write_applies(normalized_query, query_tokens)
     return (connector_context and connector_action) or platform_write
@@ -10266,6 +10270,22 @@ def _content_operator_guard_applies(normalized_query: str, query_tokens: set[str
     return content_context and content_action and quality_context
 
 
+# A video named as the output. Two image-card modality words are as often a
+# video's ("a vertical video", "a motion graphic"), and a SaaS is as often the
+# subject of a launch video as a connected app; beside one of these nouns
+# neither word names its skill's own target (`_visual_summary_guard_applies`,
+# `_connector_operator_guard_applies`).
+_VIDEO_OUTPUT_TOKENS = frozenset({"animation", "animations", "mp4", "video", "videos"})
+_VIDEO_OUTPUT_PHRASES = (
+    "motion graphic", "영상", "동영상", "애니메이션", "모션그래픽", "모션 그래픽", "쇼츠", "動画", "アニメーション",
+)
+_VIDEO_SHARED_MODALITY_TOKENS = frozenset({"graphic", "vertical", normalized_phrase("세로")})
+
+
+def _names_video_output(normalized_query: str, query_tokens: set[str]) -> bool:
+    return bool(_VIDEO_OUTPUT_TOKENS & query_tokens) or _contains_phrase(normalized_query, _VIDEO_OUTPUT_PHRASES)
+
+
 def _visual_summary_guard_applies(normalized_query: str, query_tokens: set[str]) -> bool:
     # `prepare_routing_text` emits this cue only for bounded Apple-style
     # product-visual library intent, which must reach the Apple specialist
@@ -10303,9 +10323,14 @@ def _visual_summary_guard_applies(normalized_query: str, query_tokens: set[str])
         return True
     if _VISUAL_SUMMARY_NON_VISUAL_WORK_TOKENS & query_tokens:
         return False
-    if _VISUAL_SUMMARY_MODALITY_TOKENS & query_tokens and _VISUAL_SUMMARY_CAPABILITY_TOKENS & query_tokens:
+    modality = _VISUAL_SUMMARY_MODALITY_TOKENS & query_tokens
+    # "make a vertical video", "a motion graphic showing how coffee is brewed":
+    # the modality word qualifies a video, so no image is named.
+    if modality <= _VIDEO_SHARED_MODALITY_TOKENS and _names_video_output(normalized_query, query_tokens):
+        modality = set()
+    if modality and _VISUAL_SUMMARY_CAPABILITY_TOKENS & query_tokens:
         return True
-    if _VISUAL_SUMMARY_MODALITY_TOKENS & query_tokens and _VISUAL_SUMMARY_OUTPUT_CONTEXT_TOKENS & query_tokens:
+    if modality and _VISUAL_SUMMARY_OUTPUT_CONTEXT_TOKENS & query_tokens:
         return True
     if _VISUAL_SUMMARY_OUTPUT_CONTEXT_TOKENS & query_tokens and _contains_phrase(
         normalized_query,
