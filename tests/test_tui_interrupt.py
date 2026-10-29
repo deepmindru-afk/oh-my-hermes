@@ -198,3 +198,40 @@ class CtrlCExitTests(unittest.TestCase):
         self.assertEqual(len(client.answers), 1)  # the decline
         self.assertIsNone(app.exit_armed_at)
         self.assertIsNone(app.exit_code)
+
+    def test_the_armed_second_press_exits_when_the_queue_came_back_into_the_composer(self) -> None:
+        # QA B3: the queue came back between the presses, and the second press cleared it instead of leaving.
+        now = [100.0]
+        app, client = make_app(busy=True, clock=lambda: now[0])
+        app.queued.append(QueuedLine("a queued prompt"))
+        app._on_input(CTRL_C)
+        app._on_event(INTERRUPTED)
+        self.assertEqual(app.composer.text, "a queued prompt")
+        self.assertIn(EXIT_HINT, info_row_of(drawn(app)))
+        now[0] += 0.6
+        app._on_input(CTRL_C)
+        self.assertEqual(app.exit_code, 0)
+        self.assertEqual(app.composer.text, "a queued prompt")  # left as it was; the session can be resumed
+        self.assertEqual(submitted(client), [])
+
+    def test_the_armed_second_press_exits_over_a_draft_when_idle_too(self) -> None:
+        now = [100.0]
+        app, _client = make_app(clock=lambda: now[0])
+        app._on_input(CTRL_C)
+        type_text(app, "kept")
+        self.assertIn(EXIT_HINT, info_row_of(drawn(app)))  # what the line promises is what the press does
+        now[0] += 0.5
+        app._on_input(CTRL_C)
+        self.assertEqual(app.exit_code, 0)
+        self.assertEqual(app.composer.text, "kept")
+
+    def test_past_the_window_ctrl_c_clears_what_came_back_and_does_not_exit(self) -> None:
+        now = [100.0]
+        app, _client = make_app(busy=True, clock=lambda: now[0])
+        app.queued.append(QueuedLine("a queued prompt"))
+        app._on_input(CTRL_C)
+        app._on_event(INTERRUPTED)
+        now[0] += EXIT_CONFIRM_SECONDS + 0.1
+        app._on_input(CTRL_C)
+        self.assertIsNone(app.exit_code)
+        self.assertEqual(app.composer.text, "")

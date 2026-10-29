@@ -1277,6 +1277,9 @@ class Transcript:
         self._cursor_state = MarkdownState()  # markdown state after those lines
         self._taken_any = under_output  # whether any line has been taken (a spacer goes above the next block)
         self._left_out = 0  # blocks `retake_tail` left out: the next take opens with LEFT_OUT_NOTICE
+        # The rows `retake_tail` measured for the blocks it keeps, from `_cursor` on, so the take after it does not
+        # render them again: (version, width, theme, rows per block), good only while nothing has changed since.
+        self._measured: tuple[int, int, Theme, list[list[Line]]] | None = None
         self.dropped = 0  # blocks BLOCK_CAP dropped from the front
         # Where the last take's lines hold the first row of the newest prompt in them (not the blank row above it);
         # None when that take held no prompt.
@@ -1777,6 +1780,9 @@ class Transcript:
         taken: list[Line] = []
         start = (self._cursor, self._cursor_lines)
         self.prompt_row = None
+        measured, self._measured = self._measured, None
+        held = measured[3] if measured and measured[:2] == (self._version, width) and measured[2] is theme else []
+        first = self._cursor  # the block `held` starts at
         if self._left_out:
             earlier, self._left_out = _earlier(self._left_out), 0
             notice = (
@@ -1789,10 +1795,12 @@ class Transcript:
             self._version += 1
         while self._cursor < len(self.blocks):
             block = self.blocks[self._cursor]
-            if isinstance(block, AssistantBlock):
+            index = self._cursor - first
+            if isinstance(block, AssistantBlock) and not (block.done and index < len(held)):
                 taken.extend(self._take_assistant(block, width, theme))
             elif block.done:
-                rows = block_rows(block, width, theme)
+                # A done reply taken from its first line is the rows `block_rows` gives it, as measured.
+                rows = held[index] if index < len(held) else block_rows(block, width, theme)
                 if isinstance(block, UserBlock) and rows:
                     self.prompt_row = len(taken) + (1 if self._taken_any else 0)  # after the spacer `_spaced` adds
                 taken.extend(self._spaced(rows, opens_block=True))
@@ -1859,22 +1867,30 @@ class Transcript:
         opens with one row counting them, blocks `BLOCK_CAP` dropped included.
         """
         self.retake()
-        cut = self._tail_start(width, theme, max_rows)
+        cut, kept = self._measure_tail(width, theme, max_rows)
         self._cursor = cut
         self._left_out = cut + self.dropped
         self._drop_past_cap()  # before the take, so the row names how many /history still holds
+        self._measured = (self._version, width, theme, kept)  # what was dropped lay above the cut
 
     def _tail_start(self, width: int, theme: Theme, max_rows: int) -> int:
         """The first block `retake_tail(width, theme, max_rows)` keeps."""
+        return self._measure_tail(width, theme, max_rows)[0]
+
+    def _measure_tail(self, width: int, theme: Theme, max_rows: int) -> tuple[int, list[list[Line]]]:
+        """`_tail_start`, and the rows of each block from there to the live one, in order, as measuring rendered them."""
         end = len(self.blocks) - (1 if self.blocks and not self.blocks[-1].done else 0)
-        cut, rows = end, 0
+        cut, rows, kept = end, 0, []
         while cut > 0:
-            height = len(block_rows(self.blocks[cut - 1], width, theme)) + 1
+            block_lines = block_rows(self.blocks[cut - 1], width, theme)
+            height = len(block_lines) + 1
             if rows + height > max_rows and cut < end:
                 break
             rows += height
             cut -= 1
-        return cut
+            kept.append(block_lines)
+        kept.reverse()
+        return cut, kept
 
     def live_lines(
         self, width: int, theme: Theme, max_rows: int | None = None, now: float | None = None, glint: bool = False,

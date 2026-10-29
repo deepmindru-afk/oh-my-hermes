@@ -103,7 +103,7 @@ import sys
 import time
 from types import FrameType
 import unicodedata
-from typing import Any, NamedTuple, Protocol, TextIO
+from typing import TYPE_CHECKING, Any, NamedTuple, Protocol, TextIO
 
 from ..plugin_bundle.omh.hud_text import elapsed_text
 from ..commands.theme_picker import (
@@ -200,7 +200,6 @@ from .panels import (
 )
 from .dag_pager import DagPager
 from .background import BackgroundProcess, askable, finished_line, report_prompt, running_line, tool_call
-from .bot_board import BoardReader, BotBoard
 from .clipboard import COPY_OSC52, COPY_PBCOPY, copy_route, pbcopy, tmux_client_over_ssh
 from .prompts import CLOSED_CHOICES, Answer, ImmediateAnswer, PromptSlot, TypeIt, open_request
 from .edge_glow import EDGE_MARGIN, Edge, edge, edge_fits
@@ -303,6 +302,9 @@ from .transcript import (
 from .width import cell_width, clusters, line_width, truncate, truncate_left, truncate_line
 from ..version import __version__
 
+if TYPE_CHECKING:  # the bot board loads when it is opened (`_bots`), not with the TUI
+    from .bot_board import BoardReader
+
 # While the key decoder holds bytes (a lone ESC, half a sequence, an open paste), the loop reads with this
 # timeout, and an empty read settles what is held only once input has been quiet for `FLUSH_SILENCE_SECONDS`:
 # a wake-up for the gateway right after an ESC must not decide it before the rest of its sequence arrives.
@@ -375,6 +377,7 @@ NEWLINE_KEYS = ("⏎ sends · \\⏎, alt+⏎ or ctrl+j adds a line", "\\⏎ or a
 # else it adds a line.
 STEER_FALLBACK_KEY = Key(CHAR, "j", ctrl=True)
 SEND_NOW_KEY = Key(ENTER, ctrl=True)
+EXIT_KEY = Key(CHAR, "c", ctrl=True)  # interrupts or clears; while an exit is armed, leaves
 # A composer line that starts with this is the person's own shell command (`shell.exec`), never a prompt.
 SHELL_PREFIX = "!"
 SHELL_USAGE = "Usage: !<command> runs it in Hermes' shell (30 s at most); its output is not sent to the model."
@@ -1680,7 +1683,7 @@ class App(ModesMixin, AgentViewMixin):
         # What reads the bot board (Ctrl+S, `/bots`) off this thread: made when it first opens, kept for the session
         # and paused while the board is closed, so a read stuck on a stalled file system never adds a thread.
         self.board_reader: BoardReader | None = None
-        self.make_board_reader: Callable[..., BoardReader] = BoardReader
+        self.make_board_reader: Callable[..., BoardReader] | None = None  # `bot_board.BoardReader` when None
         self.redraw_after_pager = False  # a full redraw the main screen is owed once the pager is left
         self.hud: HudSnapshot | None = None
         self.goal: Mapping[str, Any] | None = None  # Hermes' standing /goal, as its last `session.control.update` said
@@ -3186,6 +3189,13 @@ class App(ModesMixin, AgentViewMixin):
             self._queue_head_steers()
         ):
             self._send_queued_now()
+            return
+        # The second Ctrl+C the info line names leaves even over text: the queue an interrupt gives back lands in the
+        # composer between the presses, and clearing it there would lose it. It stays, for a resumed session.
+        if self.slot is None and event == EXIT_KEY and self.composer.text and self.exit_armed_at is not None and (
+            self.clock() - self.exit_armed_at <= EXIT_CONFIRM_SECONDS
+        ):
+            self.exit_code = 0
             return
         before = self.composer.text
         action = self.composer.handle(event)
@@ -5496,8 +5506,10 @@ class App(ModesMixin, AgentViewMixin):
         What it shows is read by a `BoardReader` thread for as long as the
         board is open; nothing it does is sent anywhere.
         """
+        from .bot_board import BoardReader, BotBoard  # on demand: a session that never opens the board never loads it
+
         if self.board_reader is None:
-            self.board_reader = self.make_board_reader(self.environ, clock=self.wall_clock)
+            self.board_reader = (self.make_board_reader or BoardReader)(self.environ, clock=self.wall_clock)
         reader = self.board_reader
         self._show_pager(BotBoard("bots", show=reader.show, refresh=reader.refresh, clock=self.wall_clock))
         reader.start(self._wake_loop)
@@ -5505,7 +5517,11 @@ class App(ModesMixin, AgentViewMixin):
     def _take_board(self) -> None:
         reader = self.board_reader
         snapshot = reader.take() if reader is not None else None
-        if snapshot is not None and isinstance(self.pager, BotBoard):
+        if snapshot is None:
+            return
+        from .bot_board import BotBoard  # loaded once `_bots` made the reader
+
+        if isinstance(self.pager, BotBoard):
             self.pager.take(snapshot)
             self.dirty = True
 

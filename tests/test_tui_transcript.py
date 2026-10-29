@@ -19,6 +19,7 @@ from unittest.mock import patch
 from _tui_lines import lines_text
 from omh.tui.gateway import Event
 from omh.tui.style import Line, Span
+from omh.tui import transcript as transcript_module
 from omh.tui.theme import DEFAULT_THEME as THEME
 from omh.tui.transcript import (
     GUTTER,
@@ -283,6 +284,26 @@ class RetakeTailTests(LoopTestCase):
         again = lines_text(self.transcript.take_stable_lines(WIDTH, THEME))
         self.assertEqual(again, ["⋯ 6 earlier messages · /history shows all", "", "  ❯ again"])
         self.assertEqual(self.live(), ["", "  ⚚ Hermes", "    still streaming"])
+
+    def test_the_take_after_it_renders_no_kept_block_again(self) -> None:
+        # QA P3: measuring rendered every kept block, then the take rendered each again; a long session's settled
+        # resize blocked the loop for both.
+        self.session(20)
+        self.transcript.retake_tail(WIDTH, THEME, max_rows=10)
+        with patch("omh.tui.transcript.block_rows", wraps=block_rows) as rows, \
+                patch("omh.tui.transcript.render_lines", wraps=transcript_module.render_lines) as replies:
+            again = lines_text(self.transcript.take_stable_lines(WIDTH, THEME))
+        self.assertEqual((rows.call_count, replies.call_count), (0, 0))
+        self.assertEqual(again[1:], self.history(details=False)[-10:])
+
+    def test_what_changed_since_the_measure_or_another_width_is_rendered_as_it_is_now(self) -> None:
+        self.session(3)
+        self.transcript.retake_tail(WIDTH, THEME, max_rows=100)
+        self.transcript.add_notice("came after the measure")
+        self.assertEqual(lines_text(self.transcript.take_stable_lines(WIDTH, THEME)), self.history(details=False))
+        self.transcript.retake_tail(WIDTH, THEME, max_rows=100)
+        self.assertEqual(lines_text(self.transcript.take_stable_lines(30, THEME)),
+                         lines_text(self.transcript.history_lines(30, THEME, details=False)))
 
 
 class BlockCapTests(LoopTestCase):
