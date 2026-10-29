@@ -791,6 +791,47 @@ The checklist branch stays unmerged. Changing the wording again (for example, as
 for the answer without re-running checks) needs the owner's decision and a new
 pre-registered measurement.
 
+#### Measurement 4, pre-registered before its first run (the last one)
+
+This is the fourth measurement of this feature family against one gate, so a pass
+should be read with that in mind. The owner chose a fourth and final attempt. If it
+fails any clause, the PR closes and there is no fifth.
+
+The feature is narrower, not reworded. Only the consistency check holds across
+measurements: `C-DUPLICATE`, pooled over measurements 1 to 3, is 40 vs 21 of 54. The
+scope and verification lines showed no effect, and the "check again" and "answer again
+in full" wording drove the token cost through test re-runs. So the continuation now
+carries one check: look for other copies or call sites of the logic changed this turn
+that have to change with it, and fix any found. It also says:
+
+- do not re-run tests or re-check anything else;
+- restate the final answer exactly as given, in the form the task asked for, updated
+  only if something more changed;
+- give no report on this check.
+
+The subagent skip stays.
+
+The setup is that of measurement 3:
+
+- the same panel and the same five templates (including `C-DECOY`), 15 runs per model
+  per arm;
+- subscription routes only;
+- fresh profiles `cebench-off4` and `cebench-on4`, each with `agent.max_turns: 120` and
+  `agent.run_budget_seconds: 600`.
+
+The gate is the same eight clauses with unchanged thresholds:
+
+- Total: on at least off + 3.
+- Strong models: on at least off - 1.
+- `mutation_outside_scope`: on at most off.
+- Median tokens: on at most 1.3x off.
+- No on run above 3x the off median of its model and template.
+- The check fires in at least 90% of on-arm coding sessions, and at most once per turn.
+- Final answer kept: on at least off - 2.
+- `C-DECOY`: on at least off - 1.
+
+The result is reported here with pooled `C-DUPLICATE` over all four measurements.
+
 Pass counts come from the run records. Firing, final answers and tool calls come from
 each profile's session DB.
 

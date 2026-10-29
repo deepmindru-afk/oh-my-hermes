@@ -1,13 +1,13 @@
 """The round-end checklist `pre_verify` adds after a turn that edited code.
 
 When a turn's edits include a source file, the first stop of that turn
-(`attempt == 0`) continues once with a short checklist: consistency (every
-place that must change together did), scope (no edit nobody asked for) and
-verification (the command run after the last edit, and its result). It is
-one-shot: the host moves `attempt` past 0 as soon as any `pre_verify` message
-continues the turn, so a later stop in the same turn never repeats it. It ends
-by asking for the final answer again, because whatever the model says after
-it becomes the turn's final response. Delegated children never get it.
+(`attempt == 0`) continues once with a consistency check: other copies or call
+sites of the changed logic that had to change with it. It is one-shot: the
+host moves `attempt` past 0 as soon as any `pre_verify` message continues the
+turn, so a later stop in the same turn never repeats it. It tells the model
+not to re-run tests and to restate its final answer, because whatever the
+model says after it becomes the turn's final response. Delegated children
+never get it.
 """
 
 from __future__ import annotations
@@ -55,17 +55,15 @@ class ChecklistFiresOnCodeEditsTest(_Homes):
     def test_a_code_edit_continues_the_turn_with_the_checklist(self):
         self.assertEqual(self._fire(), {"action": "continue", "message": verify_hooks.ROUND_END_CHECKLIST})
 
-    def test_the_checklist_names_consistency_scope_and_verification(self):
+    def test_the_check_is_consistency_only_and_asks_for_the_answer_back(self):
         text = verify_hooks.ROUND_END_CHECKLIST
-        for item in ("- Consistency:", "- Scope:", "- Verification:"):
-            self.assertIn(item, text)
+        self.assertIn("other copies or call sites of the logic", text)
+        self.assertIn("Do not re-run tests or re-check anything else.", text)
+        self.assertIn("restate your final answer exactly as you gave it", text)
+        self.assertIn("with no report on this check", text)
         self.assertIn("not verification evidence", text)
-
-    def test_it_asks_for_the_final_answer_again_not_a_report(self):
-        text = verify_hooks.ROUND_END_CHECKLIST
-        self.assertIn("give your final answer to the task again, in full", text)
-        self.assertIn("Do not answer with a report on this check.", text)
-        self.assertNotIn("say so in one line", text)
+        for dropped in ("Scope:", "Verification:", "say so in one line"):
+            self.assertNotIn(dropped, text)
 
     def test_a_delegated_child_gets_no_checklist(self):
         self.assertIsNone(self._fire(platform="subagent"))

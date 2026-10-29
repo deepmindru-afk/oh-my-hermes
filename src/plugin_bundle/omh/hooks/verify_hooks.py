@@ -38,27 +38,23 @@ _CODE_SUFFIXES: Final = frozenset(
         ".svelte", ".swift", ".tf", ".ts", ".tsx", ".vue", ".zig", ".zsh",
     }
 )
-# Asked once per turn, at the first stop after a code edit. The three checks are
-# the ones a model skips when it stops as soon as the target test passes: a
-# second copy of the fixed logic left behind, a drive-by edit nobody asked for,
-# and "should work" in place of a command that was run. The verification line
-# asks for the command already run rather than a new run, which kept the
-# measured token cost inside its gate (bench README, 2026-10-30).
+# Asked once per turn, at the first stop after a code edit. It carries one
+# check only: a second copy or call site of the changed logic that had to change
+# with it, the miss a model makes when it stops as soon as the target test
+# passes. Scope and verification lines were measured too, showed no effect, and
+# their "check again" wording made models re-run tests (bench README,
+# 2026-10-30), so the note says not to.
 #
 # The host keeps the answer the model stopped with only as an interim message:
 # whatever the model says after this note becomes the turn's final response,
 # the one `--oneshot`, API and delegating callers receive. So the note ends by
-# asking for that answer again in full, never for a report on the check.
+# asking for that answer again, never for a report on the check.
 ROUND_END_CHECKLIST: Final = (
-    "OMH round-end check, once per turn. Before you finish, review this turn's code edits:\n"
-    "- Consistency: the change follows the code around it, and every other place that has to change "
-    "with it (copies of the same logic, callers, tests) has changed too.\n"
-    "- Scope: the diff holds only what was asked for. Undo any edit nobody requested.\n"
-    "- Verification: name the command, run after your last edit, that shows the change works, and its "
-    "result. Run one only if you have not.\n"
-    "Fix anything that fails a check. Then give your final answer to the task again, in full and in the "
-    "form the task asked for: it replaces the answer you just gave. Do not answer with a report on this "
-    "check. This note is guidance, not verification evidence."
+    "OMH round-end consistency check, once per turn. Look for other copies or call sites of the logic "
+    "you changed this turn that have to change with it, and fix any you find. Do not re-run tests or "
+    "re-check anything else. Then restate your final answer exactly as you gave it, in the form the task "
+    "asked for (updated only if you changed something more), with no report on this check: it replaces "
+    "the answer you just gave. This note is guidance, not verification evidence."
 )
 # Delegated children answer a parent, often against an output schema; their
 # final response is the parent's tool result and must stay the task's answer.
@@ -108,7 +104,7 @@ def pre_verify(
     # edit just earned, and the edits are the same on a later attempt of the
     # same turn, so repeating it would restate a request the turn already has.
     surface_message = _served_surface_message(paths) if attempt_value == 0 else ""
-    # The round-end checklist is one-shot for the same reason, and it is the
+    # The round-end check is one-shot for the same reason, and it is the
     # turn's only one: attempt 0 is the first stop after the edits, and the
     # host moves `attempt` past 0 once any nudge here continues the turn.
     checklist_message = (
