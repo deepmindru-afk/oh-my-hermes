@@ -554,7 +554,7 @@ Results describe this pinned corpus, OMH version, Hermes version, provider,
 model id and conditions only. They do not establish universal model
 superiority.
 
-### 2026-10-30 impact check: callers broken by an edit, off vs on (`impact_check` + `lsp_diagnostics`), gate passed
+### 2026-10-30 impact check: callers broken by an edit, off vs on (`impact_check` + `lsp_diagnostics`)
 
 One question, from oh-my-pi's workspace diagnostics: when an edit changes a definition, does
 telling the model which files that import it now have new type errors help it fix every caller?
@@ -608,7 +608,23 @@ The merge gate, fixed here before the first live run:
 
 A failed clause means the feature does not merge; the result is recorded here as the DAP run was.
 
-The result: every clause passes, so the check ships, off by default.
+Amendment, fixed before run 2 (below) and after run 1. When `pre_verify` continues a turn, Hermes
+keeps the answer the model already gave only as an interim message
+(`agent/turn_stop_gates.py`), and whatever the model says after the note becomes the turn's final
+answer: the `--oneshot` or API result, or a delegated child's return. Run 1's note ended on a
+request to re-check, and models answered it with a report about the fix. The note now ends by
+asking for the task's final answer again, in full, and the gate gains a seventh clause:
+
+- Final answer preserved after a note: over the on-arm sessions of the three edit templates where
+  the note fired, the number whose last assistant message (read from the session database)
+  contains the task's requested answer, a JSON object with `changed_paths`, is at least
+  round(p x n) - 2. Here n is the number of those sessions and p is the share of off-arm sessions of
+  the same three templates whose last assistant message contains it.
+
+The other six clauses are unchanged. Run 2 is the reported result.
+
+Run 1, plugin as of `c5e4fc02c` (note without the final-answer request; superseded by run 2). Six
+clauses passed; the seventh did not exist yet:
 
 | Model | off | on | off tokens (median) | on tokens (median) |
 | --- | ---: | ---: | ---: | ---: |
@@ -651,7 +667,7 @@ What it shows, and what it does not:
   origin/main `5cc1ed311`, Hermes Agent v0.22.5 (`bf0203a794`), one on/off profile pair per model,
   6 models in parallel, 2026-10-30 02:02-02:26 KST. 144 of 144 records completed; none failed,
   timed out or was retried.
-- After the run, an independent review changed the plugin (`985bec3c3`). The baseline now fits
+- After run 1, an independent review changed the plugin (`985bec3c3`). The baseline now fits
   the host hook timeout, state does not carry across turns, bare module names no longer match the
   standard library, and deleted modules are not baselined. Under the new rules the impact-ab
   importers resolve the same: 6 per `I-SIGNATURE` instance and 4 per `I-CONTROL` instance. A live

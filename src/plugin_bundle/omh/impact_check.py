@@ -395,8 +395,12 @@ def format_note(new: list[tuple[str, int, str]], recheck_tool: bool) -> str:
     lines += [f"{path}:{line}: {message}" for path, line, message in shown]
     if len(shown) < len(rows):
         lines.append(f"... and {len(rows) - len(shown)} more")
-    then = "re-check them with `lsp_diagnostics`" if recheck_tool else "re-run the checks that cover them"
-    lines.append(f"Update these callers to match your change, or confirm the break is intended; then {then}.")
+    check = "re-check them with `lsp_diagnostics`" if recheck_tool else "re-run the checks that cover them"
+    # Hermes keeps the answer the model already gave only as an interim message: what it says after
+    # this note becomes the turn's final answer (a --oneshot or API result, a delegated child's
+    # return). So the note asks for that answer again, not for a report about the note.
+    lines.append(f"Fix these callers (or confirm the break is intended) and {check}. Then end with the final "
+                 "answer the task asked for, in full, as you would have given it without this note.")
     return "\n".join(lines)
 
 
