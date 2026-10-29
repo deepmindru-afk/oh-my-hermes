@@ -72,8 +72,10 @@ class SymbolColumnTests(unittest.TestCase):
         self.assertEqual(find_symbol_column(line, "b", 3), 12)
         self.assertIsNone(find_symbol_column(line, "b", 4))
 
-    def test_substring_fallback(self):
-        self.assertEqual(find_symbol_column("value = LIMITS", "LIMIT"), 8)
+    def test_no_substring_match(self):
+        # A substring match points the server at another symbol (LIMIT inside LIMIT_ALIAS / MAX_LIMIT).
+        self.assertIsNone(find_symbol_column("value = LIMITS", "LIMIT"))
+        self.assertIsNone(find_symbol_column("return LIMIT_ALIAS + MAX_LIMIT", "LIMIT"))
         self.assertIsNone(find_symbol_column("nothing here", "LIMIT"))
 
 
@@ -469,6 +471,31 @@ class HandlerTests(_Root):
         out = self.call(lsp_rename_handler, path="pkg/core.py", line=1, symbol="LIMIT", new_name="CAP")
         self.assertTrue(out["applied"], out)
         self.assertIn("every reference", out["hint"])
+
+    def test_repeat_rename_new_name_contains_old_says_done_and_sends_nothing(self):
+        # Verifier's case: LIMIT -> MAX_LIMIT next to LIMIT_ALIAS; a repeat must not rename LIMIT_ALIAS.
+        self.write("use.py", "from pkg.core import MAX_LIMIT, LIMIT_ALIAS\nprint(LIMIT_ALIAS + MAX_LIMIT)\n")
+        before = self.read("use.py")
+        bridge = self.fake({"textDocument/prepareRename": {"start": {}, "end": {}},
+                            "textDocument/rename": self.rename_edit()})
+        out = self.call(lsp_rename_handler, path="use.py", line=2, symbol="LIMIT", new_name="MAX_LIMIT")
+        self.assertTrue(out.get("already_renamed"), out)
+        self.assertEqual(bridge.calls, [])
+        self.assertEqual(self.read("use.py"), before)
+
+    def test_symbol_only_inside_longer_identifier_is_not_found(self):
+        self.write("use.py", "from pkg.core import LIMIT_ALIAS\nprint(LIMIT_ALIAS)\n")
+        bridge = self.fake({"textDocument/prepareRename": {"start": {}, "end": {}},
+                            "textDocument/rename": self.rename_edit()})
+        out = self.call(lsp_rename_handler, path="use.py", line=2, symbol="LIMIT", new_name="CAP")
+        self.assertEqual(out["error"], "symbol_not_found", out)
+        self.assertEqual(bridge.calls, [])
+
+    def test_invalid_new_name_on_its_own_line_is_invalid_not_done(self):
+        self.write("pkg/kw.py", "def run():\n    return 1\n")
+        self.fake({})
+        out = self.call(lsp_rename_handler, path="pkg/kw.py", line=1, symbol="missing", new_name="def")
+        self.assertEqual(out["error"], "invalid_name", out)
 
     def test_rename_resource_op_writes_nothing(self):
         edit = self.rename_edit()

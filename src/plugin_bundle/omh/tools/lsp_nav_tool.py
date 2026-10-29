@@ -304,6 +304,8 @@ def _already_renamed(args: dict[str, Any], root: str) -> str | None:
     if not isinstance(new_name, str) or not new_name:
         return None
     try:
+        if not lsp_nav.valid_identifier(new_name, os.path.splitext(str(args.get("path", "") or ""))[1]):
+            return None  # an invalid name gets invalid_name, never "already done"
         path = lsp_nav.resolve_path(str(args.get("path", "") or ""), root)
         line = _positive_int(args, "line")
         with open(path, "rb") as handle:
@@ -321,6 +323,10 @@ def _already_renamed(args: dict[str, Any], root: str) -> str | None:
 def lsp_rename_handler(args: dict[str, Any], **kwargs: object) -> str:
     try:
         root = _root_for(kwargs)
+        new_name = args.get("new_name")
+        requested = str(args.get("path", "") or "")
+        if not isinstance(new_name, str) or not lsp_nav.valid_identifier(new_name, os.path.splitext(requested)[1]):
+            return _fail("invalid_name", f"{new_name!r} is not a valid identifier for {os.path.basename(requested)}")
         try:
             path, position, _ = _target(args, root)
         except _Fail as exc:
@@ -329,9 +335,6 @@ def lsp_rename_handler(args: dict[str, Any], **kwargs: object) -> str:
                 if done is not None:
                     return done
             raise
-        new_name = args.get("new_name")
-        if not isinstance(new_name, str) or not lsp_nav.valid_identifier(new_name, os.path.splitext(path)[1]):
-            return _fail("invalid_name", f"{new_name!r} is not a valid identifier for {os.path.basename(path)}")
         apply = args.get("apply", True)
         if not isinstance(apply, bool):
             return _fail("invalid_argument", "apply must be a boolean")

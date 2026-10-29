@@ -77,10 +77,11 @@ def split_lines(text: str) -> list[tuple[str, str]]:
 
 
 def find_symbol_column(line_text: str, symbol: str, occurrence: int = 1) -> int | None:
-    """Python index of the first char of the Nth ``symbol`` on the line, else None.
+    """Python index of the first char of the Nth whole-identifier ``symbol`` on the line, else None.
 
-    Whole-identifier matches (not bordered by ``[A-Za-z0-9_]``) win; only when the
-    line has fewer than ``occurrence`` of those is a plain substring match used.
+    Only whole identifiers count (not bordered by ``[A-Za-z0-9_]``). A substring match
+    would point the server at a different symbol: ``LIMIT`` inside ``LIMIT_ALIAS`` or
+    ``MAX_LIMIT`` made a repeated rename rewrite ``LIMIT_ALIAS`` and report success.
     """
     if not symbol or occurrence < 1:
         return None
@@ -99,8 +100,6 @@ def find_symbol_column(line_text: str, symbol: str, occurrence: int = 1) -> int 
     whole_starts = [s for s in starts if whole(s)]
     if len(whole_starts) >= occurrence:
         return whole_starts[occurrence - 1]
-    if len(starts) >= occurrence:
-        return starts[occurrence - 1]
     return None
 
 
