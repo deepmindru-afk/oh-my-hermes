@@ -621,10 +621,22 @@ asking for the task's final answer again, in full, and the gate gains a seventh 
   round(p x n) - 2. Here n is the number of those sessions and p is the share of off-arm sessions of
   the same three templates whose last assistant message contains it.
 
-The other six clauses are unchanged. Run 2 is the reported result.
+The other six clauses are unchanged.
 
-Run 2, plugin `41e91a195` (the review fixes below plus the final-answer request). Every clause
-passes, so the check ships, off by default.
+Amendment 2, fixed before run 3 and after run 2. A second review changed the measured path:
+- Each check's time is now a share of the profile's `plugins.hook_callback_timeout`. That is 8 s
+  and 10 s at the default 30 s, and the check is skipped when its share would be under 2 s.
+- The importer scan stops at that deadline.
+- A session with no language server is skipped before the scan.
+- Module names that shadow the standard library are not matched, and names count from the
+  checkout when the session starts in a sub-directory.
+- Hermes tells hooks nothing about a session's toolsets, so the note now names `lsp_diagnostics`
+  only as optional ("if your tools include it").
+- The note's header says that another writer's changes would show up too.
+The seven clauses are unchanged. Run 3, on the plugin with these changes, is the reported result;
+runs 1 and 2 stay recorded below.
+
+Run 2, plugin `41e91a195` (superseded by run 3). Every clause passed:
 
 | Model | off | on | off tokens (median) | on tokens (median) |
 | --- | ---: | ---: | ---: | ---: |
@@ -670,9 +682,8 @@ clauses passed; the seventh did not exist yet:
 | **Total** | **63 / 72** | **71 / 72** | 14.2M | 16.2M |
 
 Per template, off vs on: `I-SIGNATURE` 10 vs 18, `I-RETURN-SHAPE` 18 vs 18, `I-KWARG` 17 vs 17,
-`I-CONTROL` 18 vs 18. All of the gain is on the signature change, where the off arm left the
-alias caller and the caller through the package re-export unchanged (haiku 4.5 and gpt-5.6-luna
-0 / 3 each).
+`I-CONTROL` 18 vs 18. All of the gain is on the signature change (haiku 4.5 and gpt-5.6-luna
+0 / 3 each in the off arm).
 
 - Weak models, on at least off + 3: 35 vs 28, pass.
 - Strong models, on at least off - 1: 36 vs 35, pass.

@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import os
 import time
-from typing import Any, Callable
+from typing import Any, Callable, Sequence
 
 REQUEST_TIMEOUT = 20.0
 _PRIVATE = ("_loop", "_get_or_spawn", "enabled_for")
@@ -108,7 +108,7 @@ def request(
         raise BridgeError("server_unavailable", f"language server request failed ({type(exc).__name__})") from None
 
 
-def diagnostics(paths: list[str], sync: list[str] = (), timeout: float = REQUEST_TIMEOUT) -> dict[str, list[dict[str, Any]] | None]:
+def diagnostics(paths: Sequence[str], sync: Sequence[str] = (), timeout: float = REQUEST_TIMEOUT) -> dict[str, list[dict[str, Any]] | None]:
     """Fresh diagnostics for each of ``paths``: ``{path: [diagnostic, ...]}``; ``None`` = no verdict in time.
 
     Every path in ``sync`` and then in ``paths`` is re-sent from disk first, so the server

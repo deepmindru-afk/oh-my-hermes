@@ -94,6 +94,20 @@ class ImporterScanTests(_Root):
         self.write("src/shop/__init__.py", "from .pricing import *\n")
         self.assertIn(self.reexport, find_importers(self.root, self.target))
 
+    def test_stdlib_names_are_not_module_names(self):
+        stdlib_shadow = self.write("json.py", "")
+        self.assertEqual(module_names(stdlib_shadow, self.root), set())
+        self.assertEqual(find_importers(self.root, stdlib_shadow), [])  # src/other.py imports the real json
+
+    def test_names_count_from_the_checkout_when_the_session_starts_below_it(self):
+        repo = os.path.join(self.root, "repo")
+        os.makedirs(os.path.join(repo, ".git"))
+        mod = self.write("repo/src/pkg/mod.py", "")
+        session_root = os.path.join(repo, "src", "pkg")
+        self.assertEqual(module_names(mod, session_root), {"src.pkg.mod", "pkg.mod"})
+        user = self.write("repo/src/pkg/user.py", "from pkg.mod import thing\n")
+        self.assertEqual(find_importers(session_root, mod), [user])
+
     def test_cap(self):
         self.assertEqual(len(find_importers(self.root, self.target, cap=3)), 3)
 
@@ -144,10 +158,13 @@ class RoundTripTests(_Root):
         self.billing = self.write("src/shop/billing.py", "from shop.pricing import compute_fee\n\nX: int = 'legacy'\n")
         self.report = self.write("src/shop/report.py", "from shop import pricing\n")
         self.fake = _FakeDiagnostics()
+        self.host_timeout = 30.0
         for target, name, value in (
             (impact_check, "enabled", lambda: True),
             (impact_check, "_workspace_root", lambda task_id: self.root),
             (impact_check, "_lsp_tools_enabled", lambda: True),
+            (impact_check, "host_hook_timeout", lambda: self.host_timeout),
+            (lsp_bridge, "available", lambda: (object(), None)),
             (lsp_bridge, "in_git_worktree", lambda path: True),
             (lsp_bridge, "diagnostics", self.fake),
         ):
@@ -159,6 +176,9 @@ class RoundTripTests(_Root):
         baseline_before_edit({"tool_name": tool, "session_id": session, "turn_id": turn, "task_id": "x"},
                              {"path": path, "old_string": "a", "new_string": "b"})
 
+    def note_rows(self, note):
+        return [line for line in note.splitlines() if line.startswith("src/")]
+
     def test_new_error_is_named_and_preexisting_is_not(self):
         legacy = _diag(2, 'Type "str" is not assignable to declared type "int"', code="reportAssignmentType")
         self.fake.answers = {self.billing: [legacy]}
@@ -169,17 +189,32 @@ class RoundTripTests(_Root):
         moved = dict(legacy, range={"start": {"line": 5, "character": 0}, "end": {"line": 5, "character": 1}})
         self.fake.answers = {self.billing: [moved, _diag(3, 'Argument missing for parameter "minimum"\n  more')]}
         note = round_end_note("s1", [self.target])
-        self.assertEqual(note.splitlines()[1], 'src/shop/billing.py:4: Argument missing for parameter "minimum"')
-        self.assertNotIn("legacy", note)
-        self.assertIn("`lsp_diagnostics`", note)
+        self.assertEqual(self.note_rows(note), ['src/shop/billing.py:4: Argument missing for parameter "minimum"'])
+        self.assertNotIn("not assignable", note)
+        self.assertIn("`lsp_diagnostics` if your tools include it", note)
         self.assertLessEqual(len(note.splitlines()), MAX_NOTE_LINES)
         self.assertEqual(round_end_note("s1", [self.target]), "")  # consumed
 
-    def test_silent_when_nothing_new_or_no_verdict(self):
+    def test_same_message_under_another_code_is_new(self):
+        self.fake.answers = {self.billing: [_diag(2, "boom", code="reportA")]}
+        self.edit()
+        self.fake.answers = {self.billing: [_diag(2, "boom", code="reportA"), _diag(2, "boom", code="reportB")]}
+        self.assertEqual(self.note_rows(round_end_note("s1", [self.target])), ["src/shop/billing.py:3: boom"])
+
+    def test_silent_when_nothing_new(self):
         self.edit()
         self.assertEqual(round_end_note("s1", [self.target]), "")
-        self.edit(turn="t2")
+
+    def test_no_verdict_at_round_end_is_silent(self):
+        self.edit()
+        self.fake.answers = {self.billing: None, self.report: None}
+        self.assertEqual(round_end_note("s1", [self.target]), "")
+
+    def test_no_verdict_baseline_is_never_read_as_clean(self):
+        # An importer the server gave no verdict for at the baseline is skipped, not compared to zero.
         self.fake.answers = {self.billing: None}
+        self.edit()
+        self.fake.answers = {self.billing: [_diag(2, 'Type "str" is not assignable', code="reportAssignmentType")]}
         self.assertEqual(round_end_note("s1", [self.target]), "")
 
     def test_warnings_are_not_errors(self):
@@ -194,15 +229,46 @@ class RoundTripTests(_Root):
         self.edit(turn="t2")
         self.assertEqual(len(self.fake.calls), 2)
 
+    def test_a_new_root_resets_the_turn_state(self):
+        self.edit()
+        other = os.path.realpath(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, other, True)
+        os.makedirs(os.path.join(other, "src/shop"))
+        for rel in ("src/shop/pricing.py", "src/shop/billing.py"):
+            shutil.copy(os.path.join(self.root, rel), os.path.join(other, rel))
+        with mock.patch.object(impact_check, "_workspace_root", lambda task_id: other):
+            self.edit()
+        self.assertEqual(len(self.fake.calls), 2)
+        self.assertEqual(impact_check._sessions["s1"]["root"], other)
+
     def test_a_turn_without_its_own_python_edit_inherits_nothing(self):
-        # Review repro: t1 baselines and never reaches pre_verify; t2 edits only a Markdown file.
+        # Review repro: t1 baselines and never reaches pre_verify; t2 edits only a Markdown file. The
+        # break appears after the baseline, so only the turn guard keeps the note silent.
         self.edit()
         self.fake.answers = {self.billing: [_diag(3, "Argument missing")]}
         self.edit(path="README.md", turn="t2")
-        self.assertEqual(round_end_note("s1", [os.path.join(self.root, "README.md")]), "")
-        # Even when the stale state survives (no tool call in t2), an unrelated change list is silent.
+        self.assertNotIn("s1", impact_check._sessions)
+        self.assertEqual(round_end_note("s1", [self.target]), "")
+
+    def test_stale_state_with_an_unrelated_change_list_is_silent(self):
         self.edit()
+        self.fake.answers = {self.billing: [_diag(3, "Argument missing")]}
         self.assertEqual(round_end_note("s1", [os.path.join(self.root, "README.md")]), "")
+
+    def test_forget_other_turn_drops_only_an_older_turn(self):
+        self.edit()
+        impact_check.forget_other_turn("s1", "t1")
+        self.assertIn("s1", impact_check._sessions)
+        impact_check.forget_other_turn("s1", "t2")
+        self.assertNotIn("s1", impact_check._sessions)
+
+    def test_pre_tool_call_forgets_before_any_gate(self):
+        from omh.plugin_bundle.omh.hooks import tool_hooks
+
+        self.edit()
+        with mock.patch.object(tool_hooks.runtime_paths, "plugin_home", side_effect=RuntimeError("no home")):
+            tool_hooks.pre_tool_call(tool_name="read_file", args={}, session_id="s1", turn_id="t2")
+        self.assertNotIn("s1", impact_check._sessions)
 
     def test_failed_baseline_is_retried_on_the_next_edit(self):
         def boom(*args, **kwargs):
@@ -212,6 +278,38 @@ class RoundTripTests(_Root):
             self.edit()
         self.edit()
         self.assertEqual(len(self.fake.calls), 1)
+
+    def test_unavailable_server_is_claimed_not_retried(self):
+        with mock.patch.object(lsp_bridge, "available", lambda: (None, "lsp_unavailable: off")):
+            self.edit()
+        self.edit()
+        self.assertEqual(self.fake.calls, [])
+
+    def test_budget_follows_the_host_hook_timeout(self):
+        self.edit()
+        self.assertEqual(self.fake.calls[0][2] <= 8.0, True)
+        self.assertGreater(self.fake.calls[0][2], 7.0)
+        round_end_note("s1", [self.target])
+        self.assertEqual(self.fake.calls[1][2], 10.0)
+        self.host_timeout = 6.0
+        self.assertEqual(impact_check.budgets(), (0.0, 2.0))
+        self.edit(turn="t2")  # 1.6 s share: skipped
+        self.assertEqual(len(self.fake.calls), 2)
+
+    def test_no_time_left_after_the_scan_records_nothing(self):
+        clock = iter([0.0, 7.5, 7.5, 7.5, 7.5, 7.5, 7.5, 7.5, 7.5, 7.5, 7.5, 7.5])
+        with mock.patch.object(impact_check.time, "monotonic", lambda: next(clock, 7.5)):
+            self.edit()
+        self.assertEqual(self.fake.calls, [])
+        self.assertEqual(impact_check._sessions["s1"]["edited"], set())
+        self.assertEqual(impact_check._sessions["s1"]["baseline"], {})
+
+    def test_session_cap(self):
+        for index in range(impact_check._MAX_SESSIONS + 5):
+            self.edit(session=f"s{index}")
+        self.assertEqual(len(impact_check._sessions), impact_check._MAX_SESSIONS)
+        self.assertNotIn("s0", impact_check._sessions)
+        self.assertIn(f"s{impact_check._MAX_SESSIONS + 4}", impact_check._sessions)
 
     def test_malformed_diagnostic_does_not_escape(self):
         self.edit()
@@ -231,22 +329,35 @@ class RoundTripTests(_Root):
         def boom(*args, **kwargs):
             raise BridgeError("timeout", "slow")
 
-        with mock.patch.object(lsp_bridge, "diagnostics", boom):
-            self.edit()
-        self.assertEqual(round_end_note("s1", [self.target]), "")
-        self.edit(turn="t2")
+        self.edit()
         with mock.patch.object(lsp_bridge, "diagnostics", boom):
             self.assertEqual(round_end_note("s1", [self.target]), "")
+
+    def _pre_verify(self, **kwargs):
+        with mock.patch.object(verify_hooks, "observe_plugin_hook_call", lambda *a, **k: None):
+            return verify_hooks.pre_verify(session_id="s1", changed_paths=[self.target], **kwargs)
 
     def test_pre_verify_continues_with_the_note_even_outside_coding(self):
         self.edit()
         self.fake.answers = {self.report: [_diag(4, 'Cannot access attribute "get" for class "Quote"')]}
-        with mock.patch.object(verify_hooks, "observe_plugin_hook_call", lambda *a, **k: None):
-            out = verify_hooks.pre_verify(session_id="s1", coding=False, attempt=0, changed_paths=[self.target])
-            self.assertEqual(out["action"], "continue")
-            self.assertIn("src/shop/report.py:5:", out["message"])
-            self.edit(turn="t2")
-            self.assertIsNone(verify_hooks.pre_verify(session_id="s1", coding=False, attempt=1, changed_paths=[self.target]))
+        out = self._pre_verify(coding=False, attempt=0)
+        self.assertEqual(out["action"], "continue")
+        self.assertIn("src/shop/report.py:5:", out["message"])
+
+    def test_pre_verify_coding_merges_the_note(self):
+        self.edit()
+        self.fake.answers = {self.report: [_diag(4, 'Cannot access attribute "get" for class "Quote"')]}
+        with mock.patch.object(verify_hooks, "_session_plan_reading", lambda kwargs, session_id: ("", "", 0)):
+            out = self._pre_verify(coding=True, attempt=0)
+        self.assertEqual(out["action"], "continue")
+        self.assertIn("src/shop/report.py:5:", out["message"])
+
+    def test_pre_verify_checks_only_at_attempt_zero(self):
+        self.edit()
+        self.fake.answers = {self.report: [_diag(4, 'Cannot access attribute "get" for class "Quote"')]}
+        self.assertIsNone(self._pre_verify(coding=False, attempt=1))
+        self.assertIn("s1", impact_check._sessions)  # not consumed by a later attempt
+        self.assertEqual(len(self.fake.calls), 1)
 
 
 class FormatTests(unittest.TestCase):
@@ -269,6 +380,8 @@ class DiagnosticsToolTests(_Root):
         self.b = self.write("src/b.py", "y = 1\n")
         self.write("src/notes.txt", "")
         self.write(".venv/c.py", "")
+        self.write("node_modules/m.py", "")
+        self.d = self.write("src/sub/d.py", "")
         patcher = mock.patch.object(lsp_nav_tool, "_workspace_root", return_value=self.root)
         patcher.start()
         self.addCleanup(patcher.stop)
@@ -280,6 +393,23 @@ class DiagnosticsToolTests(_Root):
     def call(self, answer, **args):
         with mock.patch.object(lsp_bridge, "diagnostics", answer):
             return json.loads(lsp_diagnostics_handler(args, task_id="t"))
+
+    def _paths(self, pattern):
+        seen = {}
+
+        def answer(paths, sync=(), timeout=0):
+            seen["paths"] = list(paths)
+            return {path: [] for path in paths}
+
+        self.call(answer, path=pattern)
+        return [os.path.relpath(path, self.root) for path in seen.get("paths", [])]
+
+    def test_glob_semantics_and_pruned_directories(self):
+        self.assertEqual(self._paths("src/*.py"), ["src/a.py", "src/b.py"])
+        self.assertEqual(self._paths("src/**/*.py"), ["src/a.py", "src/b.py", "src/sub/d.py"])
+        self.assertEqual(self._paths("**/*.py"), ["src/a.py", "src/b.py", "src/sub/d.py"])
+        self.assertEqual(self._paths("src/[a]*.py"), ["src/a.py"])
+        self.assertEqual(self._paths("./src/b.py"), ["src/b.py"])
 
     def test_glob_counts_and_rows(self):
         seen = {}
@@ -298,7 +428,7 @@ class DiagnosticsToolTests(_Root):
 
     def test_no_verdict_and_unsupported_are_not_clean(self):
         out = self.call(lambda paths, sync=(), timeout=0: {self.a: None}, path="src/**/*.py")
-        self.assertEqual([row["status"] for row in out["files"]], ["no_verdict", "unsupported"])
+        self.assertEqual([row["status"] for row in out["files"]], ["no_verdict", "unsupported", "unsupported"])
         self.assertEqual(out["errors"], 0)
 
     def test_errors(self):
@@ -328,6 +458,7 @@ class _Client:
         return self.fresh.get(path, False)
 
     def diagnostics_for(self, path, fresh_only=False):
+        assert fresh_only, "a report must only use diagnostics fresh for the synced version"
         return [_diag(0, "e")] if self.fresh.get(path) else []
 
 

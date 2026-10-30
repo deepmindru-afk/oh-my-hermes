@@ -24,6 +24,7 @@ import ast
 import logging
 import os
 import re
+import sys
 import threading
 import time
 from collections import Counter
@@ -40,11 +41,17 @@ MAX_IMPORTERS: Final = 30
 MAX_SCAN_FILES: Final = 2000
 MAX_SCAN_BYTES: Final = 512_000
 MAX_NOTE_LINES: Final = 15
-# Both checks run inside host hooks that Hermes bounds (`plugins.hook_callback_timeout`, 30 s by
-# default) and fails closed on, so each total -- importer scan, server spawn and waits -- stays
-# well inside it. A baseline that runs out records nothing for that edit.
-BASELINE_TIMEOUT: Final = 8.0
-ROUND_END_TIMEOUT: Final = 10.0
+# Both checks run inside host hooks that Hermes bounds by `plugins.hook_callback_timeout` (30 s by
+# default, 0..600 configurable). `pre_tool_call` fails closed on it: an overrun refuses the edit and
+# suppresses OMH's whole callback for 60 s. So each check's total -- importer scan, server spawn,
+# syncs and waits -- is a fixed share of the configured timeout (8 s and 10 s at the default), and
+# the check is skipped when that share is too small to be useful. A baseline that runs out records
+# nothing for that edit; the next edit of the file retries, so a retry after a timeout can miss the
+# change the first edit made.
+HOST_HOOK_TIMEOUT_DEFAULT: Final = 30.0
+BASELINE_SHARE: Final = 8.0 / 30.0
+ROUND_END_SHARE: Final = 10.0 / 30.0
+_MIN_BUDGET: Final = 2.0
 _MIN_WAIT: Final = 1.0
 _MAX_SESSIONS: Final = 64
 _MESSAGE_CHARS: Final = 200
@@ -73,6 +80,27 @@ def enabled() -> bool:
     return value is not None and value.strip().lower() in _ON
 
 
+def host_hook_timeout() -> float:
+    """The profile's `plugins.hook_callback_timeout` as Hermes resolves it: default 30 s when unset,
+    unreadable or negative; 0 (no host bound) is treated as the default so OMH still bounds itself."""
+    try:
+        text = (runtime_paths.default_hermes_home() / "config.yaml").read_text(encoding="utf-8")
+        value = runtime_paths.config_scalar_text(text, ("plugins", "hook_callback_timeout"))
+        timeout = float(value) if value is not None else HOST_HOOK_TIMEOUT_DEFAULT
+    except (OSError, ValueError, runtime_paths.RuntimeBindingError):
+        return HOST_HOOK_TIMEOUT_DEFAULT
+    if timeout <= 0:
+        return HOST_HOOK_TIMEOUT_DEFAULT
+    return min(timeout, 600.0)
+
+
+def budgets() -> tuple[float, float]:
+    """(baseline, round-end) seconds; a share below ``_MIN_BUDGET`` is 0, which skips that check."""
+    host = host_hook_timeout()
+    shares = (host * BASELINE_SHARE, host * ROUND_END_SHARE)
+    return tuple(share if share >= _MIN_BUDGET else 0.0 for share in shares)  # type: ignore[return-value]
+
+
 def edit_targets(tool_name: object, args: object) -> list[str]:
     """The ``.py`` paths a ``patch`` / ``write_file`` call names (``path``, or V4A ``*** Update File:`` headers)."""
     if tool_name not in _EDIT_TOOLS or not isinstance(args, dict):
@@ -92,22 +120,38 @@ _SOURCE_ROOT_MARKERS: Final = ("pyproject.toml", "setup.py", "setup.cfg")
 
 def _source_root(directory: str, root: str) -> bool:
     """Whether absolute imports plausibly start at ``directory``: the workspace root, a ``src``
-    directory, or a directory holding project metadata."""
+    directory, or a directory holding project metadata or a git checkout."""
     return (directory == root or os.path.basename(directory) == "src"
-            or any(os.path.isfile(os.path.join(directory, marker)) for marker in _SOURCE_ROOT_MARKERS))
+            or any(os.path.exists(os.path.join(directory, marker)) for marker in (*_SOURCE_ROOT_MARKERS, ".git")))
+
+
+def _anchor(path: str, root: str) -> str:
+    """The directory names are counted from: the nearest ancestor of ``root`` holding ``.git`` or
+    project metadata (so a session started in a sub-directory still sees `pkg.mod`), else ``root``."""
+    current = root
+    while True:
+        if any(os.path.exists(os.path.join(current, marker)) for marker in (*_SOURCE_ROOT_MARKERS, ".git")):
+            return current
+        parent = os.path.dirname(current)
+        if parent == current:
+            return root
+        current = parent
 
 
 def module_names(path: str, root: str) -> set[str]:
-    """The dotted names ``path`` is imported as from a source root (``_source_root``) at or under ``root``.
+    """The dotted names ``path`` is imported as from a source root (``_source_root``).
 
-    A bare suffix such as ``types`` from ``app/types.py`` is not one: it would match the standard
-    library and same-named modules elsewhere. A sibling's bare import is matched separately.
+    A bare suffix such as ``types`` from ``app/types.py`` is not one, and neither is a name that is
+    a standard-library module: both would match unrelated imports. A sibling's bare import is
+    matched separately (``_sibling_name``).
     """
-    parts = os.path.relpath(path, root).replace(os.sep, "/")[: -len(".py")].split("/")
+    anchor = _anchor(path, root)
+    parts = os.path.relpath(path, anchor).replace(os.sep, "/")[: -len(".py")].split("/")
     if parts[-1] == "__init__":
         parts = parts[:-1]
-    return {".".join(parts[index:]) for index in range(len(parts))
-            if parts[index:] and _source_root(os.path.join(root, *parts[:index]), root)}
+    names = {".".join(parts[index:]) for index in range(len(parts))
+             if parts[index:] and _source_root(os.path.join(anchor, *parts[:index]), anchor)}
+    return {name for name in names if name.split(".", 1)[0] not in sys.stdlib_module_names}
 
 
 def _sibling_name(importer: str, target: str) -> str | None:
@@ -172,9 +216,10 @@ def _reexports(tree: ast.AST, init: str, target: str, names: set[str]) -> set[st
     return bound
 
 
-def find_importers(root: str, target: str, cap: int = MAX_IMPORTERS) -> list[str]:
+def find_importers(root: str, target: str, cap: int = MAX_IMPORTERS, deadline: float | None = None) -> list[str]:
     """Up to ``cap`` workspace ``.py`` files importing ``target``, plus importers of a package
-    ``__init__.py`` that re-exports it (one level). Sorted walk, bounded by ``MAX_SCAN_FILES``."""
+    ``__init__.py`` that re-exports it (one level). Sorted walk, bounded by ``MAX_SCAN_FILES`` and,
+    when given, by the ``time.monotonic()`` ``deadline`` (what was found by then is returned)."""
     files = lsp_nav.workspace_files(root, ".py", target, MAX_SCAN_FILES)[1:]
     texts: dict[str, str | None] = {}
     trees: dict[str, ast.AST | None] = {}
@@ -188,6 +233,8 @@ def find_importers(root: str, target: str, cap: int = MAX_IMPORTERS) -> list[str
         for path in files:
             if path in seen or len(found) >= cap:
                 continue
+            if deadline is not None and time.monotonic() >= deadline:
+                return found
             if path not in texts:
                 texts[path] = _read(path)
             text = texts[path]
@@ -267,13 +314,27 @@ def baseline_before_edit(kwargs: dict[str, Any], tool_input: object) -> None:
     if not targets or not session_id or not enabled():
         return
     started = time.monotonic()
+    budget = budgets()[0]
+    if budget <= 0:
+        _LOG.info("impact_check baseline session=%s skipped=hook_timeout_too_small", session_id)
+        return
+    deadline = started + budget
     claimed: list[str] = []
     pending: list[str] = []
     state: dict[str, Any] | None = None
     try:
         root = os.path.realpath(_workspace_root(kwargs.get("task_id")) or os.getcwd())
         state = _session_state(session_id, str(kwargs.get("turn_id", "") or ""), root)
+        _, unavailable = lsp_bridge.available()
+        if unavailable is not None:
+            # Claimed and kept: without a language server there is nothing to retry on the next edit.
+            with _lock:
+                state["edited"].update(path for path in (_resolved(item, root) for item in targets) if path)
+            _LOG.info("impact_check baseline session=%s skipped=lsp_unavailable", session_id)
+            return
         for requested in targets:
+            if time.monotonic() >= deadline:
+                break
             try:
                 path = lsp_nav.resolve_path(requested, root)
             except LspNavError:
@@ -286,7 +347,7 @@ def baseline_before_edit(kwargs: dict[str, Any], tool_input: object) -> None:
                 state["edited"].add(path)  # claimed; released below if no baseline is recorded
                 room = MAX_IMPORTERS - len(state["baseline"])
             claimed.append(path)
-            found = find_importers(root, path, max(room, 0)) if room > 0 else []
+            found = find_importers(root, path, room, deadline) if room > 0 else []
             with _lock:
                 # Reserve under the lock: a parallel edit's baseline of the same importer keeps the first.
                 for item in found:
@@ -295,7 +356,7 @@ def baseline_before_edit(kwargs: dict[str, Any], tool_input: object) -> None:
                         pending.append(item)
         if not pending:
             return
-        remaining = BASELINE_TIMEOUT - (time.monotonic() - started)
+        remaining = deadline - time.monotonic()
         if remaining < _MIN_WAIT:
             raise BridgeError("timeout", "no time left after the importer scan")
         # Everything this turn edited so far is synced first, so the baseline and the round-end
@@ -317,6 +378,13 @@ def baseline_before_edit(kwargs: dict[str, Any], tool_input: object) -> None:
     except Exception as exc:  # noqa: BLE001 - never fail the edit it is watching
         _release(state, claimed, pending)
         _LOG.warning("impact_check baseline session=%s failed=%s", session_id, type(exc).__name__)
+
+
+def _resolved(requested: str, root: str) -> str | None:
+    try:
+        return lsp_nav.resolve_path(requested, root)
+    except LspNavError:
+        return None
 
 
 def _release(state: dict[str, Any] | None, claimed: list[str], reserved: list[str]) -> None:
@@ -357,8 +425,11 @@ def round_end_note(session_id: str, changed_paths: object) -> str:
                  if counts is not None and os.path.isfile(path)}
         if not known or not enabled():
             return ""
+        budget = budgets()[1]
+        if budget <= 0:
+            return ""
         started = time.monotonic()
-        current = lsp_bridge.diagnostics(list(known), sync=sync, timeout=ROUND_END_TIMEOUT)
+        current = lsp_bridge.diagnostics(list(known), sync=sync, timeout=budget)
         new: list[tuple[str, int, str]] = []
         for path, baseline in known.items():
             found = current.get(path)
@@ -390,12 +461,16 @@ def format_note(new: list[tuple[str, int, str]], recheck_tool: bool) -> str:
     rows = sorted(new)
     room = MAX_NOTE_LINES - 2
     shown = rows if len(rows) <= room else rows[: room - 1]
-    lines = ["OMH impact check: your edits left new errors in files that import the code you changed "
-             "(language server, checked against the disk now):"]
+    lines = ["OMH impact check: files that import the code you changed have errors they did not have before "
+             "your edit (language server, checked against the disk now; another writer's changes would show "
+             "here too):"]
     lines += [f"{path}:{line}: {message}" for path, line, message in shown]
     if len(shown) < len(rows):
         lines.append(f"... and {len(rows) - len(shown)} more")
-    check = "re-check them with `lsp_diagnostics`" if recheck_tool else "re-run the checks that cover them"
+    # Hermes passes no toolset list to its hooks, so a profile with `lsp_tools` on cannot tell whether
+    # this session (a `-t file,terminal` run, a delegated child) has the tool: it is named as optional.
+    check = ("re-check them (with `lsp_diagnostics` if your tools include it)" if recheck_tool
+             else "re-run the checks that cover them")
     # Hermes keeps the answer the model already gave only as an interim message: what it says after
     # this note becomes the turn's final answer (a --oneshot or API result, a delegated child's
     # return). So the note asks for that answer again, not for a report about the note.
@@ -410,11 +485,13 @@ __all__ = [
     "MAX_IMPORTERS",
     "MAX_NOTE_LINES",
     "baseline_before_edit",
+    "budgets",
     "edit_targets",
     "enabled",
     "find_importers",
     "forget_other_turn",
     "format_note",
+    "host_hook_timeout",
     "imports_module",
     "module_names",
     "round_end_note",

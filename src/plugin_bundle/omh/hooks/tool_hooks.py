@@ -14,7 +14,7 @@ from ..catch_log import REPEAT_LOOP, record_catch
 from ..dag_define_gate import delegate_before_define_directive
 from ..delegation_route_restore import dispatch_route_directive
 from ..host_observation import host_session_id, observe_plugin_hook_call
-from ..impact_check import baseline_before_edit
+from ..impact_check import baseline_before_edit, forget_other_turn
 from ..jev_consent import arm_tool_call as arm_jev_tool_call
 from ..jev_consent import disarm_tool_call as disarm_jev_tool_call
 from ..native_todo import project_native_todo
@@ -130,6 +130,9 @@ def _rule_directive_or_recorded_fault(
 
 def pre_tool_call(**kwargs: object) -> dict[str, object] | None:
     """Return only host-supported pre-tool directives."""
+    # First, before any gate can return early: a new turn's first tool call drops the impact
+    # check's state from an earlier turn of this session, whatever happens to the call itself.
+    forget_other_turn(str(kwargs.get("session_id", "") or kwargs.get("task_id", "") or ""), kwargs.get("turn_id"))
     if str(kwargs.get("tool_name", "") or "") == "omh_jev_ask":
         # First, before any early return: the call carries the turn it runs
         # in, and `omh_jev_ask` proceeds only when that is the turn whose own

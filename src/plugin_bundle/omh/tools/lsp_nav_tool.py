@@ -9,9 +9,10 @@ Position, symbol and edit rules live in the pure module `omh.lsp_nav`.
 
 from __future__ import annotations
 
-import glob
+import fnmatch
 import json
 import os
+import re
 from typing import Any
 
 from .. import lsp_bridge, lsp_nav, runtime_paths
@@ -410,6 +411,33 @@ _GLOB_CHARS = ("*", "?", "[")
 _GLOB_SKIP = frozenset({"venv", "node_modules", "__pycache__"})  # plus every dot-directory
 
 
+def _glob_regex(pattern: str) -> "re.Pattern[str]":
+    """glob semantics over a `/`-separated relative path: `*` and `?` stay inside one directory,
+    `**/` spans any number of directories (including none), `[...]` is a character class."""
+    out, index = [], 0
+    while index < len(pattern):
+        if pattern.startswith("**/", index):
+            out.append("(?:.*/)?")
+            index += 3
+        elif pattern.startswith("**", index):
+            out.append(".*")
+            index += 2
+        elif pattern[index] == "*":
+            out.append("[^/]*")
+            index += 1
+        elif pattern[index] == "?":
+            out.append("[^/]")
+            index += 1
+        elif pattern[index] == "[" and "]" in pattern[index + 1:]:
+            end = pattern.index("]", index + 1)
+            out.append(fnmatch.translate(pattern[index:end + 1])[4:-3])
+            index = end + 1
+        else:
+            out.append(re.escape(pattern[index]))
+            index += 1
+    return re.compile("".join(out))
+
+
 def _diagnostic_files(requested: str, root: str) -> tuple[list[str], int]:
     """The files ``requested`` names (one path, or a glob under ``root``) and how many a glob left out."""
     if not any(char in requested for char in _GLOB_CHARS):
@@ -421,13 +449,17 @@ def _diagnostic_files(requested: str, root: str) -> tuple[list[str], int]:
             raise _Fail("not_found", f"{requested} does not exist; paths are relative to the workspace root {root}",
                         similar_files=lsp_nav.similar_files(root, requested))
         return [path], 0
+    # Walked with dot-directories, venvs and node_modules pruned before descending, never globbed:
+    # a recursive glob would walk them first.
+    matcher = _glob_regex(requested.replace(os.sep, "/").removeprefix("./"))
     matches = []
-    for item in sorted(glob.glob(os.path.join(root, requested), recursive=True)):
-        path = os.path.realpath(item)
-        parts = os.path.relpath(path, root).split(os.sep)
-        if os.path.isfile(path) and lsp_nav.inside(path, root) and not any(
-                part.startswith(".") or part in _GLOB_SKIP for part in parts[:-1]):
-            matches.append(path)
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = sorted(d for d in dirnames if not d.startswith(".") and d not in _GLOB_SKIP)
+        for filename in sorted(filenames):
+            path = os.path.realpath(os.path.join(dirpath, filename))
+            relative = os.path.relpath(path, root).replace(os.sep, "/")
+            if lsp_nav.inside(path, root) and matcher.fullmatch(relative):
+                matches.append(path)
     if not matches:
         raise _Fail("not_found", f"no file under {root} matches {requested!r}")
     return matches[:_DIAG_FILE_CAP], max(0, len(matches) - _DIAG_FILE_CAP)
