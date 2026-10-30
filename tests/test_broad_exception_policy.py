@@ -581,6 +581,16 @@ CLASSIFIED_SITES: tuple[ClassifiedSite, ...] = (
         "raise out of a tool and never a directory named without metadata in it (#2415).",
     ),
     ClassifiedSite(
+        "src/plugin_bundle/omh/package_site.py",
+        "ensure_recorded_package_site",
+        INTENTIONAL,
+        "Reading the bundle's own manifest and the recorded directory's oh-my-hermes metadata "
+        "runs at register() and before every backend import. A failure there (a malformed "
+        "manifest, unreadable metadata) is no evidence of a usable install, so the state reads "
+        "`unreadable`, nothing joins sys.meta_path, and the backend import then fails the "
+        "ordinary way and is classified: never a raise out of register() or a tool (#2166).",
+    ),
+    ClassifiedSite(
         "src/tui/bot_board.py",
         "poll_once",
         INTENTIONAL,
@@ -861,8 +871,11 @@ CLASSIFIED_SITES: tuple[ClassifiedSite, ...] = (
 # 88 -> 89 / 80 -> 81: `package_backend._off_path_install`, the look for an
 # install the import path skips, inside `load_backend`'s handler (a failure
 # leaves `off_path_install` empty, never a raise out of a tool; #2415).
-EXPECTED_HANDLER_COUNT = 89
-EXPECTED_ANCHOR_COUNT = 81
+# 89 -> 91 / 81 -> 82: `package_site.ensure_recorded_package_site`, the manifest
+# and metadata reads that decide whether OMH's recorded package joins the import
+# system (two handlers; a failure adds nothing and is reported, never raised; #2166).
+EXPECTED_HANDLER_COUNT = 91
+EXPECTED_ANCHOR_COUNT = 82
 
 
 class DerivedSite(NamedTuple):
