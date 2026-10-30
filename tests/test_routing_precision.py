@@ -163,7 +163,8 @@ class RoutingPrecisionTests(unittest.TestCase):
         # show-reel's quoted idea-video ask is translation input, answered directly (+1).
         self.assertEqual(payload["summary"]["direct_answer_count"], 355)
         # show-reel's README-link control is answered as a file lookup (+1).
-        self.assertEqual(payload["summary"]["file_lookup_count"], 11)
+        # "Use OMH to fix the failing test in billing.py" names a file: a file lookup (+1).
+        self.assertEqual(payload["summary"]["file_lookup_count"], 12)
         self.assertEqual(payload["summary"]["overroute_count"], 0)
         self.assertEqual(payload["summary"]["catalog_picker_count"], 0)
         self.assertEqual(payload["summary"]["generic_ack_count"], 0)
