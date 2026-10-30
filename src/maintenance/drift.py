@@ -948,7 +948,10 @@ def count_metrics() -> tuple[CountMetric, ...]:
             # Its review round: a kebab id after a logo intro, a bare 3D scene
             # with shaders, a two-noun chain after an intro, and a leading
             # Japanese format before an open topic (+4).
-            expected=1306,
+            # fix/coding-request-meta-discussion-misroute: a coding request that
+            # names OMH as the tool ("Use OMH to fix the failing test", "With
+            # OMH, add a unit test") stays off workflow-learning (+2).
+            expected=1308,
             # The one reviewed test pin. Every other test compares its payload
             # against build_routing_precision_demo() rather than a literal.
             sites=("tests/test_routing_precision.py",),
@@ -1502,7 +1505,10 @@ def count_metrics() -> tuple[CountMetric, ...]:
             # intro for this product's own name, a motion graphics piece, a 3D
             # scene, a Korean concept explainer and a Japanese format beside an
             # explainer genre (+6).
-            expected=1203,
+            # fix/coding-request-meta-discussion-misroute: an OMH developer test
+            # of the route hint vocabulary and a test of how the router reads
+            # workflow names keep workflow-learning (+2).
+            expected=1205,
             # The one reviewed test pin. Every other test compares its payload
             # against build_routing_precision_demo() rather than a literal.
             sites=("tests/test_routing_precision.py",),

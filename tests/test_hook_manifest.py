@@ -644,6 +644,48 @@ class HookManifestTests(unittest.TestCase):
         self.assertNotIn("secret-token-123", serialized)
         self.assertNotIn("secret-token-123", context)
 
+    def test_coding_request_naming_omh_gets_no_workflow_learning_hint(self) -> None:
+        # These classified meta_discussion: "test" inside "pytest" or "tests",
+        # "term" inside "terminal", "log" inside "changelog" and "catalog", with
+        # the product name as the routing context. The ~2k-char workflow-learning
+        # hint then rode along on every model call of an ordinary coding task.
+        cases = (
+            "Use OMH to fix the failing test in billing.py",
+            "With OMH, add a unit test for the log parser",
+            "Have OMH write the missing tests for the date helpers",
+            "OMH, update the changelog and the catalog metadata",
+            "OMH benchmark task:\nadd minimum_cents to compute_fee in src/pricing.py.\n\n"
+            "Run tests with `python -m pytest -q`.\n\nOMH benchmark protocol:\n"
+            "Use the available file and terminal tools when task execution requires them.",
+        )
+
+        for message in cases:
+            with self.subTest(message=message):
+                payload = awareness_route_hint(message)
+                context_result = pre_llm_call(user_message=message, is_first_turn=False)
+                context = context_result["context"] if context_result else ""
+
+                self.assertNotEqual(payload.get("intent_class"), "meta_discussion")
+                self.assertNotEqual(payload.get("selected_workflow"), "workflow-learning")
+                self.assertNotIn("intent=meta_discussion", context)
+                self.assertNotIn("selected=workflow-learning", context)
+
+    def test_omh_meta_test_beside_omh_vocabulary_keeps_workflow_learning_hint(self) -> None:
+        # The other side of the case above: an everyday word next to OMH's own
+        # vocabulary or routing words is still talk about OMH.
+        cases = (
+            "OMH developer test: is the route hint vocabulary clear to users?",
+            "I'm testing how the OMH router reads workflow names like ultrawork",
+            "OMH developer test: Codex handoff vocabulary, not asking to implement.",
+        )
+
+        for message in cases:
+            with self.subTest(message=message):
+                payload = awareness_route_hint(message)
+
+                self.assertEqual(payload["selected_workflow"], "workflow-learning")
+                self.assertIn(payload["intent_class"], {"meta_discussion", "feedback_signal"})
+
     def test_awareness_route_hint_marks_workflow_vocabulary_as_mentioned_not_selected(self) -> None:
         message = "왜 ultraprocess 로그가 떠? Codex handoff 테스트 용어일 뿐이야."
 

@@ -5,6 +5,7 @@ from functools import lru_cache
 import re
 
 from ..skills.catalog_types import historical_skill_display_names, omh_skill_display_name
+from .command_verb import DIRECT_CODING_EDIT_VERBS, command_words, commanded_words
 from .display_names import canonical_display_mentions
 from .localization import normalized_phrase, routing_tokens
 from .reference_regions import executable_routing_text, reference_regions
@@ -80,6 +81,13 @@ _META_CUES = (
     "트리거",
     "오해",
     "설명",
+)
+# Everyday English words among the meta cues match as whole words only:
+# inside "pytest", "terminal", "changelog", "catalog", "metadata" or the
+# compact "routermodel" they are not about OMH at all. The rest of
+# `_META_CUES` (OMH's own vocabulary, and the Korean cues) match as before.
+_EVERYDAY_META_CUES = frozenset(
+    {"test", "testing", "fixture", "smoke test", "developer", "operator", "meta", "term", "log", "trigger", "hud"}
 )
 _FEEDBACK_CUES = (
     "why did",
@@ -332,12 +340,18 @@ def classify_workflow_intent(message: str) -> WorkflowIntent:
         matching_tokens,
         diagnostic_status_context=diagnostic_status_context,
     )
-    meta_cues = _matched_cues(_META_CUES, matching_normalized, matching_compact)
+    meta_cues = _matched_meta_cues(matching_normalized, matching_compact)
     feedback_cues = _matched_cues(_FEEDBACK_CUES, matching_normalized, matching_compact)
     planning_cues = _matched_cues(_PLANNING_CUES, matching_normalized, matching_compact)
     negated_execution_cues = _compact_tuple(
         (*_matched_cues(_NEGATED_EXECUTION_CUES, matching_normalized, matching_compact), *_structural_negated_execution_cues(matching_normalized))
     )
+    # A message whose command verb is a code edit asks for work, so it is not
+    # talk about OMH: in "use OMH to fix the failing test" the test is what the
+    # edit acts on. Meta discussion that names such a verb says so ("not asking
+    # to implement") and keeps its cues.
+    if not negated_execution_cues and _commands_code_edit(matching_normalized):
+        meta_cues = ()
     execution_cues = _suppress_negated_execution_cues(
         _matched_cues(_EXECUTION_CUES, matching_normalized, matching_compact),
         negated_execution_cues,
@@ -354,6 +368,18 @@ def classify_workflow_intent(message: str) -> WorkflowIntent:
         workflow_or_specific_runtime=workflow_or_specific_runtime,
         routing_context=routing_context,
     )
+    # An everyday word is about OMH only beside something of OMH's to be about:
+    # a workflow, a runtime term, or routing context other than the product
+    # name. "With OMH, add caching and test it" names the tool doing the work,
+    # and "test" is the work. "OMH developer test: Codex handoff vocabulary"
+    # keeps its cues through "handoff" and "vocabulary".
+    if (
+        meta_cues
+        and set(meta_cues) <= _EVERYDAY_META_CUES
+        and not workflow_or_specific_runtime
+        and not _routing_context(matching_normalized, matching_tokens, product_name_counts=False)
+    ):
+        meta_cues = ()
     explicit_workflow_marker = _explicit_workflow_invocation(normalized, tokens)
     explicit_execution = bool(
         execution_cues
@@ -584,6 +610,11 @@ def _bounded_english_cue_pattern(normalized_cue: str) -> re.Pattern[str] | None:
     return re.compile(pattern)
 
 
+def _commands_code_edit(normalized: str) -> bool:
+    """The request's command verb is a code-edit verb: "fix ...", "use OMH to add ...", "OMH, update ..."."""
+    return bool(DIRECT_CODING_EDIT_VERBS & commanded_words(command_words(normalized)))
+
+
 def is_workflow_meta_or_feedback(message: str) -> bool:
     intent = classify_workflow_intent(message)
     return intent.intent_class in META_OR_FEEDBACK_INTENTS and not intent.explicit_execution
@@ -679,6 +710,18 @@ def _symbolic_negated_execution(normalized: str) -> bool:
     if "!=" not in normalized and "≠" not in normalized:
         return False
     return any(normalized_cue in normalized for _cue, normalized_cue in _normalized_cues(_EXECUTION_CUES))
+
+
+def _matched_meta_cues(normalized: str, compact: str) -> tuple[str, ...]:
+    matches: list[str] = []
+    for cue, normalized_cue in _normalized_cues(_META_CUES):
+        if cue in _EVERYDAY_META_CUES:
+            found = _contains_bounded_english_cue(normalized, normalized_cue)
+        else:
+            found = normalized_cue in normalized or normalized_cue.replace(" ", "") in compact
+        if found:
+            matches.append(cue)
+    return tuple(matches)
 
 
 def _matched_cues(cues: tuple[str, ...], normalized: str, compact: str) -> tuple[str, ...]:
@@ -856,7 +899,10 @@ def _explicit_workflow_invocation(normalized: str, tokens: set[str]) -> bool:
     return "dispatch" in tokens or "execute" in tokens
 
 
-def _routing_context(normalized: str, tokens: set[str]) -> bool:
+_PRODUCT_NAME_CONTEXT = frozenset({"omh", "oh-my-hermes"})
+
+
+def _routing_context(normalized: str, tokens: set[str], *, product_name_counts: bool = True) -> bool:
     context_tokens = {
         "omh",
         "oh-my-hermes",
@@ -887,4 +933,7 @@ def _routing_context(normalized: str, tokens: set[str]) -> bool:
         "워크플로우",
         "코딩",
     }
+    if not product_name_counts:
+        context_tokens -= _PRODUCT_NAME_CONTEXT
+        context_phrases -= _PRODUCT_NAME_CONTEXT
     return bool(tokens & context_tokens) or any(term in normalized for term in context_phrases)

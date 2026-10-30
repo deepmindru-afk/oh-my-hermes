@@ -9295,6 +9295,28 @@ ROUTING_PRECISION_CASES: tuple[RoutingPrecisionCase, ...] = (
         "",
         "executor-runtime-readiness",
     ),
+    # A coding request that names OMH as the tool is work, not talk about OMH:
+    # "test" is what the edit acts on, and the product name is not routing
+    # context for an everyday word. Before, both messages classified
+    # meta_discussion and the pre_llm_call route hint picked workflow-learning
+    # (~1.2k chars on every model call); the chat route never named it, and these
+    # pin that it still does not.
+    RoutingPrecisionCase(
+        "coding-request-naming-omh-is-not-meta-discussion",
+        "Use OMH to fix a failing test is a coding request, not workflow meta discussion",
+        "Use OMH to fix the failing test in billing.py",
+        "answer_file_lookup",
+        "file_or_text",
+        "workflow-learning",
+    ),
+    RoutingPrecisionCase(
+        "omh-instrument-lead-with-test-is-not-meta-discussion",
+        "With OMH, add a unit test names the tool, not a discussion of OMH testing",
+        "With OMH, add a unit test for the log parser",
+        "answer_clarification",
+        "",
+        "workflow-learning",
+    ),
 )
 
 
@@ -11940,6 +11962,29 @@ ROUTING_INTERVENTION_CASES: tuple[RoutingInterventionCase, ...] = (
         "ultrawork",
         "show_coding_handoff_status",
         "handoff",
+    ),
+    # Meta discussion keeps workflow-learning when an everyday word ("test")
+    # sits beside OMH's own vocabulary or routing words, after the coding
+    # requests above stopped reaching it through the product name alone.
+    RoutingInterventionCase(
+        "omh-developer-test-of-vocabulary-stays-workflow-learning",
+        "An OMH developer test of the route hint vocabulary still opens workflow learning",
+        "OMH developer test: is the route hint vocabulary clear to users?",
+        "dispatch",
+        "workflow-learning",
+        "audit_learning_readiness",
+        "workflow_learning",
+        "workflow-learning",
+    ),
+    RoutingInterventionCase(
+        "testing-the-router-on-workflow-names-stays-workflow-learning",
+        "Testing how the OMH router reads workflow names still opens workflow learning",
+        "I'm testing how the OMH router reads workflow names like ultrawork",
+        "dispatch",
+        "workflow-learning",
+        "audit_learning_readiness",
+        "workflow_learning",
+        "workflow-learning",
     ),
     RoutingInterventionCase(
         "workflow-learning",
@@ -14784,15 +14829,19 @@ ROUTING_INTERVENTION_CASES: tuple[RoutingInterventionCase, ...] = (
         "handoff",
         "ultrawork",
     ),
+    # Re-pinned to clarify (2026-10-31, fix/coding-request-meta-discussion-misroute): the old
+    # workflow-learning owner came from the meta cue "term" found inside the compact text
+    # "routermodel". Everyday meta cues now match whole words only, so the route asks, with
+    # meta-router leading the shortlist. The claim is unchanged: no Jev skill takes it.
     RoutingInterventionCase(
         "jev-router-model-setting-not-jev-ask",
         "Using Jev as the router model is configuration; the pinned owner is today's, the claim is that no Jev skill takes it",
         "use jev as my router model",
-        "dispatch",
-        "workflow-learning",
-        "audit_learning_readiness",
-        "workflow_learning",
-        "workflow-learning",
+        "clarify",
+        "oh-my-hermes",
+        "answer_clarification",
+        "clarification",
+        "meta-router",
     ),
     RoutingInterventionCase(
         "typesafe-typescript-not-jev",
