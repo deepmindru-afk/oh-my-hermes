@@ -243,6 +243,59 @@ def config_provider_base_url_hosts(config_text: str) -> dict[str, str]:
     return hosts
 
 
+def config_provider_declared_models(config_text: str) -> dict[str, frozenset[str]]:
+    """`providers.<id>` -> the model ids its `models:` section lists, casefolded.
+
+    Read line-shaped like `config_provider_base_url_hosts`: under a
+    four-space `models:` key, each six-space mapping key
+    (`claude-opus-5-5:`), `- id` list item, or `- id: x` / `- name: x` item.
+    These are the entries Hermes itself matches when it maps a model back to
+    the `custom:<name>` block that serves it
+    (`find_custom_provider_identity_by_model`). `default_model` is not read:
+    a default says which model a block starts on, not which ones it has. A
+    block with no `models:` section is absent, never an empty set, so
+    "lists nothing" and "lists these" can never be confused.
+    """
+    declared: dict[str, set[str]] = {}
+    in_providers = False
+    current = ""
+    in_models = False
+    for line in config_text.splitlines():
+        stripped = line.strip()
+        if not line.startswith(" ") and stripped:
+            in_providers = stripped == "providers:"
+            current, in_models = "", False
+            continue
+        if not in_providers or not stripped or stripped.startswith("#"):
+            continue
+        if line.startswith("  ") and not line.startswith("    "):
+            key, separator, _rest = stripped.partition(":")
+            current = key.strip().strip("\"'") if separator else ""
+            in_models = False
+            continue
+        if not current:
+            continue
+        if line.startswith("    ") and not line.startswith("      "):
+            key, separator, _rest = stripped.partition(":")
+            in_models = bool(separator) and key.strip() == "models"
+            continue
+        if not in_models or line.startswith("        "):
+            continue
+        entry = stripped.split("#", 1)[0].strip()
+        if entry.startswith("- "):
+            item = entry[2:].strip()
+            key, separator, rest = item.partition(":")
+            if separator and key.strip() not in ("id", "name"):
+                continue
+            model_id = (rest if separator else item).strip().strip("\"'")
+        else:
+            key, separator, _rest = entry.partition(":")
+            model_id = key.strip().strip("\"'") if separator else ""
+        if model_id:
+            declared.setdefault(current, set()).add(model_id.casefold())
+    return {provider_id: frozenset(models) for provider_id, models in declared.items()}
+
+
 def local_config_provider_ids(config_text: str) -> list[str]:
     """`providers.<id>` keys whose `base_url` names a loopback host.
 

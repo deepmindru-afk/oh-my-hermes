@@ -204,7 +204,7 @@ from .panels import (
     plan_text,
 )
 from .dag_pager import DagPager
-from .background import BackgroundProcess, askable, finished_line, report_prompt, running_line, tool_call
+from .background import BackgroundProcess, askable, finished_forms, report_prompt, running_forms, tool_call
 from .clipboard import COPY_OSC52, COPY_PBCOPY, copy_route, pbcopy, tmux_client_over_ssh
 from .prompts import CLOSED_CHOICES, Answer, ImmediateAnswer, PromptSlot, TypeIt, open_request
 from .edge_glow import EDGE_MARGIN, Edge, edge, edge_fits
@@ -480,6 +480,9 @@ QUESTION_VIEW_TITLE = "the open question (q goes back to it)"  # Ctrl+O's pager 
 COMPRESS_COMMANDS = frozenset({"compress", "compact"})
 COMPRESS_PREVIEW_FLAGS = frozenset({"--preview", "--dry-run"})
 COMPRESS_STARTED_NOTICE = "Compressing: Hermes summarizes the older turns with a model call, so this can take a while."
+# The working row's verb while a `/compress` is out and no turn runs (`App._compressing_since`). It offers no Esc:
+# with no turn running Esc arms the rewind and sends no interrupt, so it does not stop a compression.
+COMPRESSING_VERB = "Compressing"
 # How long a `/compress` is waited for: Hermes' own budget for it (`hermes_cli/gateway_client.py` COMPRESS_RPC_TIMEOUT,
 # the compression ceiling plus slack), in place of `CALL_ANSWER_SECONDS`.
 COMPRESS_ANSWER_SECONDS = 660.0
@@ -581,6 +584,10 @@ BARE_HERMES_NOTE = "Bare `hermes` opens Hermes' own terminal."
 # The context figure turns warn, then bad, on the info line.
 CONTEXT_WARN_PERCENT = 80
 CONTEXT_BAD_PERCENT = 95
+# The info line's context gauge (owner, 2026-10-30): `ctx ━━━━──────── 37% 74k/200k`.
+CONTEXT_GAUGE_CELLS = 12
+CONTEXT_GAUGE_FILLED = "━"
+CONTEXT_GAUGE_EMPTY = "─"
 
 # What `/theme auto|light|dark` measures the roles against: the background the terminal reported (auto), or a
 # light or a dark one whatever it reported.
@@ -1679,6 +1686,8 @@ class App(ModesMixin, AgentViewMixin):
         self.opened_ids: list[str] = []  # the sessions this launch had open before `stored_id`, oldest first
         self.model = ""
         self.context_percent: float | None = None
+        self.context_used: float | None = None  # the tokens the context holds and the most it can, with the percent
+        self.context_max: float | None = None
         # What the info line shows (`mode`): accept while Hermes has approvals off, the TUI's own plan flag.
         self.approvals_off = False
         self.plan_mode = False
@@ -1771,8 +1780,8 @@ class App(ModesMixin, AgentViewMixin):
         self.bg_quiet: dict[str, float] = {}
         self.bg_done: tuple[tuple[BackgroundProcess, ...], float] | None = None
         self.bg_drawn: int | None = None  # the row's clock second the last frame showed (`_background_second`)
-        self.bg_slot_row: int | None = None  # the row's index in the slot `_slot_lines` last made, if it made it
-        self.bg_row_shown = False  # whether the last frame drew it (the slot can be cut to fewer rows: `build_frame`)
+        self.bg_on_info = False  # whether the info line `_info_line` last made has the row (it can give way: `info_line`)
+        self.bg_row_shown = False  # whether the last frame drew it (a frame can be too short for the info line)
         # The poller's refresh count at the last turn's end: an older read may predate that end (`_take_background`).
         self.bg_after = 0
         self.notification: Notification | None = None  # Hermes' out-of-band notice, shown above the composer
@@ -2077,7 +2086,8 @@ class App(ModesMixin, AgentViewMixin):
         self.shared_gateway = bool(as_text(result.get("subscription_id")))
         info = result.get("info")
         self.model = as_text(info.get("model")) if isinstance(info, dict) else ""
-        self.context_percent = None  # the next session.usage says how full this session is
+        # The next session.usage says how full this session is.
+        self.context_percent = self.context_used = self.context_max = None
         # The token counter is the session's own. An answer with none opened a session in which no API call has ended
         # on this gateway yet (Hermes sends its first usage block after one), so the counter stands at 0.
         usage = info.get("usage") if isinstance(info, dict) else None
@@ -2310,7 +2320,8 @@ class App(ModesMixin, AgentViewMixin):
             due.append(now + READ_TIMEOUT_SECONDS)
         if self.redraw_at is not None:
             due.append(self.redraw_at)
-        elif self._busy() or self._panel_live() or self._aura_live() or self.held_submits:
+        elif self._busy() or self._compressing_since() is not None or self._panel_live() or self._aura_live() \
+                or self.held_submits:
             due.append(self.last_render + self._tick_seconds())
         if self.redraw_at is None and (background := self._background_due_at()) is not None:
             due.append(background)  # the background row's clock: once a second, on the second
@@ -3009,8 +3020,9 @@ class App(ModesMixin, AgentViewMixin):
         of what streamed before it.
         """
         percent = context_percent(usage)
-        if percent is not None:
+        if percent is not None and isinstance(usage, dict):
             self.context_percent = percent
+            self.context_used, self.context_max = usage["context_used"], usage["context_max"]
         output, calls = usage_count(usage, "output"), usage_count(usage, "calls")
         if output is None:
             return
@@ -5021,6 +5033,18 @@ class App(ModesMixin, AgentViewMixin):
         ends = [call.expires_at for call in self.pending.values() if call.compressing]
         return float(math.ceil(max(0.0, max(ends) - self.clock()))) if ends else None
 
+    def _compressing_since(self) -> float | None:
+        """When the earliest `/compress` this TUI still waits on was sent, while no turn runs; None otherwise.
+
+        The tail then draws a working row of its own for it (`_tail`), its
+        clock counting from this, until the report or the unanswered notice
+        lands. `_busy` stays False for it, so no glow starts and a prompt
+        still goes out as it did."""
+        if self._busy():
+            return None
+        sent = [call.expires_at - call.seconds for call in self.pending.values() if call.compressing]
+        return min(sent) if sent else None
+
     def _compress_unanswered(self, echo: CommandBlock | None, seconds: float) -> None:
         """A `/compress` unanswered in the `seconds` it was waited for (more than `COMPRESS_ANSWER_SECONDS` when it
         was sent behind another one): said under its echo, and nothing is sent again."""
@@ -6142,7 +6166,8 @@ class App(ModesMixin, AgentViewMixin):
         self.terminal.write(BELL if signal == BELL else BELL + signal)
 
     def _report_background(self) -> None:
-        """Enter on an empty composer under a finished row: the one prompt that tells the session, and the row goes."""
+        """Enter on an empty composer while the row says a process finished: the one prompt that tells the session, and
+        the row goes."""
         done = self.bg_done
         if done is None:
             return
@@ -6150,21 +6175,22 @@ class App(ModesMixin, AgentViewMixin):
         self.dirty = True
         self._send_prompt(report_prompt(done[0]))  # every process the row counts
 
-    def _background_line(self, cols: int) -> Line | None:
-        """The background-process row: the first process that ended unreported (and how many more did), else the
-        running one most at risk of going unnoticed (the newest Hermes will not wake the session for), else none."""
+    def _background_forms(self) -> tuple[Line, ...]:
+        """The background-process row's forms on the info line, longest first: the first process that ended unreported
+        (and how many more did), else the running one most at risk of going unnoticed (the newest Hermes will not
+        wake the session for), else none."""
         if not self._background_live():
-            return None
+            return ()
         if self.bg_done is not None:
             done, at = self.bg_done
-            return finished_line(done[0], ago=self.wall_clock() - at, theme=self.theme, width=cols, more=len(done) - 1)
+            return finished_forms(done[0], ago=self.wall_clock() - at, theme=self.theme, more=len(done) - 1)
         shown = self._background_shown()
         # The glyph steps with the clock beside it, on the same second, so the row alone never needs a faster frame.
         step = max(0, int(self.wall_clock() - shown.started_at)) if self.motion else 0
         glyph = WORKING_GLYPHS[step % len(WORKING_GLYPHS)]
-        return running_line(
+        return running_forms(
             shown, more=len(self.bg_running) - 1, now=self.wall_clock(), glyph=glyph, turn_runs=self._busy(),
-            theme=self.theme, width=cols,
+            theme=self.theme,
         )
 
     def _background_shown(self) -> BackgroundProcess:
@@ -6178,10 +6204,15 @@ class App(ModesMixin, AgentViewMixin):
         return self.bg_session == self.stored_id and (bool(self.bg_running) or self.bg_done is not None)
 
     def _background_covered(self) -> bool:
-        """Whether the row is not on screen: the last frame did not draw it (a slot too short for it, a queue that
-        keeps the one row, a slot the frame cut: `bg_row_shown`), or something the slot shows instead hides it now
-        (`_slot_lines`), or the pager covers the screen."""
-        return not self.bg_row_shown or self.pager is not None or any(
+        """Whether the row is not on screen: the last frame did not draw it (an info line too narrow for it or for
+        anything but the keys, a frame with no info line: `bg_row_shown`), or something hides it now
+        (`_background_hidden`)."""
+        return not self.bg_row_shown or self._background_hidden()
+
+    def _background_hidden(self) -> bool:
+        """Whether the info line leaves the row out: a question or a picker has the keys (the line says theirs, and
+        Enter is theirs), or the pager covers the screen."""
+        return self.pager is not None or any(
             surface is not None
             for surface in (self.slot, self.launch_picker, self.picker, self.search, self.rewind_picker,
                             self.model_picker)
@@ -6332,8 +6363,13 @@ class App(ModesMixin, AgentViewMixin):
 
     def _ground(self) -> str | None:
         """The background the living wallpaper gives the terminal now, the shown look's ground (the /theme picker's
-        highlight while it is open), or None where it does not show."""
-        return look_ground(self._shown_look(), self._ground_light()) if self._wallpaper_shown() else None
+        highlight while it is open), or None where it does not show. A look with no scene (the default look) takes
+        the terminal's own background as its ground (owner, 2026-10-30): Otty took another ground only on the cells
+        written after it, so the launch card showed holes of the terminal's own black."""
+        if not self._wallpaper_shown():
+            return None
+        look = self._shown_look()
+        return look_ground(look, self._ground_light()) if look in SCENES else self.background_answered
 
     def _sync_ground(self) -> None:
         """Set the terminal's background to the wallpaper's ground where that changed (OSC 11), or put the terminal's
@@ -6440,8 +6476,8 @@ class App(ModesMixin, AgentViewMixin):
         if self.redraw_at is not None:
             return  # the screen is mid-reflow; the settled redraw paints it
         now = self.clock()
-        due = (self._busy() or self._panel_live() or self._aura_live() or bool(self.held_submits)) \
-            and now - self.last_render >= self._tick_seconds()
+        due = (self._busy() or self._compressing_since() is not None or self._panel_live() or self._aura_live()
+               or bool(self.held_submits)) and now - self.last_render >= self._tick_seconds()
         if not (self.dirty or due or self._background_due()):
             if self._wallpaper_moves() and now - self.ambient_at >= WALLPAPER_TICK_SECONDS:
                 self.ambient_at = now  # only the wallpaper's cells that moved: no frame is built
@@ -6589,8 +6625,7 @@ class App(ModesMixin, AgentViewMixin):
                            ambient=self._ambient(), ambient_above=True)
         self.ambient_at = self.clock()
         self.frame_budget = frame.budget
-        # The frame keeps the slot's first rows (`build_frame`), and the row is the slot's last.
-        self.bg_row_shown = self.bg_slot_row is not None and self.bg_slot_row < frame.budget.slot
+        self.bg_row_shown = self.bg_on_info and frame.budget.info > 0  # the row is on the info line (`_info_line`)
         self.frame_busy = busy
         if busy:
             self.view_hold = (wanted, frame.budget.agents, self._working_rows())
@@ -6693,7 +6728,10 @@ class App(ModesMixin, AgentViewMixin):
         elif self._newline_keys_due():
             say = NEWLINE_KEYS
         badge = self._badge_forms()
-        # The count is sized on the whole line: the badge and the branch give way before the count does (`info_line`).
+        # A tiny terminal keeps its one line for the keys, as it does without the badge (`_badge_forms`).
+        background = self._background_forms() if badge and not self._background_hidden() else ()
+        # The count is sized on the whole line: the badge, the branch and the background-process row give way before
+        # the count does (`info_line`).
         room = cols - inset - chip_column(self._display_mode(), self.theme)
         if isinstance(say, tuple):
             room -= cell_width(LABEL_SEPARATOR + say[max(len(say) - 2, 0)])
@@ -6711,7 +6749,12 @@ class App(ModesMixin, AgentViewMixin):
             cycle=HERMES_OWN_CYCLE.get(self._display_mode(), "") if self.approvals_off_by_hermes else "",
             badge=badge,
             branch=branch_forms(self.git.state, self.theme) if self.git is not None and badge else (),
+            background=background,
+            right_spare=int(bool(self.session_title)),  # the title goes before the row does (`_compose_info_right`)
         )
+        # Whether the row's form made it onto the line: what keeps its clock ticking (`_background_second`).
+        words = "".join(span.text for span in line)
+        self.bg_on_info = any("".join(span.text for span in form) in words for form in background)
         return (Span(" " * inset), *line) if inset and line else line
 
     def _info_inset(self) -> int:
@@ -6808,8 +6851,9 @@ class App(ModesMixin, AgentViewMixin):
                                            glint=self._aura_moves())
         if not lines and self.transcript.taken_any:
             lines = [()]  # the spacer a block opens with, here between the transcript and the region under it
+        compressing = self._compressing_since()
         # A blank row above the working row, as between two blocks; the frame drops it first when rows are short.
-        self.tail_spacer = self._busy() and bool(lines) and bool(lines[-1])
+        self.tail_spacer = (self._busy() or compressing is not None) and bool(lines) and bool(lines[-1])
         if self.tail_spacer:
             lines.append(())
         if self._busy() and self.waiting_since is not None:
@@ -6858,6 +6902,13 @@ class App(ModesMixin, AgentViewMixin):
             tip = self._tip_line(cols)
             if tip is not None:
                 lines.append(tip)
+        elif compressing is not None:
+            # A `/compress` out with no turn running: the spinner and its clock, so the wait reads as alive.
+            frame = self._spinner_frame()
+            row = (Span(WORKING_GLYPHS[frame % len(WORKING_GLYPHS)], self.theme.accent), Span(" "),
+                   *working_spans(f"{COMPRESSING_VERB}…", frame, self.theme),
+                   Span(f" ({elapsed_text(now - compressing)})", self.theme.muted))
+            lines.append(truncate_line(row, cols))
         return lines
 
     def _working_rows(self) -> int:
@@ -6865,7 +6916,7 @@ class App(ModesMixin, AgentViewMixin):
         interrupting) row, and the tip under the working row from TIP_MIN_ROWS rows. The agent view leaves the tail
         these (`layout.allocate`'s `tail_floor`), so a short terminal never loses the row saying a turn runs."""
         if not self._busy():
-            return 0
+            return int(self._compressing_since() is not None)  # the compression's row, with no tip
         return 1 + int(self.size[1] >= TIP_MIN_ROWS and self.waiting_since is None and not self.interrupting)
 
     def _tip_line(self, cols: int) -> Line | None:
@@ -6893,7 +6944,6 @@ class App(ModesMixin, AgentViewMixin):
         cap = choice_cap(rows, cols) if self._composer_hidden() else slot_cap(rows, cols)
         self.menu_under = []
         self.panel_shown = False  # the plan panel is in the slot (`_menu_or_panel_lines`): it gets its blank rows
-        self.bg_slot_row = None
         if self.slot is not None:
             cap = max(cap, 1)  # on a tiny terminal a question answered with text keeps a row for its label (`allocate`)
         if cap <= 0:
@@ -6913,21 +6963,19 @@ class App(ModesMixin, AgentViewMixin):
         if self.model_picker is not None:
             return self.model_picker.lines(cols, self.theme, cap)
         # Nothing has the keys, or the agent list under the info line has them (the slot keeps its rows then, so
-        # nothing moves): the background-process row takes the slot's last row, right above the composer's top
-        # rule, the `waiting for the image…` row above it while a submit is held for a paste, the queued prompts the
-        # rows above that, Hermes' notification the row above them, Hermes' standing goal
-        # the row above that, and the menu or the plan gets the rows left. A question or the picker hides them,
-        # since Up then does not edit the queue. With one row, the queue keeps it: its `↑ edit` says what Up does.
-        found = self._background_line(cols)
-        background = [found] if found is not None and (cap > 1 or not self.queued) else []
+        # nothing moves): the `waiting for the image…` row takes the slot's last row, right above the composer's top
+        # rule, while a submit is held for a paste, the queued prompts the rows above it, Hermes' notification the
+        # row above them, Hermes' standing goal the row above that, and the menu or the plan gets the rows left. A
+        # question or the picker hides them, since Up then does not edit the queue. The background-process row is on
+        # the info line under the composer (`_info_line`).
         hint = QUEUE_HELD_HINT if self.queue_held else QUEUE_EDIT_HINT
         send_now = self._steer_keys_live() and self._queue_head_steers()
         below = SEND_NOW_HINT.format(key=SEND_NOW_KEYS[self.keyboard_protocol]) if send_now else ""
         found = self._image_wait_line(cols)
-        waiting = [found] if found is not None and cap > len(background) else []
-        queue = queue_lines([line.shown or line.text for line in self.queued], cols,
-                            cap - len(background) - len(waiting), self.theme, hint, below)
-        taken = len(background) + len(waiting) + len(queue)
+        waiting = [found] if found is not None else []
+        queue = queue_lines([line.shown or line.text for line in self.queued], cols, cap - len(waiting), self.theme,
+                            hint, below)
+        taken = len(waiting) + len(queue)
         notice = [self.notification.line(cols, self.theme)] if self.notification and cap > taken else []
         shown = goal_line(self.goal, cols, self.theme)
         goal = [shown] if shown is not None and cap > taken + len(notice) else []
@@ -6935,9 +6983,7 @@ class App(ModesMixin, AgentViewMixin):
         if self.menu_below:  # the menu goes under the composer, and the panel stays away as it does for the menu
             self.menu_under, menu = menu, []
             self.panel_shown = False
-        lines = menu + goal + notice + queue + waiting + background
-        self.bg_slot_row = len(lines) - 1 if background else None
-        return lines
+        return menu + goal + notice + queue + waiting
 
     def _menu_or_panel_lines(self, cols: int, cap: int) -> list[Line]:
         if cap <= 0:
@@ -6968,12 +7014,39 @@ class App(ModesMixin, AgentViewMixin):
             return self.theme.error
         return self.theme.warn if percent >= CONTEXT_WARN_PERCENT else self.theme.muted
 
+    def _context_forms(self) -> list[Line]:
+        """The context's forms, longest first: `ctx ━━━━──────── 37% 74k/200k`, then without the token counts (used
+        over the most the context holds), then `ctx 37%`; none before Hermes sent context figures.
+
+        The filled cells and the percent turn warn from `CONTEXT_WARN_PERCENT`
+        full and error from `CONTEXT_BAD_PERCENT`; under `NO_COLOR` the
+        filled and the empty cells still tell the part used.
+        """
+        percent = self.context_percent
+        if percent is None:
+            return []
+        style = self._context_style()
+        filled = min(CONTEXT_GAUGE_CELLS, max(0, int(percent * CONTEXT_GAUGE_CELLS / 100 + 0.5)))
+        spans = (
+            Span("ctx ", self.theme.muted),
+            Span(CONTEXT_GAUGE_FILLED * filled, style),
+            Span(CONTEXT_GAUGE_EMPTY * (CONTEXT_GAUGE_CELLS - filled), self.theme.dim),
+            Span(f" {percent:.0f}%", style),
+        )
+        gauge: Line = tuple(span for span in spans if span.text)
+        forms = [gauge, (Span(f"ctx {percent:.0f}%", style),)]
+        if self.context_used is not None and self.context_max is not None:
+            counts = f" {compact_count(self.context_used)}/{compact_count(self.context_max)}"
+            forms.insert(0, (*gauge, Span(counts, self.theme.muted)))
+        return forms
+
     def _info_right(self) -> tuple[Line, ...]:
         """The info line's right side, composed again only when something it shows changed (a spinner tick changes nothing).
 
         Its forms are the same at every width; `info_line` picks the one that fits.
         """
-        shown = (self.model, self.context_percent, self.effort, self._busy(), self.slot is not None, self.session_title)
+        shown = (self.model, self.context_percent, self.context_used, self.context_max, self.effort, self._busy(),
+                 self.slot is not None, self.session_title)
         held = self.info_held
         if held is not None and held[0] == shown and held[1] is self.theme and held[2] is self.hud:
             return held[3]
@@ -6987,18 +7060,17 @@ class App(ModesMixin, AgentViewMixin):
 
         The title (Hermes' `session.title`, cut to `INFO_TITLE_CELLS`) goes
         first; the model then shortens (`model_forms`), then goes, then the
-        effort, then the context; the HUD's chips (`hud_chips`: a repeating
-        call, the tool calls in flight) go last. The context turns warn from
-        `CONTEXT_WARN_PERCENT` full and error from `CONTEXT_BAD_PERCENT`.
+        effort, then the context shortens (`_context_forms`) and goes; the
+        HUD's chips (`hud_chips`: a repeating call, the tool calls in flight)
+        go last.
         """
         payload = self.hud.payload if self.hud is not None else None
         chips = list(hud_chips(payload, self.theme, turn_runs=self._busy(), question_waits=self.slot is not None))
-        percent = self.context_percent
-        context: Line = (Span(f"ctx {percent:.0f}%", self._context_style()),) if percent is not None else ()
+        contexts = self._context_forms() or [()]
         effort: Line = (Span(effort_words(self.effort), self.theme.muted),)
         models: list[Line] = [(Span(name, self.theme.muted),) for name in model_forms(self.model)]
-        fields = [[*chips, model, context, effort] for model in models]
-        fields += [[*chips, context, effort], [*chips, context], chips]
+        fields = [[*chips, model, contexts[0], effort] for model in models]
+        fields += [[*chips, contexts[0], effort], *([*chips, context] for context in contexts), chips]
         forms: list[Line] = []
         for parts in fields:
             joined: Line = ()
