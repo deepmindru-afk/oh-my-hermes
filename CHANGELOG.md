@@ -6,6 +6,13 @@ All notable changes will be documented here.
 
 ![Sprite Forge patch notes](https://raw.githubusercontent.com/rlaope/oh-my-hermes/main/assets/omh-sprite-forge-patch-notes.png)
 
+- **The working glow is smaller.** The light that goes round the screen
+  while a turn runs read too big and hid most of the top row's text as it
+  passed. Its trail is half as long (a seventh of the way round, from a
+  third), so it covers half as much of that row at a time, and the top and
+  bottom rows are half a row thick, without the faint tint they laid under
+  the light's inner half.
+
 - **The default look, spectrum, keeps its background colour and draws no
   picture.** Its pixel aura is gone: the wallpaper still sets spectrum's
   ground, and the other seven looks keep their scenes. An idle screen on

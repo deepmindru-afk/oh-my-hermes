@@ -25,8 +25,8 @@ the top band runs into the side without a step, and because a
 terminal's line spacing leaves a half block short of the row and a side
 drawn with them looks dashed; without a reported background (one guessed
 for a dark screen would paint a dark cell on a light one) it is a half block
-(`▌`, `▐`). The inner half of a top or bottom cell takes a faint tint
-(`TINT`) under the same condition.
+(`▌`, `▐`). The inner half of a top or bottom cell is left as it is, so the
+light there is half a row thick (owner, 2026-10-30: the glow read too big).
 
 This module only says what the edge's cells are. The screen layer paints
 them over the rows (`screen.LiveRegion`), and the app keeps the screen's edge
@@ -48,11 +48,12 @@ LOOP_SECONDS = 4.0  # the light's head goes once round the screen in this long
 TICK_SECONDS = 0.05  # how often the app paints while the light moves
 ROW_HEIGHT = 2  # a row is about this many cell widths tall
 NOSE = 3.0  # cells of the way round the head's round front rises over
-TRAIL_SHARE = 0.3  # of the way round, the trail behind the head fades out over
+# Of the way round, the trail behind the head fades out over; it also bounds how much of the top row's text the light
+# covers as it passes (owner's pick of 2026-10-30 from 0.3, 0.15 and 0.08: 0.3 read too big).
+TRAIL_SHARE = 0.15
 TRAIL_CURVE = 1.6  # how fast the trail fades: above 1 it falls off quickly behind the head, then lingers
 PEAK = 0.8  # how much of the ring's colour the head takes, the rest the background's
 GLINT = 0.45  # how far the head's colour goes toward white, on a dark background
-TINT = 0.25  # the inner half's share of the outer half's colour, on the top and bottom rows
 LEVELS = 24  # brightness steps: a cell keeps its bytes until its step changes
 EDGE_MIN_COLS = 20  # a screen narrower than this, or shorter than EDGE_MIN_ROWS, keeps its edge and has no glow
 EDGE_MIN_ROWS = 8
@@ -114,20 +115,20 @@ def brightness(back: float, trail: float) -> float:
 def glow_style(theme: Theme, back: float, trail: float, whole: bool) -> Style | None:
     """A cell's colours `back` cells behind the head: the ring's colour that far along the trail, nearer white the
     nearer the head, as bright as `brightness` says, stepped to `LEVELS`. `whole` fills the cell with it (a side or
-    a corner, where the theme may tint), else the glyph takes it and the background a faint tint where the theme allows one.
+    a corner, where the terminal reported its background), else the glyph takes it over the cell's own background.
     None where the cell is not lit."""
     level = round(PEAK * brightness(back, trail) * LEVELS) / LEVELS
     if level <= 0:
         return None
     ring = theme.glow_ring
     colour = ring[min(int(max(back, 0.0) / trail * len(ring)), len(ring) - 1)].fg or WHITE
-    surface, tint = _surface(theme)
+    surface, known = _surface(theme)
     if not is_light(surface):
         colour = blend(colour, WHITE, GLINT * _dome(abs(back)))
     lit = blend(surface, colour, level)
-    if whole and tint:
+    if whole and known:
         return Style(bg=lit)
-    return Style(fg=lit, bg=blend(surface, colour, level * TINT) if tint else None)
+    return Style(fg=lit)
 
 
 def _surface(theme: Theme) -> tuple[str, bool]:
