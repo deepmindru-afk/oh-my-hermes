@@ -162,11 +162,23 @@ BLOCK_CAP = 2000
 USER_MARK = "❯ "  # the composer's mark (`composer.PROMPT`), dim, before your prompt's dim text, on its band
 FROM_QUEUE_TAG = "⧗ from queue"  # on a prompt the queue sent once the turn before it ended
 # A steer the person sent: SENT until Hermes answers, then QUEUED (Hermes took it: it reads it after its next
-# tool call, or sends it as the next prompt while compressing, and says the same for both) or REFUSED.
+# tool call, or sends it as the next prompt while compressing, and says the same for both) or REFUSED. A steer into
+# the main turn then stays QUEUED, under the live blocks, until the turn reads it (READ, at the first tool that
+# finishes) or the turn ends or its session is left first (TAKEN: Hermes read it before a later model call, or sends
+# it as the next prompt; the TUI is not told which). A subagent's steer stays QUEUED, as Hermes said.
 STEER_MARK = "↪ "
 STEER_SENT = "sent"
 STEER_QUEUED = "queued"
+STEER_READ = "read"
+STEER_TAKEN = "taken"
 STEER_REFUSED = "refused"
+# What each state says between `↪ steer` and the text (owner, 2026-10-30: a steer must be easy to see), and its role.
+STEER_WORDS = {
+    STEER_SENT: ("", ""),
+    STEER_QUEUED: ("waits for the current step", "warn"),
+    STEER_READ: ("✓ read", "ok"),
+    STEER_TAKEN: ("taken by Hermes", "muted"),
+}
 STEER_REFUSED_MARK = "⧗ "
 COMMAND_MARK = USER_MARK  # a command the person ran, echoed in the hint colour above what it printed
 # What a call or a command printed hangs under its row behind `  ⎿  `, and its later rows line up with the words.
@@ -837,26 +849,35 @@ def _user_rows(block: UserBlock, width: int, theme: Theme) -> list[Line]:
 
 
 def _awaits_answer(block: Block) -> bool:
-    """A held block that is not finished yet: a steer Hermes has not answered, a command still printing."""
+    """A held block that is not finished yet: a steer Hermes has not answered, or one into the main turn that the
+    turn has not read; a command still printing."""
     if isinstance(block, CommandBlock):
         return not block.done
-    return isinstance(block, SteerBlock) and block.state == STEER_SENT
+    return isinstance(block, SteerBlock) and (
+        block.state == STEER_SENT or (block.state == STEER_QUEUED and not block.agent)
+    )
 
 
 def _steer_rows(block: SteerBlock, width: int, theme: Theme) -> list[Line]:
-    """`↪ steer · <text>` while it waits for Hermes, `↪ steer queued by Hermes · <text>` once taken, or the refusal.
+    """`↪ steer · <text>` while it waits for Hermes, then `↪ steer · <state> · <text>` (`STEER_WORDS`), or the refusal.
 
-    A subagent's steer names it before the text: `<agent>: <text>`.
+    `↪ steer` is bold in the terminal's foreground and the state in its own
+    colour: amber while the turn has not read it, green once it has. A
+    subagent's steer names it before the text, `<agent>: <text>`, and stays
+    `queued by Hermes` once taken: no read of it reaches the TUI.
     """
     text = _first_line(block.text)
     if block.agent:
         text = f"{block.agent}: {text}"
     if block.state == STEER_REFUSED:
         return [truncate_line((Span(f"{STEER_REFUSED_MARK}{block.outcome} · {text}", theme.warn),), width)]
-    words = "steer queued by Hermes · " if block.state == STEER_QUEUED else "steer · "
+    words, role = STEER_WORDS[STEER_TAKEN if block.agent and block.state == STEER_QUEUED else block.state]
     band = theme.prompt_band  # a message you sent mid-turn runs on your sent prompt's band, as the prompt does
     roles = on_band(theme, band) if band.bg is not None else theme
-    row = truncate_line((Span(STEER_MARK, roles.muted), Span(words, roles.muted), Span(text, roles.text)), width)
+    state = (Span(words, getattr(roles, role)), Span(" · ", roles.muted)) if words else ()
+    row = truncate_line(
+        (Span(f"{STEER_MARK}steer", roles.user), Span(" · ", roles.muted), *state, Span(text, roles.text)), width
+    )
     return _banded([row], band) if band.bg is not None else [row]
 
 

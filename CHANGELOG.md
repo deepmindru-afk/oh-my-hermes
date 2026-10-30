@@ -6,6 +6,17 @@ All notable changes will be documented here.
 
 ![Sprite Forge patch notes](https://raw.githubusercontent.com/rlaope/oh-my-hermes/main/assets/omh-sprite-forge-patch-notes.png)
 
+- **A steer shows whether the model has read it.** After Hermes takes a
+  steer, its row stays right above the working row as `↪ steer · waits for
+  the current step · <text>`, with `↪ steer` bold and the state in amber,
+  instead of a dim `↪ steer queued by Hermes`. When the first tool that
+  finishes carries it to the model it turns green, `↪ steer · ✓ read`. A turn
+  that ends first leaves it `taken by Hermes` (Hermes read it before a later
+  model call, or sends it as the next prompt, and does not say which), and a
+  turn you stop before it was read says `not read — the turn stopped first`.
+  Hermes reads a steer only between steps, so one sent during a long tool
+  call waits for that call to end; the row now says so.
+
 - **A coding turn ends with one consistency check.** When a turn in the
   coding posture edited source code, OMH continues it once at its first stop.
   It asks the model to look for other copies or call sites of the logic it
