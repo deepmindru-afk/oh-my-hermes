@@ -33,7 +33,7 @@ from typing import Any, Final
 from . import lsp_bridge, lsp_nav, runtime_paths
 from .lsp_bridge import BridgeError
 from .lsp_nav import LspNavError
-from .tools.lsp_nav_tool import _lsp_tools_enabled, _workspace_root
+from .tools.lsp_nav_tool import _lsp_tools_enabled, _workspace_root, workspace_relative
 
 IMPACT_ENV: Final = "OMH_IMPACT_CHECK"
 IMPACT_SETTING: Final = "impact_check"
@@ -442,7 +442,7 @@ def round_end_note(session_id: str, changed_paths: object) -> str:
                     remaining[key] -= 1
                     continue
                 message = (key[1].splitlines() or ["error"])[0][:_MESSAGE_CHARS]
-                new.append((os.path.relpath(path, root), _line(item), message))
+                new.append((workspace_relative(path, root), _line(item), message))
         _LOG.info("impact_check round_end session=%s importers=%d new_errors=%d files=%d ms=%d", session_id,
                   len(known), len(new), len({row[0] for row in new}), (time.monotonic() - started) * 1000)
         return format_note(new, recheck_tool=_lsp_tools_enabled())

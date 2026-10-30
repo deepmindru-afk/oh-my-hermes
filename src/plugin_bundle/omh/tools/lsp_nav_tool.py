@@ -13,6 +13,7 @@ import fnmatch
 import json
 import os
 import re
+from pathlib import PurePath
 from typing import Any
 
 from .. import lsp_bridge, lsp_nav, runtime_paths
@@ -411,6 +412,12 @@ _GLOB_CHARS = ("*", "?", "[")
 _GLOB_SKIP = frozenset({"venv", "node_modules", "__pycache__"})  # plus every dot-directory
 
 
+def workspace_relative(path: str, root: str) -> str:
+    """``path`` relative to ``root`` with `/` separators on every platform, for text a model reads
+    and for glob matching; file I/O keeps the OS path."""
+    return PurePath(os.path.relpath(path, root)).as_posix()
+
+
 def _glob_regex(pattern: str) -> "re.Pattern[str]":
     """glob semantics over a `/`-separated relative path: `*` and `?` stay inside one directory,
     `**/` spans any number of directories (including none), `[...]` is a character class."""
@@ -457,7 +464,7 @@ def _diagnostic_files(requested: str, root: str) -> tuple[list[str], int]:
         dirnames[:] = sorted(d for d in dirnames if not d.startswith(".") and d not in _GLOB_SKIP)
         for filename in sorted(filenames):
             path = os.path.realpath(os.path.join(dirpath, filename))
-            relative = os.path.relpath(path, root).replace(os.sep, "/")
+            relative = workspace_relative(path, root)
             if lsp_nav.inside(path, root) and matcher.fullmatch(relative):
                 matches.append(path)
     if not matches:
@@ -486,7 +493,7 @@ def lsp_diagnostics_handler(args: dict[str, Any], **kwargs: object) -> str:
         summary: list[dict[str, Any]] = []
         totals = {"error": 0, "warning": 0}
         for path in files:
-            relative = os.path.relpath(path, root)
+            relative = workspace_relative(path, root)
             if path not in found:
                 summary.append({"path": relative, "status": "unsupported"})
                 continue

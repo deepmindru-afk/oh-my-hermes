@@ -82,11 +82,11 @@ class ImporterScanTests(_Root):
 
     def test_module_names(self):
         self.assertEqual(module_names(self.target, self.root), {"src.shop.pricing", "shop.pricing"})
-        self.assertEqual(module_names(os.path.join(self.root, "src/shop/__init__.py"), self.root), {"src.shop", "shop"})
+        self.assertEqual(module_names(os.path.join(self.root, "src", "shop", "__init__.py"), self.root), {"src.shop", "shop"})
 
     def test_finds_every_import_form_and_the_reexport(self):
         found = set(find_importers(self.root, self.target))
-        package = os.path.join(self.root, "src/shop/__init__.py")
+        package = os.path.join(self.root, "src", "shop", "__init__.py")
         self.assertEqual(found, {package, self.direct, self.alias, self.module, self.relative, self.dot, self.plain,
                                  self.reexport, self.sibling})
 
@@ -402,7 +402,8 @@ class DiagnosticsToolTests(_Root):
             return {path: [] for path in paths}
 
         self.call(answer, path=pattern)
-        return [os.path.relpath(path, self.root) for path in seen.get("paths", [])]
+        # The bridge gets OS paths (file I/O); compare them in one spelling.
+        return [Path(os.path.relpath(path, self.root)).as_posix() for path in seen.get("paths", [])]
 
     def test_glob_semantics_and_pruned_directories(self):
         self.assertEqual(self._paths("src/*.py"), ["src/a.py", "src/b.py"])
