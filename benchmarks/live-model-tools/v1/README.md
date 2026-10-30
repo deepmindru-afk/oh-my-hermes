@@ -1278,6 +1278,71 @@ with every clause unchanged, including final answer kept at least base - 2.
 - **Scoring.** The result is recomputed from the raw run records and session-DB snapshots and
   recorded here.
 
+#### Re-measure result: gate failed on one clause (pooled strong-model wall time); the change is rejected
+
+The run:
+- base origin/main `b906cb425` against new `9f5f0430f`;
+- seeds 181081, 206347 and 231419;
+- 168 of 168 run records, all completed, with no retries.
+
+Recomputed from the run records and the profile session-DB snapshots by `OPT/A/gate2.py` in the
+research folder. The strong-model pooled medians were also recomputed separately from the run
+records alone.
+
+| Model | base pass | new pass | base tokens (median) | new tokens (median) | base wall (median) | new wall (median) |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| `claude-haiku-4-5-20251001` | 21 / 21 | 21 / 21 | 145,844 | 129,919 | 47.8 s | 45.6 s |
+| `claude-sonnet-5-5` | 21 / 21 | 21 / 21 | 75,769 | 53,641 | 28.1 s | 23.1 s |
+| `gpt-6-luna` | 21 / 21 | 21 / 21 | 102,638 | 89,090 | 43.2 s | 43.5 s |
+| `gpt-6.1-sol` | 18 / 21 | 18 / 21 | 97,620 | 83,706 | 61.4 s | 59.2 s |
+| **Total** | **81 / 84** | **81 / 84** | 9.22M total | 7.29M total | 45.4 s | 44.2 s |
+
+Every template passed 12 / 12 in both arms except `L-RENAME-ALIAS`, which passed 9 / 12 in
+both. The three misses in each arm are `gpt-6.1-sol` (`semantic_validator_failed`). Model calls
+after the last edit (median): base 6, new 4.
+
+The gate, as registered:
+
+1. Total passes, new at least base - 1: 81 vs 81. Pass.
+2. `C-DUPLICATE`, new at least base: 12 vs 12. Pass.
+3. `mutation_outside_scope`, new at most base: 0 vs 0. Pass.
+4. Final answer kept, new at least base - 2: 62 vs 63. Pass.
+5. Fire rate on the five no-copy templates, new at most half of base: 0 / 54 vs 54 / 54. Pass.
+6. Strong models:
+   - `claude-sonnet-5-5`: tokens 53,641 vs 75,769; wall 23.1 vs 28.1 s.
+   - `gpt-6.1-sol`: tokens 83,706 vs 97,620; wall 59.2 vs 61.4 s.
+
+   Each model is below base on both, which passes. Pooled over both models (42 runs per arm),
+   median tokens are 65,200 vs 86,906, 0.750x, which passes. Median wall time is 44.52 vs
+   44.75 s, 0.995x, against the registered 0.95x. **Fail.**
+
+Why the pooled wall median barely moved:
+- The pooled set mixes two separate distributions: Sonnet around 23 to 28 s, and sol around
+  59 to 61 s.
+- With 21 runs from each model, the pooled median falls in the gap between them. It is the
+  mean of the slowest Sonnet runs and the fastest sol runs, so it barely reflects either
+  model's own median.
+- The mean pooled wall time fell from 47.2 to 43.7 s.
+
+These are readings made after the run. The clause was registered as a pooled median, and it
+failed.
+
+The trigger's verdicts in the new arm:
+- `copy` 19: every `C-DECOY` session, and 7 of 11 `C-DUPLICATE` coding sessions.
+- `no_copy_or_reference` 58, no fail-opens.
+- Each decision took 0 to 236 ms.
+
+The decision rule registered for this re-measure was that a failed clause records the change as
+rejected. **The round-end trigger is rejected. There is no further re-measure.**
+
+Spend: 16.51M tokens, $0.
+- CPA Claude subscription: 8,550,991 (base 4,861,273, new 3,689,718).
+- Codex subscription: 7,960,797 (base 4,357,529, new 3,603,268).
+
+No gateway was signalled. The eight `opta2-*` profiles were deleted after their databases and
+logs were kept. None had a `gateway.pid` or a bound backend process, and the shared gateway's
+pid did not change.
+
 ### 2026-10-30 impact check: callers broken by an edit, off vs on (`impact_check` + `lsp_diagnostics`), gate passed
 
 One question, from oh-my-pi's workspace diagnostics: when an edit changes a definition, does
