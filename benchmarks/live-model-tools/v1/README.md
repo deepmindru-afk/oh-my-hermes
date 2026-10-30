@@ -1278,7 +1278,7 @@ What it shows, and what it does not:
   dispatch, so those callers still break silently. A deleted or moved module is not checked.
   n = 12 per model per arm.
 
-### 2026-10-31 export check: a rename's stale `__all__` entry, base vs new (`pre_verify`)
+### 2026-10-31 export check: a rename's stale `__all__` entry, base vs new (`pre_verify`), gate failed
 
 One question: when a turn leaves a module exporting a name it no longer defines, does naming that
 line at the turn's first stop make the model fix it? In the OPT-A round-end run (2026-10-30, the
@@ -1342,6 +1342,48 @@ template, whether each note named an entry that was stale in that session, media
 model calls per arm.
 
 A failed clause means the change does not merge; the result is recorded here either way.
+
+Result: **gate failed on clause 4 (tokens)**. Clauses 1-3 passed. Recomputed from the raw records,
+the profiles' session databases and their agent logs:
+
+| Clause | base | new | Verdict |
+| --- | ---: | ---: | --- |
+| 1. `L-RENAME-ALIAS` new >= base + 2 | 8 / 12 | 12 / 12 | pass |
+| 2. Total new >= base - 1 | 56 / 60 | 60 / 60 | pass |
+| 3. Notes on the 24 control sessions | - | 0 | pass |
+| 4. Median tokens new <= 1.05x base | 89,433 | 98,080 (1.097x) | **fail** |
+
+By model, pass · median tokens:
+
+| Model | base | new |
+| --- | --- | --- |
+| `claude-haiku-4-5-20251001` | 15/15 · 131k | 15/15 · 127k |
+| `claude-sonnet-5-5` | 15/15 · 32k | 15/15 · 43k |
+| `gpt-6-luna` | 14/15 · 112k | 15/15 · 120k |
+| `gpt-6.1-sol` | 12/15 · 88k | 15/15 · 91k |
+
+What it shows, and what it does not:
+
+- The note fired in 3 of 60 new-arm sessions: the three `gpt-6.1-sol` `L-RENAME-ALIAS` runs. Each
+  named `src/benchapp/api.py:3`, each base twin left `__all__ = ["compute_quota"]` and failed, and
+  each new run fixed the line and passed. Those three sessions cost 1.24-1.41x their base twin's
+  tokens (2-3 more model calls). Because the round-end consistency check already continued every
+  GPT session, the note never added a round of its own.
+- The other gained pass (`gpt-6-luna` `L-RENAME-ALIAS`, 2/3 to 3/3) had no note; it is run-to-run
+  variation, so the attributable gain is +3, not +4.
+- In the 57 sessions without a note the export check returned an empty string, so the model's input
+  was byte-identical across the arms. Those sessions still differ by 1.058x in median tokens, and
+  the paired difference is not significant (new heavier in 36 of 60 pairs, one-sided sign test
+  p = 0.08). Clause 4 failed on variation the change cannot have caused, but the clause was fixed
+  before the run and is not redefined here.
+- The check ran on every new-arm turn that edited a `.py` file (48 of 48): median 7 ms, max 101 ms.
+- The run used omh `fix/rename-leaves-dangling-export` `71f0dd719` against origin/main
+  `b906cb425`, one base/new profile pair per model, 4 models in parallel, 2026-10-31 02:25-02:58
+  KST. 120 of 120 records completed; none failed, timed out or was retried. A one-instance smoke
+  (`gpt-6.1-sol`, `L-RENAME-ALIAS` seed 104729, on `fd0b1895f`) ran before the counted run and is
+  not counted.
+- n = 3 per model per template. Only `__all__` and `from ... import` names are checked; a stale
+  name in a docstring, a string-dispatch table or a non-Python file is not.
 
 ### 2026-10-30 big files: read outline off vs on (`bigfile-ab`), gate failed
 
