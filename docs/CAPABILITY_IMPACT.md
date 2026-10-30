@@ -84,16 +84,30 @@ check only for surfaces where ordinary code tests are insufficient:
 - CI workflow changes require a syntax check or the workflow's local command
 
 Every turn that edited a source file also gets a round-end consistency check,
-once, at its first stop (`attempt == 0`), on any surface except a delegated
-child (`platform == "subagent"`). It asks the model to look for other copies or
-call sites of the logic it changed that have to change with it, and to fix any
-it finds. It also tells the model not to re-run tests or re-check anything else.
-It ends by asking the model to restate its final answer, because Hermes keeps
-the answer the model stopped with only as an interim message and returns what
-follows the nudge as the turn's final response. The cost is an extra round of
-the turn. Measured costs and gains are in the 2026-10-30 section of
-`benchmarks/live-model-tools/v1/README.md`. `agent.max_verify_nudges: 0` turns
-this off together with every other `pre_verify` nudge.
+once, at its first stop (`attempt == 0`). The check asks the model to look for
+other copies or call sites of the logic it changed that have to change with it,
+and to fix any it finds. It also tells the model not to re-run tests for this
+check. The served-surface request above, when present, still stands.
+
+Hermes keeps the answer the model stopped with only as an interim message, and
+returns whatever follows the nudge as the turn's final response. So when no
+plan is open, the message ends with one closing sentence. If nothing more
+changed, the model replies with the single line `OMH: no further changes.`.
+`pre_verify` stashed the answer the turn stopped with (in process, per session,
+bounded, for one turn), and `transform_llm_output` swaps the line back to that
+answer before Hermes persists it. The stored transcript, `--oneshot`, API
+callers and parents of delegated runs therefore get the original answer byte
+for byte. The OMH TUI keeps the streamed line rather than printing the answer
+twice. With an open plan the turn goes on, so there is no closing.
+
+Delegated children (`platform == "subagent"`) never get the check. This only
+matters under `agent.coding_context: on`, because otherwise Hermes gives
+non-interactive platforms no coding posture.
+
+The cost is one extra round of the turn. Measured costs and gains are in the
+2026-10-30 section of `benchmarks/live-model-tools/v1/README.md`.
+`agent.max_verify_nudges: 0` turns this off together with every other
+`pre_verify` nudge.
 
 The same hook carries one further directive: when the session's own OMH plan
 still has open work, or a finished dispatch is unacknowledged, the message also

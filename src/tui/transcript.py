@@ -1718,6 +1718,16 @@ class Transcript:
         elif text.split() and text.split(maxsplit=1)[0][:FIRST_WORD_CHARS] not in block.text:
             self._append(AssistantBlock(text))
 
+    def _repeats_sealed_answer(self, text: str, live: AssistantBlock) -> bool:
+        """`text` is the text of a sealed reply earlier in this turn, and not what is streaming live."""
+        lines = _display_lines(text)
+        if not lines or _display_lines(live.text) == lines:
+            return False
+        return any(
+            isinstance(block, AssistantBlock) and block is not live and block.done and _display_lines(block.text) == lines
+            for block in self.blocks[self._turn_start :]
+        )
+
     def _repeats_turn_answer(self, text: str) -> bool:
         lines = _display_lines(text)
         return any(
@@ -1761,7 +1771,12 @@ class Transcript:
         error = as_text(payload.get("error"))
         bare_error = status == "error" and _is_bare_error(text, error)
         block = self._live(AssistantBlock)
-        if block is not None and not bare_error:
+        if block is not None and not bare_error and self._repeats_sealed_answer(text, block):
+            # OMH's round-end check swaps a one-line "no further changes" reply
+            # back to the answer the turn stopped with, which already shows here
+            # as a sealed block: keep the streamed line rather than print it twice.
+            pass
+        elif block is not None and not bare_error:
             self._settle_reply(block, text)
         elif block is None and not bare_error and text.strip() and not self._repeats_turn_answer(text):
             self._append(AssistantBlock(text))

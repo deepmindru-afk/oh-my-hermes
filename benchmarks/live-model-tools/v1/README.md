@@ -889,6 +889,8 @@ branch `feature/round-end-checklist` (`530068797`). A future attempt would need 
 that prices the extra round differently, or a cheaper way to ask for the check than a
 continuation. Either is a new decision for the owner.
 
+The owner later reversed this. See "Owner decision, 2026-10-30 (after measurement 4)" below.
+
 #### Owner decision, 2026-10-30 (after measurement 4)
 
 After measurement 4, the owner relaxed the median-token clause from 1.3x to 1.4x and chose
@@ -907,6 +909,68 @@ it failed the token clause (1.35x against 1.3x) and the scope clause. Against th
 gate, measurement 4 passes every clause except scope. That is `mutation_outside_scope` 1 vs
 0, one `gpt-6-luna` `E-BUGFIX` run, and its cause is not established. The owner accepted
 that miss with the merge. The thresholds above and the measurement records are unchanged.
+
+#### Measurement 5, pre-registered before its first run
+
+A second review of the measurement-4 design, after the owner decision, found two
+conflicts in the joined message.
+
+- **The served-surface gate.** Its "run the smallest real load or check" request
+  sat beside the check's "do not re-run tests or re-check anything else".
+- **The open-plan directive.** It sat beside "restate your final answer".
+
+The owner chose a fix and one more measurement, merging if it passes. Measurement
+5 is the fifth measurement of this feature family. The changes from measurement 4:
+
+- **The check is scoped.** It now says "Do not re-run tests for this check", and a
+  served-surface request beside it stands.
+- **One closing sentence.** It goes last, and only when no plan directive is open.
+  With an open plan the message has no closing and nothing is stashed. The order is
+  served-surface gate, consistency check, plan directive, closing. #2410's impact
+  note goes between the gate and the check once it lands.
+- **The sentinel.**
+  - The closing asks for one fixed line, `OMH: no further changes.`, when nothing
+    more changed, or the full updated answer otherwise.
+  - `pre_verify` stashes the answer the turn stopped with, in process, per session,
+    bounded and aged out.
+  - `transform_llm_output` swaps the sentinel back to that answer before Hermes
+    persists the final row, and clears the stash on every turn end. It never swaps
+    without a stash.
+- **The OMH TUI** keeps the streamed sentinel line instead of printing the restored
+  answer a second time.
+
+The setup is that of measurement 4, on fresh profiles `cebench-off5` and
+`cebench-on5`: the same panel, the same five templates including `C-DECOY`, 15 runs
+per model per arm, subscription routes only, `agent.max_turns: 120` and
+`agent.run_budget_seconds: 600`.
+
+The gate keeps the measurement-4 clauses, with the token clause at the owner's 1.4x.
+The scope clause is stated as registered, and its result is reported as measured.
+
+- Total: on at least off + 3.
+- Strong models: on at least off - 1.
+- `mutation_outside_scope`: on at most off.
+- Median tokens: on at most 1.4x off.
+- No on run above 3x the off median of its model and template.
+- The check fires in at least 90% of on-arm coding sessions, and at most once per
+  turn.
+- Final answer kept: the last assistant message contains `changed_paths`, on at
+  least off - 2.
+- `C-DECOY`: on at least off - 1.
+- Swap fidelity, new.
+  - Read from the session DB: in every on-arm session where the sentinel was used,
+    the persisted final answer equals the pre-check answer byte for byte.
+  - Both rows are persisted: the pre-check answer is the interim row with
+    `finish_reason = 'verify_hook_continue'`, and the final answer is the last
+    assistant row.
+  - The model's raw reply is not stored once swapped. So a session counts as having
+    used the sentinel when its final row equals its interim row byte for byte, or
+    when its final row is still the sentinel line.
+  - The clause fails if any session's final row is the sentinel line (a swap that
+    did not happen).
+
+The result is reported here, with pooled `C-DUPLICATE` over all five measurements.
+If measurement 5 fails a clause, it is recorded and there is no further iteration.
 
 Pass counts come from the run records. Firing, final answers and tool calls come from
 each profile's session DB.

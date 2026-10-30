@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+from collections import OrderedDict
 from collections.abc import Sequence
 from pathlib import PurePosixPath
+from threading import Lock
+import time
 from typing import Final, TypeGuard
 
 from .. import runtime_paths
@@ -41,24 +44,45 @@ _CODE_SUFFIXES: Final = frozenset(
 # Asked once per turn, at the first stop after a code edit. It carries one
 # check only: a second copy or call site of the changed logic that had to change
 # with it, the miss a model makes when it stops as soon as the target test
-# passes. Scope and verification lines were measured too, showed no effect, and
-# their "check again" wording made models re-run tests (bench README,
-# 2026-10-30), so the note says not to.
-#
-# The host keeps the answer the model stopped with only as an interim message:
-# whatever the model says after this note becomes the turn's final response,
-# the one `--oneshot`, API and delegating callers receive. So the note ends by
-# asking for that answer again, never for a report on the check.
+# passes. Scope and verification lines were measured too and showed no effect
+# (bench README, 2026-10-30). "Do not re-run tests" is scoped to this check: the
+# served-surface gate beside it may ask for a real run, and that request stands.
 ROUND_END_CHECKLIST: Final = (
-    "OMH round-end consistency check, once per turn. Look for other copies or call sites of the logic "
-    "you changed this turn that have to change with it, and fix any you find. Do not re-run tests or "
-    "re-check anything else. Then restate your final answer exactly as you gave it, in the form the task "
-    "asked for (updated only if you changed something more), with no report on this check: it replaces "
-    "the answer you just gave. This note is guidance, not verification evidence."
+    "OMH round-end consistency check, once per turn: look for other copies or call sites of the logic "
+    "you changed this turn that have to change with it, and fix any you find. Do not re-run tests for "
+    "this check. This note is guidance, not verification evidence."
+)
+# The host keeps the answer the model stopped with only as an interim message,
+# and whatever the model says after this note becomes the turn's final
+# response: the one `--oneshot`, API and delegating callers receive. Asking the
+# model to retype that answer cost a whole extra answer and invited test
+# re-runs, so it replies with this one line instead, and `transform_llm_output`
+# swaps the line back to the stashed answer, byte for byte.
+ROUND_END_SENTINEL: Final = "OMH: no further changes."
+ROUND_END_CLOSING: Final = (
+    "When you are done: if you changed nothing more this turn, reply with exactly the next line and nothing "
+    f"else, and OMH returns the answer you just gave, unchanged:\n{ROUND_END_SENTINEL}\n"
+    "If you changed anything, give your full updated final answer instead, in the form the task asked for."
+)
+# Without a stash to swap back there is no sentinel to offer, so the model is
+# asked for the answer itself.
+ROUND_END_CLOSING_UNSTASHED: Final = (
+    "When you are done, give your final answer to the task again, in full and in the form the task asked "
+    "for: it replaces the answer you just gave."
 )
 # Delegated children answer a parent, often against an output schema; their
 # final response is the parent's tool result and must stay the task's answer.
+# This only matters under `agent.coding_context: on`: Hermes gives
+# non-interactive platforms such as `subagent` no coding posture otherwise, so
+# `coding` is already False for them.
 _NO_CHECKLIST_PLATFORMS: Final = frozenset({"subagent"})
+# One stashed answer per session, for the turn that is ending. Bounded like the
+# other per-session maps in this bundle, and aged out so an answer can never be
+# swapped into a later turn that skipped the output hook.
+MAX_STASHED_ANSWERS: Final = 64
+STASHED_ANSWER_SECONDS: Final = 3600.0
+_STASHED_ANSWERS: "OrderedDict[str, tuple[float, str]]" = OrderedDict()
+_STASH_LOCK = Lock()
 
 
 def pre_verify(
@@ -112,12 +136,16 @@ def pre_verify(
         if attempt_value == 0 and str(platform) not in _NO_CHECKLIST_PLATFORMS and any(map(_is_code_path, paths))
         else ""
     )
-    # Three obligations, one directive. The served-surface gate asks for the
-    # check the edit just earned; the checklist asks the model to review its
-    # own diff; the plan directive says the run is not finished. All can be
-    # true of the same turn, and dropping one because another fired would
-    # lose exactly the case each was written for.
-    messages = [text for text in (surface_message, checklist_message, plan_message) if text]
+    # Three obligations, one directive, in a fixed order: the served-surface
+    # gate, the round-end check, the plan directive. All can be true of the same
+    # turn, and dropping one because another fired would lose exactly the case
+    # each was written for. The closing final-answer sentence goes last and only
+    # without a plan directive: an open plan means the turn goes on, so there is
+    # no final answer to ask for yet.
+    closing = ""
+    if checklist_message and not plan_message:
+        closing = ROUND_END_CLOSING if _stash_answer(session_id, final_response) else ROUND_END_CLOSING_UNSTASHED
+    messages = [text for text in (surface_message, checklist_message, plan_message, closing) if text]
     if not messages:
         return None
     # Recorded for the person once per turn. `attempt` is the only turn
@@ -127,6 +155,47 @@ def pre_verify(
     if attempt_value == 0 and plan_message and open_items:
         record_catch(str(_kwargs.get("omh_home") or ""), session_id, PLAN_CONTINUED, open_items=open_items)
     return {"action": "continue", "message": "\n".join(messages)}
+
+
+def _stash_answer(session_id: object, answer: object) -> bool:
+    """Keep the answer this turn stopped with, for `restore_round_end_answer`; False when there is none."""
+    if not isinstance(session_id, str) or not session_id or not isinstance(answer, str) or not answer.strip():
+        return False
+    with _STASH_LOCK:
+        _STASHED_ANSWERS[session_id] = (time.monotonic(), answer)
+        _STASHED_ANSWERS.move_to_end(session_id)
+        while len(_STASHED_ANSWERS) > MAX_STASHED_ANSWERS:
+            _STASHED_ANSWERS.popitem(last=False)
+    return True
+
+
+def restore_round_end_answer(*, session_id: object, response_text: object) -> str | None:
+    """The stashed answer when this turn's reply is the round-end sentinel; None otherwise.
+
+    Called once per turn from `transform_llm_output`. The stash is cleared on
+    every call, whatever the reply, so it never outlives the turn it was taken
+    in; a reply that is not the sentinel keeps the model's own text.
+    """
+    if not isinstance(session_id, str) or not session_id:
+        return None
+    with _STASH_LOCK:
+        stashed = _STASHED_ANSWERS.pop(session_id, None)
+    if stashed is None or not isinstance(response_text, str):
+        return None
+    taken_at, answer = stashed
+    if time.monotonic() - taken_at > STASHED_ANSWER_SECONDS:
+        return None
+    return answer if _is_sentinel(response_text) else None
+
+
+def _is_sentinel(text: str) -> bool:
+    return text.strip().strip("`\"'").strip() == ROUND_END_SENTINEL
+
+
+def reset_stashed_answers() -> None:
+    """Forget every stashed answer (tests)."""
+    with _STASH_LOCK:
+        _STASHED_ANSWERS.clear()
 
 
 def _session_plan_reading(kwargs: dict[str, object], session_id: str) -> tuple[str, str, int]:

@@ -121,7 +121,7 @@ class PreVerifyHookTests(unittest.TestCase):
         hook = context.hooks["pre_verify"]
         self.assertEqual(
             hook(coding=True, attempt=0, changed_paths=["src/example.py"]),
-            {"action": "continue", "message": verify_hooks.ROUND_END_CHECKLIST},
+            {"action": "continue", "message": f"{verify_hooks.ROUND_END_CHECKLIST}\n{verify_hooks.ROUND_END_CLOSING_UNSTASHED}"},
         )
         self.assertIsNone(hook(coding=True, attempt=0, changed_paths=["docs/guide.md"]))
         self.assertIsNone(hook(coding=False, attempt=0, changed_paths=["src/app.tsx"]))

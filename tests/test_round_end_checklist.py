@@ -1,13 +1,18 @@
-"""The round-end checklist `pre_verify` adds after a turn that edited code.
+"""The round-end consistency check `pre_verify` adds after a turn that edited code.
 
 When a turn's edits include a source file, the first stop of that turn
 (`attempt == 0`) continues once with a consistency check: other copies or call
 sites of the changed logic that had to change with it. It is one-shot: the
 host moves `attempt` past 0 as soon as any `pre_verify` message continues the
-turn, so a later stop in the same turn never repeats it. It tells the model
-not to re-run tests and to restate its final answer, because whatever the
-model says after it becomes the turn's final response. Delegated children
-never get it.
+turn, so a later stop in the same turn never repeats it.
+
+Whatever the model says after the check becomes the turn's final response, so
+without an open plan the message ends with one closing sentence: reply with a
+fixed sentinel line if nothing more changed. `pre_verify` stashes the answer
+the turn stopped with, and `transform_llm_output` swaps the sentinel back to
+it. Delegated children never get the check; that only matters under
+`agent.coding_context: on`, the one posture in which a `subagent` session
+arrives with `coding=True`, which is the state these tests send.
 """
 
 from __future__ import annotations
@@ -15,17 +20,24 @@ from __future__ import annotations
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from _local_package import load_local_package
 
 load_local_package()
 
-from omh.plugin_bundle.omh.hooks import nudge_budget, verify_hooks
+from omh.plugin_bundle.omh.hooks import nudge_budget, result_transforms, verify_hooks
 from omh.plugin_bundle.omh.todo_store import build_todo_record, write_todo
+from omh.tui.gateway import Event
+from omh.tui.transcript import AssistantBlock, Transcript
 
 # `agent.max_verify_nudges` default; the host enforces it.
 MAX_VERIFY_NUDGES = 3
 SESSION = "checklist-session"
+ANSWER = '{"changed_paths": ["src/benchapp/pricing.py", "tests/test_pricing.py"]}'
+CHECK = verify_hooks.ROUND_END_CHECKLIST
+CLOSING = verify_hooks.ROUND_END_CLOSING
+SENTINEL = verify_hooks.ROUND_END_SENTINEL
 
 
 class _Homes(unittest.TestCase):
@@ -37,12 +49,15 @@ class _Homes(unittest.TestCase):
         self.hermes.mkdir(parents=True)
         nudge_budget.reset_nudge_budget()
         self.addCleanup(nudge_budget.reset_nudge_budget)
+        verify_hooks.reset_stashed_answers()
+        self.addCleanup(verify_hooks.reset_stashed_answers)
 
     def _fire(self, **overrides):
         payload = {
             "session_id": SESSION,
             "coding": True,
             "attempt": 0,
+            "final_response": ANSWER,
             "changed_paths": ["src/benchapp/pricing.py"],
             "omh_home": str(self.home),
             "hermes_home": str(self.hermes),
@@ -50,22 +65,37 @@ class _Homes(unittest.TestCase):
         payload.update(overrides)
         return verify_hooks.pre_verify(**payload)
 
+    def _open_plan(self):
+        record = build_todo_record(
+            "plan",
+            [{"text": "fix", "state": "done"}, {"text": "report", "state": "pending"}],
+            source="test",
+            session_ref=SESSION,
+        )
+        _ = write_todo(self.home, record)
+
 
 class ChecklistFiresOnCodeEditsTest(_Homes):
-    def test_a_code_edit_continues_the_turn_with_the_checklist(self):
-        self.assertEqual(self._fire(), {"action": "continue", "message": verify_hooks.ROUND_END_CHECKLIST})
+    def test_a_code_edit_continues_the_turn_with_the_check_then_the_closing(self):
+        self.assertEqual(self._fire(), {"action": "continue", "message": f"{CHECK}\n{CLOSING}"})
 
-    def test_the_check_is_consistency_only_and_asks_for_the_answer_back(self):
-        text = verify_hooks.ROUND_END_CHECKLIST
-        self.assertIn("other copies or call sites of the logic", text)
-        self.assertIn("Do not re-run tests or re-check anything else.", text)
-        self.assertIn("restate your final answer exactly as you gave it", text)
-        self.assertIn("with no report on this check", text)
-        self.assertIn("not verification evidence", text)
-        for dropped in ("Scope:", "Verification:", "say so in one line"):
-            self.assertNotIn(dropped, text)
+    def test_the_check_is_consistency_only_and_scoped(self):
+        self.assertIn("other copies or call sites of the logic", CHECK)
+        self.assertIn("Do not re-run tests for this check.", CHECK)
+        self.assertIn("not verification evidence", CHECK)
+        for dropped in ("Scope:", "Verification:", "re-check anything else", "restate"):
+            self.assertNotIn(dropped, CHECK)
+        self.assertIn(f"\n{SENTINEL}\n", CLOSING)
+
+    def test_without_an_answer_to_stash_the_closing_asks_for_the_answer_itself(self):
+        for missing in ({"final_response": ""}, {"final_response": None}, {"session_id": ""}):
+            with self.subTest(missing=missing):
+                message = self._fire(**missing)["message"]
+                self.assertEqual(message, f"{CHECK}\n{verify_hooks.ROUND_END_CLOSING_UNSTASHED}")
+                self.assertNotIn(SENTINEL, message)
 
     def test_a_delegated_child_gets_no_checklist(self):
+        # coding=True with platform "subagent" is the `agent.coding_context: on` case.
         self.assertIsNone(self._fire(platform="subagent"))
         for platform in ("cli", "tui", "", None, ["cli"]):
             with self.subTest(platform=platform):
@@ -76,7 +106,7 @@ class ChecklistFiresOnCodeEditsTest(_Homes):
             with self.subTest(paths=paths):
                 result = self._fire(changed_paths=paths)
                 self.assertIsNotNone(result)
-                self.assertIn(verify_hooks.ROUND_END_CHECKLIST, result["message"])
+                self.assertIn(CHECK, result["message"])
 
     def test_edits_without_code_get_no_checklist(self):
         for paths in (["docs/guide.md"], [".omh-benchmark-answer.json"], ["config/settings.yaml"], ["notes.txt", "data.csv"]):
@@ -108,7 +138,7 @@ class ChecklistIsOncePerTurnTest(_Homes):
                 break
             issued.append(result["message"])
             attempt += 1
-        self.assertEqual(issued, [verify_hooks.ROUND_END_CHECKLIST])
+        self.assertEqual(issued, [f"{CHECK}\n{CLOSING}"])
 
     def test_a_new_turn_gets_it_again(self):
         self.assertIsNotNone(self._fire(attempt=0))
@@ -116,24 +146,97 @@ class ChecklistIsOncePerTurnTest(_Homes):
         self.assertIsNotNone(self._fire(attempt=0))
 
 
-class ChecklistSitsBetweenTheOtherObligationsTest(_Homes):
-    def test_a_rendered_surface_edit_carries_the_surface_gate_then_the_checklist(self):
-        message = self._fire(changed_paths=["src/app.tsx"])["message"]
-        surface, checklist = message.split("\n", 1)
-        self.assertIn("rendered surface", surface)
-        self.assertEqual(checklist, verify_hooks.ROUND_END_CHECKLIST)
+class MessageOrderTest(_Homes):
+    def test_surface_gate_then_check_then_one_closing_and_the_gate_request_stands(self):
+        for paths in (["src/app.tsx"], ["src/plugin_bundle/omh/tool.py"], ["src/app.py", "pyproject.toml"],
+                      ["src/app.py", ".github/workflows/ci.yml"]):
+            with self.subTest(paths=paths):
+                message = self._fire(changed_paths=paths)["message"]
+                surface, rest = message.split("\n", 1)
+                self.assertIn("OMH served-surface verification gate", surface)
+                self.assertEqual(rest, f"{CHECK}\n{CLOSING}")
+                self.assertEqual(message.count("When you are done"), 1)
+                # The check's "do not re-run" is scoped to itself, never to the gate's request.
+                self.assertNotIn("re-check anything else", message)
+                self.assertNotIn("Do not re-run tests.", message)
 
-    def test_an_open_plan_follows_the_checklist(self):
-        record = build_todo_record(
-            "plan",
-            [{"text": "fix", "state": "done"}, {"text": "report", "state": "pending"}],
-            source="test",
-            session_ref=SESSION,
-        )
-        _ = write_todo(self.home, record)
+    def test_an_open_plan_follows_the_check_with_no_closing_and_no_stash(self):
+        self._open_plan()
         message = self._fire()["message"]
-        self.assertTrue(message.startswith(verify_hooks.ROUND_END_CHECKLIST + "\n"))
+        self.assertTrue(message.startswith(CHECK + "\n"))
         self.assertIn("[OMH plan todo]", message)
+        self.assertNotIn("When you are done", message)
+        self.assertNotIn(SENTINEL, message)
+        self.assertIsNone(verify_hooks.restore_round_end_answer(session_id=SESSION, response_text=SENTINEL))
+
+
+class SentinelSwapTest(_Homes):
+    def test_the_sentinel_comes_back_as_the_stashed_answer_byte_for_byte_once(self):
+        self._fire()
+        self.assertEqual(verify_hooks.restore_round_end_answer(session_id=SESSION, response_text=SENTINEL), ANSWER)
+        self.assertIsNone(verify_hooks.restore_round_end_answer(session_id=SESSION, response_text=SENTINEL))
+
+    def test_light_wrapping_of_the_sentinel_still_matches(self):
+        for reply in (f"  {SENTINEL}\n", f"`{SENTINEL}`", f'"{SENTINEL}"'):
+            with self.subTest(reply=reply):
+                self._fire()
+                self.assertEqual(verify_hooks.restore_round_end_answer(session_id=SESSION, response_text=reply), ANSWER)
+
+    def test_any_other_reply_is_kept_and_clears_the_stash(self):
+        self._fire()
+        updated = '{"changed_paths": ["src/benchapp/pricing.py", "src/benchapp/refunds.py"]}'
+        self.assertIsNone(verify_hooks.restore_round_end_answer(session_id=SESSION, response_text=updated))
+        self.assertIsNone(verify_hooks.restore_round_end_answer(session_id=SESSION, response_text=SENTINEL))
+        self._fire()
+        self.assertIsNone(verify_hooks.restore_round_end_answer(session_id=SESSION, response_text=f"{SENTINEL} Also X."))
+
+    def test_never_swaps_without_a_stash_or_for_another_session(self):
+        self.assertIsNone(verify_hooks.restore_round_end_answer(session_id=SESSION, response_text=SENTINEL))
+        self._fire()
+        self.assertIsNone(verify_hooks.restore_round_end_answer(session_id="other", response_text=SENTINEL))
+        self.assertIsNone(verify_hooks.restore_round_end_answer(session_id="", response_text=SENTINEL))
+
+    def test_a_stale_stash_is_never_swapped(self):
+        with patch.object(verify_hooks.time, "monotonic", return_value=1000.0):
+            self._fire()
+        later = 1000.0 + verify_hooks.STASHED_ANSWER_SECONDS + 1
+        with patch.object(verify_hooks.time, "monotonic", return_value=later):
+            self.assertIsNone(verify_hooks.restore_round_end_answer(session_id=SESSION, response_text=SENTINEL))
+
+    def test_the_stash_is_bounded(self):
+        for index in range(verify_hooks.MAX_STASHED_ANSWERS + 5):
+            self._fire(session_id=f"s{index}")
+        self.assertEqual(len(verify_hooks._STASHED_ANSWERS), verify_hooks.MAX_STASHED_ANSWERS)
+        self.assertIsNone(verify_hooks.restore_round_end_answer(session_id="s0", response_text=SENTINEL))
+
+    def test_the_composed_output_hook_returns_the_original_answer(self):
+        self._fire()
+        restored = result_transforms.transform_llm_output(
+            response_text=SENTINEL, session_id=SESSION, model="m", platform="cli", turn_id="t1",
+        )
+        self.assertEqual(restored, ANSWER)
+        self.assertIsNone(result_transforms.transform_llm_output(
+            response_text=SENTINEL, session_id=SESSION, model="m", platform="cli", turn_id="t2",
+        ))
+
+
+class TuiKeepsTheSentinelLineTest(unittest.TestCase):
+    def _turn(self, final_text: str, streamed: str = SENTINEL) -> list[str]:
+        transcript = Transcript()
+        sid = "tui-session"
+        transcript.apply(Event("message.start", sid, {}))
+        transcript.apply(Event("message.delta", sid, {"text": ANSWER}))
+        transcript.apply(Event("message.interim", sid, {"text": ANSWER, "already_streamed": True}))
+        transcript.apply(Event("message.delta", sid, {"text": streamed}))
+        transcript.apply(Event("message.complete", sid, {"text": final_text, "status": "complete"}))
+        return [block.text for block in transcript.blocks if isinstance(block, AssistantBlock)]
+
+    def test_the_swapped_answer_is_not_printed_a_second_time(self):
+        self.assertEqual(self._turn(ANSWER), [ANSWER, SENTINEL])
+
+    def test_an_updated_answer_still_settles_the_live_block(self):
+        updated = '{"changed_paths": ["a.py"]}'
+        self.assertEqual(self._turn(updated, streamed=updated), [ANSWER, updated])
 
 
 if __name__ == "__main__":
