@@ -83,6 +83,7 @@ from ..kanban_readback import KANBAN_READBACK_TOOLS, transform_kanban_readback
 from ..remote_wait_nudge import annotate_remote_wait, honest_stop_output
 from ..truncated_read_recovery import annotate_truncated_read_recovery
 from .diff_presentation import transform_tool_result as _pad_diff_result
+from .verify_hooks import restore_round_end_answer
 
 # Failures of the delegation snapshot by exception type; a block that failed is a reply without one.
 snapshot_failures: Counter[str] = Counter()
@@ -184,18 +185,29 @@ def transform_llm_output(**kwargs: Any) -> str | None:
     of a transformed reply that starts with the streamed one
     (`cli.py::_post_stream_transform_output`). The host passes no home, so the
     process record resolves the way the tool-result half resolves it.
+
+    Before both, the round-end sentinel: when the turn's reply is the one line
+    the consistency check offered (`verify_hooks.ROUND_END_SENTINEL`), it is
+    swapped back to the answer the turn stopped with, which `pre_verify`
+    stashed. Hermes fires this hook before the final row is persisted, so the
+    stored transcript and every caller get that answer byte for byte. This is
+    the one place OMH replaces a reply instead of appending to it.
     """
+    restored = restore_round_end_answer(session_id=kwargs.get("session_id"), response_text=kwargs.get("response_text"))
+    if restored is not None:
+        kwargs = {**kwargs, "response_text": restored}
     honest = honest_stop_output(
         response_text=kwargs.get("response_text"),
         session_id=kwargs.get("session_id"),
         turn_id=kwargs.get("turn_id"),
         hermes_home=str(kwargs.get("hermes_home", "") or ""),
     )
-    reply = honest if honest is not None else kwargs.get("response_text")
+    changed = honest if honest is not None else restored
+    reply = changed if changed is not None else kwargs.get("response_text")
     if not isinstance(reply, str) or not reply.strip():
-        return honest
+        return changed
     post = _delegation_snapshot(kwargs, reply)
-    return appended(reply, post) if post else honest
+    return appended(reply, post) if post else changed
 
 
 def _delegation_snapshot(kwargs: dict[str, Any], reply: str) -> str:

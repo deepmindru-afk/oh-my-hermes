@@ -112,9 +112,9 @@ class PlanContinuationDirectiveTest(unittest.TestCase):
             "session_id": SESSION,
             "coding": True,
             "attempt": 0,
-            # A plain source file: no served-surface category, so what comes
-            # back is the plan directive alone.
-            "changed_paths": ["src/example.py"],
+            # A doc edit: no served-surface category and no code for the
+            # round-end checklist, so what comes back is the plan directive alone.
+            "changed_paths": ["docs/example.md"],
             "omh_home": str(self.home),
             "hermes_home": str(self.hermes),
         }
@@ -408,7 +408,7 @@ class PlanContinuationDirectiveTest(unittest.TestCase):
             "os.environ", {"OMH_HOME": str(self.home), "HERMES_HOME": str(self.hermes)}
         ):
             result = verify_hooks.pre_verify(
-                session_id=SESSION, coding=True, attempt=0, changed_paths=["src/example.py"]
+                session_id=SESSION, coding=True, attempt=0, changed_paths=["docs/example.md"]
             )
 
         self.assertIn("[OMH plan todo] 1/2 done", result["message"])

@@ -17,7 +17,7 @@ import unittest
 
 from _cli_harness import run_cli
 
-from omh.maintenance.hermes_gateway import gateway_restart_hint, gateway_restart_hints
+from omh.maintenance.hermes_gateway import gateway_restart_hint, gateway_restart_hints, recorded_gateway_starts
 from omh.paths import OmhPaths
 
 _INSTALLED_AT = "2026-09-24T02:05:26Z"
@@ -201,6 +201,18 @@ class GatewayRestartHintTests(unittest.TestCase):
                     "bundle's install (2026-09-24T02:05:26Z); run `hermes --profile miku gateway restart`",
                 ],
             )
+
+    def test_recorded_starts_cover_the_primary_home_and_profiles_on_the_hint_s_evidence(self) -> None:
+        with TemporaryDirectory() as tmp:
+            hermes_home = Path(tmp) / ".hermes"
+            _write_home(hermes_home, starts=[_INSTALLED_EPOCH - 3600, _INSTALLED_EPOCH - 7200], pid_record=_record(hermes_home))
+            for name, pid_record in (("miku", True), ("stopped", False)):
+                profile = hermes_home / "profiles" / name
+                profile.mkdir(parents=True, exist_ok=True)
+                (profile / "SOUL.md").write_text("Profile identity\n", encoding="utf-8")
+                _write_home(profile, starts=[_INSTALLED_EPOCH + 60], pid_record=_record(profile) if pid_record else None)
+
+            self.assertEqual(recorded_gateway_starts(hermes_home), [_INSTALLED_EPOCH - 3600, _INSTALLED_EPOCH + 60])
 
 
 class UpdatePrintsRestartHintsTests(unittest.TestCase):

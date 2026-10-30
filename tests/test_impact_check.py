@@ -343,6 +343,8 @@ class RoundTripTests(_Root):
         out = self._pre_verify(coding=False, attempt=0)
         self.assertEqual(out["action"], "continue")
         self.assertIn("src/shop/report.py:5:", out["message"])
+        # No answer to stash in this call, so the one closing asks for the answer itself.
+        self.assertTrue(out["message"].endswith(verify_hooks.ROUND_END_CLOSING_UNSTASHED))
 
     def test_pre_verify_coding_merges_the_note(self):
         self.edit()
@@ -368,8 +370,8 @@ class FormatTests(unittest.TestCase):
         self.assertEqual(len(lines), MAX_NOTE_LINES)
         self.assertEqual(lines[-2], "... and 28 more")
         self.assertIn("re-run the checks", lines[-1])
-        # The model's reply after a continue becomes the turn's final answer, so the note asks for it again.
-        self.assertIn("end with the final answer the task asked for, in full", lines[-1])
+        # The final-answer sentence is not the note's: pre_verify adds one closing for the whole message.
+        self.assertNotIn("final answer", note)
         self.assertEqual(format_note([], recheck_tool=True), "")
 
 

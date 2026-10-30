@@ -6,6 +6,35 @@ All notable changes will be documented here.
 
 ![Sprite Forge patch notes](https://raw.githubusercontent.com/rlaope/oh-my-hermes/main/assets/omh-sprite-forge-patch-notes.png)
 
+- **A coding turn ends with one consistency check.** When a turn in the
+  coding posture edited source code, OMH continues it once at its first stop.
+  It asks the model to look for other copies or call sites of the logic it
+  changed that have to change with it, and to fix them, without re-running
+  tests for the check. That is one extra round on those turns: about 1.37x
+  the median tokens on the bench corpus, in exchange for fixing a second copy
+  of the changed logic far more often (76 vs 38 of 90 runs, pooled over five
+  measurements). If nothing more changed, the model replies with the single
+  line `OMH: no further changes.`, and OMH puts the answer it had already
+  given back in that line's place, so `--oneshot`, API and delegating callers
+  get that answer unchanged. Hermes's own CLI shows the restored answer a
+  second time; the OMH TUI keeps the one line. Delegated children never get
+  the check. `agent.max_verify_nudges: 0` turns it off, together with OMH's
+  other end-of-turn nudges.
+
+- **`omh update` no longer deletes the skill pack a running Hermes gateway
+  still uses.** A gateway follows `current/skills` to the generation behind
+  it once and keeps that directory until it restarts. Update kept only the
+  active and the previous generation, so two updates in a row deleted the
+  one the gateway was serving, and Hermes showed zero OMH skills (`skills
+  89 installed` on the launch card, OMH's 0) until a restart. Update now
+  records when each generation was activated and also keeps the one that
+  was current at each gateway's last recorded start, in the default home
+  and every profile, until a later update sees that gateway started again.
+  The `hermes gateway restart` hint still names the restart that picks up
+  the new pack. With no recorded start, retention is unchanged. The old
+  command runs the cleanup, so this holds from the update after the one
+  that installs it.
+
 - **The background-process row moves onto the info line, and the working
   row keeps its blank row on a tall terminal.** The row that names a
   process Hermes runs in the background stood above the composer's top
@@ -766,6 +795,23 @@ All notable changes will be documented here.
   pins it instead of refusing (`provider_pinned` in the result names the
   inherited and the pinned provider), on `set` and `fallback`; otherwise it is
   refused as before, naming only providers that could serve it.
+
+- **A package installed into Hermes' own Python is now named when the plugin
+  still cannot see it.** On a Hermes install its package manager prepares,
+  copying `oh-my-hermes` into the managed interpreter's `site-packages` made
+  `omh` import when that interpreter ran alone, even with Hermes' `-I` flag,
+  while `omh_probe`, `omh_loop`, `omh_decision_gate` and `omh_interact` kept
+  reporting the package absent. The cause is Hermes, not the install: when
+  Hermes starts, its package manager takes the interpreter's own
+  `site-packages` off `sys.path` and imports from the dependency environment
+  it prepared. An `absent` `package_backend` block now carries
+  `off_path_install`, the directory where that skipped install sits, and its
+  text says why the plugin cannot import it and that there is still no
+  supported way into that environment, instead of telling the person to
+  install the package they already installed. `omh_interact`'s chat fallback
+  now carries the same block beside `package_backend_unavailable`, so it says
+  which failure it met. `docs/INSTALLATION.md` explains the case and how to
+  check what the plugin sees (#2415, reported by @trend0522).
 
 ## 4.0.3 - 2026-10-27
 

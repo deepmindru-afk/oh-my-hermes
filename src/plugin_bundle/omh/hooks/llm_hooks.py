@@ -45,6 +45,7 @@ from ..dispatch_outcomes import unacknowledged_outcomes
 from ..runtime_reader import read_omh_activity, read_omh_hud, read_omh_status, read_omh_todo
 from ..skill_shortlist import claim_candidate_line, skill_candidate_line, skill_candidates_for_turn
 from .session_attendance import note_session_platform
+from .verify_hooks import clear_round_end_answer
 from .nudge_budget import session_is_delegated
 from ..jev_consent import MESSAGING_ATTENDED_PLATFORMS
 from ..jev_consent import clear_turn as clear_jev_turn
@@ -558,6 +559,11 @@ def pre_llm_call(**kwargs) -> dict[str, object] | None:
     # asked for Jev until its own request is read below. A marker left from
     # the previous turn must never survive a degraded turn.
     clear_jev_turn(kwargs.get("session_id"))
+    # The same for the round-end answer stash: one left by the previous turn
+    # (a sentinel never came) must not be swappable in this one. Detached
+    # forks never reach this line, so a background review cannot clear the
+    # live turn's stash.
+    clear_round_end_answer(kwargs.get("session_id"))
     # Bind before any observer or awareness I/O. A failed root must not reach
     # downstream defaults as None, or fail before the status classifier runs.
     try:

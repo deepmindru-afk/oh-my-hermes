@@ -1902,12 +1902,19 @@ answers from the bundle and adds a `package_probe` row whose `absent`,
 `incompatible` or `broken` says why that import failed; the `package_backend`
 row still reports the Loop backend, which can import while the probe does not. `omh_loop` and
 `omh_decision_gate` carry the same block, with the plugin's own version beside
-the package's, whenever they refuse for one of these; the other tools in the
-table above keep their own refusals.
+the package's, whenever they refuse for one of these, and `omh_interact`
+carries it beside its `package_backend_unavailable` reason when chat/session
+recording falls back; the other tools in the table above keep their own
+refusals. An `absent` block also carries
+`off_path_install`: the directory, when there is one, where an oh-my-hermes
+install sits in the interpreter's own site directory while that directory is
+not on the import path the plugin runs with. That is the package-manager case
+below, and the refusal's text says so.
 
 To turn these features on, the interpreter Hermes runs must be able to import
-`omh`. Whether there is a supported way to arrange that depends on who owns
-that environment:
+`omh` **with the import path Hermes gives it**, which is not always the import
+path that interpreter has when you run it yourself. Whether there is a
+supported way to arrange that depends on who owns that environment:
 
 - **An environment you manage yourself**, one Hermes' package manager does not
   prepare: install `oh-my-hermes` there as well, at the version of the plugin
@@ -1922,6 +1929,21 @@ that environment:
   `uv` by hand: Hermes' rules forbid it, and its developer guide says
   "Dependencies installed manually with pip are not durable PM declarations".
   Until then, the `omh loop` CLI is the way to drive a Loop from that host.
+
+  Installing into the interpreter itself does not help either. On a
+  package-manager install Hermes runs on a Python the package manager keeps
+  in the Hermes root's `tools/` directory (`~/.hermes/tools/python-<version>/`
+  on a default install), and when Hermes starts it takes that interpreter's
+  own `site-packages` off `sys.path` and imports from the dependency
+  environment it prepared instead (under the root's `installs/`). An `omh`
+  copied into the interpreter's `site-packages` therefore imports when you
+  run that interpreter yourself, even with the same `-I` flag Hermes'
+  launcher uses, and is still absent for the plugin (#2415). A check run
+  outside Hermes cannot show what the plugin sees: ask Hermes to call
+  `omh_probe` and read its `package_backend` row, whose `off_path_install`
+  names the directory in this case. Delete that copy again (the `omh`
+  directory and the `oh_my_hermes-*.dist-info` beside it) so a later reader
+  does not mistake it for a working install.
 
 What is **not** supported is a bundle module that imports `omh.*` at module
 level without a guard. Hermes' memory-provider lane execs every top-level file
