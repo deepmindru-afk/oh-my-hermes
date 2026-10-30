@@ -6348,8 +6348,13 @@ class App(ModesMixin, AgentViewMixin):
 
     def _ground(self) -> str | None:
         """The background the living wallpaper gives the terminal now, the shown look's ground (the /theme picker's
-        highlight while it is open), or None where it does not show."""
-        return look_ground(self._shown_look(), self._ground_light()) if self._wallpaper_shown() else None
+        highlight while it is open), or None where it does not show. A look with no scene (the default look) takes
+        the terminal's own background as its ground (owner, 2026-10-30): Otty took another ground only on the cells
+        written after it, so the launch card showed holes of the terminal's own black."""
+        if not self._wallpaper_shown():
+            return None
+        look = self._shown_look()
+        return look_ground(look, self._ground_light()) if look in SCENES else self.background_answered
 
     def _sync_ground(self) -> None:
         """Set the terminal's background to the wallpaper's ground where that changed (OSC 11), or put the terminal's

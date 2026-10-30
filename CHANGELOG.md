@@ -16,6 +16,13 @@ All notable changes will be documented here.
   Esc between turns sends no interrupt and so does not stop a compression.
   The working glow does not start for it, and a prompt typed meanwhile
   still goes out as before.
+
+- **The default look keeps the terminal's own background.** Spectrum set
+  its navy ground with OSC 11, and Otty took a set background only on the
+  cells written after it, so the launch card showed holes of the terminal's
+  own black. The default look, which draws no picture, now takes the
+  terminal's background as its ground; the other seven looks keep theirs.
+
 - **The working glow is smaller.** The light that goes round the screen
   while a turn runs read too big and hid most of the top row's text as it
   passed. Its trail is half as long (a seventh of the way round, from a
