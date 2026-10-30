@@ -6,6 +6,20 @@ All notable changes will be documented here.
 
 ![Sprite Forge patch notes](https://raw.githubusercontent.com/rlaope/oh-my-hermes/main/assets/omh-sprite-forge-patch-notes.png)
 
+- **`omh update` no longer deletes the skill pack a running Hermes gateway
+  still uses.** A gateway follows `current/skills` to the generation behind
+  it once and keeps that directory until it restarts. Update kept only the
+  active and the previous generation, so two updates in a row deleted the
+  one the gateway was serving, and Hermes showed zero OMH skills (`skills
+  89 installed` on the launch card, OMH's 0) until a restart. Update now
+  records when each generation was activated and also keeps the one that
+  was current at each gateway's last recorded start, in the default home
+  and every profile, until a later update sees that gateway started again.
+  The `hermes gateway restart` hint still names the restart that picks up
+  the new pack. With no recorded start, retention is unchanged. The old
+  command runs the cleanup, so this holds from the update after the one
+  that installs it.
+
 - **The working glow is smaller.** The light that goes round the screen
   while a turn runs read too big and hid most of the top row's text as it
   passed. Its trail is half as long (a seventh of the way round, from a

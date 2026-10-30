@@ -15,6 +15,7 @@ from typing import Any, Literal, Protocol, TypedDict
 
 try:
     from ..core.errors import OmhError
+    from ..maintenance.hermes_gateway import recorded_gateway_starts
     from ..system.local_store import FileLockTimeout, file_lock
     from ..system.paths import managed_command_venv_dir, resolve_paths
     from .self_update_platform import SelfUpdatePlatform
@@ -22,6 +23,7 @@ try:
     from .self_update_state_validation import require_generation_path, same_existing_path
 except ImportError:  # pragma: no cover - direct-source installer smoke.
     from core.errors import OmhError
+    from maintenance.hermes_gateway import recorded_gateway_starts
     from system.local_store import FileLockTimeout, file_lock
     from system.paths import managed_command_venv_dir, resolve_paths
     from install.self_update_platform import SelfUpdatePlatform
@@ -264,12 +266,12 @@ def run_installer_self_update(args: Any, plan: Mapping[str, object], *, runner: 
                 _cleanup_candidate(root, candidate)
                 result.update(phase="migration", migration={"status": "failed", "reason": str(exc)})
                 return result
-            return _activate(root, state, candidate, args, runner, selected, result)
+            return _activate(root, state, candidate, args, runner, selected, result, hermes_home=paths.hermes_home)
     except FileLockTimeout as exc:
         raise OmhError("another omh update is already in progress; no changes were made") from exc
 
 
-def _activate(root: Path, state: dict[str, Any], candidate: Path, args: Any, runner: Runner, platform: SelfUpdatePlatform, result: SelfUpdateResult) -> SelfUpdateResult:
+def _activate(root: Path, state: dict[str, Any], candidate: Path, args: Any, runner: Runner, platform: SelfUpdatePlatform, result: SelfUpdateResult, *, hermes_home: Path | None = None) -> SelfUpdateResult:
     result["migration"] = {"status": "ok", "reason": "old pair migrated onto current"}
     previous = Path(str(state["active"]["path"]))
     mark_activation(state, candidate, previous)
@@ -289,7 +291,7 @@ def _activate(root: Path, state: dict[str, Any], candidate: Path, args: Any, run
         _rollback_activation(root, state, candidate, previous, args, runner, platform, result)
         return result
     commit_activation(root, state, candidate)
-    collect_garbage(root, state, result, running_generation=_running_generation(root))
+    collect_garbage(root, state, result, running_generation=_running_generation(root), gateway_starts=recorded_gateway_starts(hermes_home) if hermes_home is not None else ())
     save_state(root, state)
     result.update(ok=True, phase="cleanup")
     return result

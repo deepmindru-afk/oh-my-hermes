@@ -7,7 +7,7 @@ import os
 from pathlib import Path
 import secrets
 import shutil
-from typing import Any, TypedDict
+from typing import Any, Iterable, TypedDict
 
 from ..plugin_bundle.omh import runtime_paths
 
@@ -147,7 +147,42 @@ def record_pointer(state: dict[str, Any], root: Path, target: Path) -> None:
     state["pointer"] = {"path": str(root / "current"), "target": relative_target}
 
 
+def _record_activation(state: dict[str, Any], identifier: str) -> None:
+    # A Hermes gateway resolves `current/skills` to the generation behind it
+    # and caches that path until config.yaml changes or it restarts, so GC
+    # must know which generation was current at a recorded gateway start.
+    history = [entry for entry in state.get("activations") or () if isinstance(entry, dict)]
+    if not history:
+        # Activated before this record existed: earlier than every later entry.
+        history.append({"id": str(state["active"].get("id", "")), "activated_at": None})
+    marker = state.get("activation_in_progress")
+    switched = marker.get("marker_written_at") if isinstance(marker, dict) else None
+    history.append({"id": identifier, "activated_at": switched if isinstance(switched, str) else now()})
+    state["activations"] = history
+
+
+def _held_by_gateways(state: dict[str, Any], gateway_starts: Iterable[float]) -> set[str]:
+    """The newest generation activated at or before each recorded gateway start."""
+    activations: list[tuple[str, float]] = []
+    for entry in state.get("activations") or ():
+        if not isinstance(entry, dict) or not isinstance(entry.get("id"), str):
+            continue
+        stamp = entry.get("activated_at")
+        try:
+            activated = float("-inf") if stamp is None else datetime.fromisoformat(str(stamp)).timestamp()
+        except (ValueError, OverflowError, OSError):
+            continue
+        activations.append((entry["id"], activated))
+    held: set[str] = set()
+    for start in gateway_starts:
+        current = [identifier for identifier, activated in activations if activated <= start]
+        if current:
+            held.add(current[-1])
+    return held
+
+
 def commit_activation(root: Path, state: dict[str, Any], candidate: Path) -> None:
+    _record_activation(state, candidate.name)
     state["previous_known_good"] = state["active"]
     state["active"] = generation_entry(candidate)
     state["activation_in_progress"] = None
@@ -156,6 +191,7 @@ def commit_activation(root: Path, state: dict[str, Any], candidate: Path) -> Non
 
 
 def restore_known_good(root: Path, state: dict[str, Any], target: Path) -> None:
+    _record_activation(state, target.name)
     state["active"] = generation_entry(target, str(state.get("active", {}).get("kind", "generation")))
     state["activation_in_progress"] = None
     state["recovery_selected"] = target.name
@@ -183,10 +219,14 @@ def collect_garbage(
     result: GarbageCollectionResult,
     *,
     running_generation: Path | None,
+    gateway_starts: Iterable[float] = (),
 ) -> None:
     keep = parse_gc_entries(root, state)
     if running_generation is not None:
         keep.add(running_generation.name)
+    # A gateway still serves the generation current at its last recorded
+    # start; deleting it leaves Hermes with zero OMH skills until a restart.
+    keep |= _held_by_gateways(state, gateway_starts)
     generations = root / "generations"
     for item in generations.iterdir() if generations.exists() else ():
         junction = getattr(item, "is_junction", None)
@@ -194,6 +234,10 @@ def collect_garbage(
             shutil.rmtree(item, ignore_errors=True)
             result["cleanup"]["collected"].append(str(item))
     state["retained_generations"] = sorted(keep & {item.name for item in generations.iterdir()}) if generations.exists() else []
+    if isinstance(state.get("activations"), list):
+        state["activations"] = [
+            entry for entry in state["activations"] if isinstance(entry, dict) and entry.get("id") in state["retained_generations"]
+        ]
 
 
 def _retarget_launcher(root: Path, platform: SelfUpdatePlatform) -> bool:
