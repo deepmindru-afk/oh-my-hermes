@@ -1734,8 +1734,12 @@ the bundle carries its files, and `plugin_enabled` for local Hermes config;
 neither check proves Desktop copied, enabled or mounted the half. Rescan in
 Desktop (Capabilities -> Plugins -> Rescan, or restart the app), inspect the
 Plugins page, and verify the pane/backend in that runtime before reporting
-it ready. The pane is intended to show the plan checklist, agent rows and active
-fanout DAG. `omh uninstall --registration-only` does not disable the plugin or
+it ready. The pane shows OMH catches, the plan checklist, the active delegation
+graph, board or route summaries, and the active fanout DAG as they become
+available. It reads idle when nothing is running, keeps the plan and status bar
+in agreement, and leaves individual subagent rows to Desktop's Agents panel.
+It uses calmer colours and follows Desktop's language when Korean is selected.
+`omh uninstall --registration-only` does not disable the plugin or
 change `plugins.enabled`. Desktop mounting must be observed separately.
 
 An explicit `--source` or `--from-skills-dir` remains a workflow-content-only
