@@ -22,6 +22,17 @@ All notable changes will be documented here.
   above it; on a shorter terminal it still gives way first, so it never
   costs one of the few rows.
 
+- **A `/compact` that is still running shows it is.** Hermes can take a
+  minute or more to summarize the older turns, and until its report came
+  the screen showed only the started notice and nothing moved, so a
+  compression that was working read as a stuck one. While a `/compress` (or
+  `/compact`) is out and no turn runs, the working row now shows a spinner
+  and `Compressing…` with the time it has taken so far, and it goes away
+  when the report or the unanswered notice lands. It offers no Esc, since
+  Esc between turns sends no interrupt and so does not stop a compression.
+  The working glow does not start for it, and a prompt typed meanwhile
+  still goes out as before.
+
 - **The default look keeps the terminal's own background.** Spectrum set
   its navy ground with OSC 11, and Otty took a set background only on the
   cells written after it, so the launch card showed holes of the terminal's
