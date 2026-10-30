@@ -10,11 +10,19 @@ tools that import the package through `load_backend` (`omh_loop`,
 
 Stdlib only, like every module of the bundle: the classifier must work on the
 very host it describes.
+
+An `absent` block also says when an oh-my-hermes install sits in one of this
+interpreter's own install directories that is not on its import path
+(`off_path_install`, #2415). Hermes' package manager takes the interpreter's
+own `site-packages` off `sys.path` when Hermes starts and imports from the
+dependency environment it prepares instead, so a package installed into that
+interpreter imports when the interpreter runs alone and never under Hermes.
 """
 
 from __future__ import annotations
 
 import importlib.util
+import os
 from pathlib import Path
 import sys
 from typing import Any, Callable, TypeVar
@@ -89,6 +97,47 @@ def _bundle_version() -> str:
     return _runtime_reader._plugin_version(bundle, root=bundle)
 
 
+def _path_key(entry: str) -> str:
+    return os.path.normcase(os.path.realpath(entry))
+
+
+def _off_path_install() -> str:
+    """An oh-my-hermes install in this interpreter's own site directory that its import path skips.
+
+    Only once `site` has run (no `-S`): its site directories were on the path
+    and something took one off afterwards. Under Hermes that is the package
+    manager's activation (`pm.environments.activate_dependencies`), which
+    drops every `site-packages` entry and imports from the environment it
+    prepared, so a package installed into the interpreter itself imports when
+    that interpreter runs alone and never under Hermes (#2415). Read from
+    distribution metadata, like `_distribution_version`, so it imports
+    nothing from that directory. "" when there is no such install.
+    """
+    if sys.flags.no_site:
+        return ""
+    import importlib.metadata
+    import site
+    import sysconfig
+
+    try:
+        directories = list(getattr(site, "getsitepackages", list)())
+        paths = sysconfig.get_paths()
+        directories += [paths[key] for key in ("purelib", "platlib") if paths.get(key)]
+        on_path = {_path_key(entry) for entry in sys.path if isinstance(entry, str) and entry}
+        for directory in dict.fromkeys(directories):
+            if _path_key(directory) in on_path:
+                continue
+            if next(iter(importlib.metadata.distributions(name="oh-my-hermes", path=[directory])), None):
+                return directory
+    except Exception:
+        # This runs inside `load_backend`'s handler, like `_found_omh`, so a
+        # raise here would escape the tool. An unreadable directory, an
+        # unknown install scheme or a `site` that a customization broke is
+        # no evidence of an install there: the block stays a plain `absent`.
+        return ""
+    return ""
+
+
 def classify_backend_failure(error: BaseException) -> dict[str, Any]:
     """The `package_backend` block for a backend import that just failed."""
     failed = str(error.name or "") if isinstance(error, ImportError) else ""
@@ -110,6 +159,7 @@ def classify_backend_failure(error: BaseException) -> dict[str, Any]:
         "package_version": "" if status == PACKAGE_BACKEND_ABSENT else package_version,
         "bundle_version": _bundle_version(),
         "install_route": PACKAGE_BACKEND_ROUTE,
+        "off_path_install": _off_path_install() if status == PACKAGE_BACKEND_ABSENT else "",
     }
 
 
@@ -124,6 +174,7 @@ def available_backend() -> dict[str, Any]:
         "package_version": package_version,
         "bundle_version": _bundle_version(),
         "install_route": PACKAGE_BACKEND_ROUTE,
+        "off_path_install": "",
     }
 
 
@@ -156,7 +207,21 @@ def package_backend_detail(backend: dict[str, Any], *, feature: str, cli_route: 
     at_version = f" {bundle_version}" if bundle_version else ""
     failed = f" (failed import: {backend['failed_import']})" if backend["failed_import"] else ""
     foreign = backend.get("found_omh") == FOUND_OTHER
-    if status == PACKAGE_BACKEND_ABSENT:
+    off_path = str(backend.get("off_path_install") or "")
+    if status == PACKAGE_BACKEND_ABSENT and off_path:
+        # #2415: the install is real, and so is the interpreter; the import
+        # path Hermes gives that interpreter is what leaves it out.
+        lead = (
+            "The OMH plugin is registered, but the Python interpreter running it cannot import "
+            f"the oh-my-hermes package, so {feature} has no backend here. oh-my-hermes is "
+            f"installed in {off_path}, that interpreter's own site directory, which is not on "
+            "its import path while it runs this plugin: Hermes' package manager takes it off when "
+            "Hermes starts and imports from the dependency environment it prepares instead, so an "
+            "install there imports when the interpreter runs alone and never under Hermes. That "
+            "environment is the package manager's, and there is no supported way to add the "
+            "package to it yet."
+        )
+    elif status == PACKAGE_BACKEND_ABSENT:
         lead = (
             "The OMH plugin is registered, but the Python interpreter running it cannot import "
             f"the oh-my-hermes package, so {feature} has no backend here. When Hermes' package "

@@ -711,6 +711,23 @@ All notable changes will be documented here.
   notes were informed by Scenario's Kinetic Film exploration; OMH wrote its
   own wording and code.
 
+- **A package installed into Hermes' own Python is now named when the plugin
+  still cannot see it.** On a Hermes install its package manager prepares,
+  copying `oh-my-hermes` into the managed interpreter's `site-packages` made
+  `omh` import when that interpreter ran alone, even with Hermes' `-I` flag,
+  while `omh_probe`, `omh_loop`, `omh_decision_gate` and `omh_interact` kept
+  reporting the package absent. The cause is Hermes, not the install: when
+  Hermes starts, its package manager takes the interpreter's own
+  `site-packages` off `sys.path` and imports from the dependency environment
+  it prepared. An `absent` `package_backend` block now carries
+  `off_path_install`, the directory where that skipped install sits, and its
+  text says why the plugin cannot import it and that there is still no
+  supported way into that environment, instead of telling the person to
+  install the package they already installed. `omh_interact`'s chat fallback
+  now carries the same block beside `package_backend_unavailable`, so it says
+  which failure it met. `docs/INSTALLATION.md` explains the case and how to
+  check what the plugin sees (#2415, reported by @trend0522).
+
 ## 4.0.3 - 2026-10-27
 
 - **`plan` and `ralplan` name the goal beyond the request, the raw material,
