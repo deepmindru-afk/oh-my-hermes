@@ -654,7 +654,7 @@ class SessionTests(AppTestCase):
         self.assertEqual(first["params"], {"session_id": LIVE_ID, "text": "first prompt"})
         self.assertEqual(second["params"], {"session_id": LIVE_ID, "text": "second prompt", "queued": True})
         history = run.terminal.history()
-        self.assertLess(history.index("  ❯ first prompt"), history.index("later."))
+        self.assertLess(history.index("┃ ❯ first prompt"), history.index("later."))
         self.assertLess(history.index("later."), history.index("❯ second prompt"))
 
     def test_ctrl_c_during_a_turn_sends_session_interrupt(self) -> None:
@@ -1868,19 +1868,19 @@ class OpeningTests(AppTestCase):
         self.assertEqual(
             history[LOGO_ROWS + 2 : LOGO_ROWS + 15],
             [  # each block on its rail, and a blank row between two calls, as for a live turn
-                "  ❯ What is in this repo?",
+                "┃ ❯ What is in this repo?",
                 "",
-                "  ⚚ Hermes",  # who wrote it; the record does not say which model, so none is named
-                "    Let me look.",
+                "┃ ⚚ Hermes",  # who wrote it; the record does not say which model, so none is named
+                "┃   Let me look.",
                 "",
-                "  ● terminal(ls -la)",
+                "┃ ● terminal(ls -la)",
                 "",
-                "  ● read_file(README.md)",
+                "┃ ● read_file(README.md)",
                 "",
-                "  ⚚ Hermes",
-                "    It is oh-my-hermes.",
+                "┃ ⚚ Hermes",
+                "┃   It is oh-my-hermes.",
                 "",
-                "  ❯ Thanks",
+                "┃ ❯ Thanks",
             ],
         )
         text = "\n".join(history)
@@ -2040,7 +2040,8 @@ class LocalCommandTests(AppTestCase):
         )
         self.run_main(run)
         self.assert_clean_run(run)
-        said = " ".join(word for word in terminal.history().split() if word)  # it wraps on the echo's rail
+        # It wraps on the echo's rail: read without the rail's bar, as without the spaces.
+        said = " ".join(word for word in terminal.history().split() if word != "┃")
         self.assertIn("follows the terminal's background (a dark one, as COLORFGBG names it)", said)
 
     def test_keys_typed_while_the_background_query_waited_reach_the_composer(self) -> None:
@@ -2092,7 +2093,7 @@ class LocalCommandTests(AppTestCase):
         self.assertEqual(seen[-1], hex_to_rgb(theme_named("crimson").rule.fg))
         history = terminal.history()
         self.assertIn("Theme crimson applies to this session", history)
-        said = " ".join(word for word in history.split() if word)  # it wraps on the echo's rail
+        said = " ".join(word for word in history.split() if word != "┃")  # it wraps on the echo's rail: no bar
         self.assertIn("No theme or launch look named nope. Themes: sky, amber, crimson, mono. "
                       "Launch looks: spectrum, violet, gold, graphite, sakura, moonlit, aurora, ember.", said)
 
@@ -2130,7 +2131,7 @@ class LocalCommandTests(AppTestCase):
         self.assertIn("/yolo included", pager)
         # The banner no longer says it, so /help is where the way back to Hermes' own terminal stays.
         self.assertIn("Bare `hermes` opens Hermes' own terminal.", pager)
-        self.assertIn("  ❯ /help\n    ⎿  OMH TUI commands:", terminal.history())
+        self.assertIn("┃ ❯ /help\n┃   ⎿  OMH TUI commands:", terminal.history())
         self.assertEqual([frame["method"] for frame in run.frames], STARTUP_METHODS)
 
     def test_reload_skills_rescans_in_the_gateway_and_the_new_skill_completes(self) -> None:
@@ -2182,11 +2183,11 @@ class LocalCommandTests(AppTestCase):
         self.run_main(run)
         self.assert_clean_run(run)
         history = terminal.screen.history()
-        listed = history.index("    ⎿  Queued (sent one at a time as each turn ends):")
-        self.assertEqual(history[listed - 1], "  ❯ /queue")
-        self.assertEqual(history[listed + 1], "       1. second prompt")
-        self.assertIn("  ❯ second prompt  ⧗ from queue", history[listed:])  # the queue sent it once the turn ended
-        self.assertLess(history.index("  ❯ first prompt"), listed)
+        listed = history.index("┃   ⎿  Queued (sent one at a time as each turn ends):")
+        self.assertEqual(history[listed - 1], "┃ ❯ /queue")
+        self.assertEqual(history[listed + 1], "┃      1. second prompt")
+        self.assertIn("┃ ❯ second prompt  ⧗ from queue", history[listed:])  # the queue sent it once the turn ended
+        self.assertLess(history.index("┃ ❯ first prompt"), listed)
 
     def test_steer_and_interrupt_modes_send_input_during_a_turn_at_once(self) -> None:
         for mode in ("steer", "interrupt"):
@@ -2652,7 +2653,7 @@ class KeyTests(AppTestCase):
         self.assert_clean_run(run)
         details = "\n".join(terminal.captures["details"])
         self.assertIn("❯ Reply with exactly the word: ok", details)
-        self.assertIn("  ⚚ Hermes · deepseek-v4.1-flash-ultrafast\n    ok", details)
+        self.assertIn("┃ ⚚ Hermes · deepseek-v4.1-flash-ultrafast\n┃   ok", details)
         self.assertIn("history · ", details)
 
     def test_ctrl_l_redraws_the_session_from_memory(self) -> None:

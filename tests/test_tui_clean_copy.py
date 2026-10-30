@@ -1,10 +1,11 @@
-"""What a selection copies: no rail on the main screen, and the pager's own drag to copy (the owner's request of
-2026-10-28, "the blue line on the left gets copied with the text").
+"""What a selection copies: the rail on the main screen, and the pager's own drag to copy without it (the owner's
+request of 2026-10-28, "the blue line on the left gets copied with the text").
 
 On the main screen the transcript lives in the terminal's own scrollback and
-the terminal's own selection copies it, so the rail a block hangs on is a cell
-painted in its colour that holds a space: whatever a terminal copies there, it
-is never a bar glyph. The pager (alternate screen) takes the mouse with a held
+the terminal's own selection copies it, rail and all: the rail a block hangs on
+is the thin `┃` in its colour (the owner's choice of 2026-10-30, after the
+painted full cell of #2371 read too heavy), and without colour your prompt's is
+the light `│`. The pager (alternate screen) takes the mouse with a held
 button's motion: a drag selects, its release copies the text without the rail
 or a reply's margin, and the footer says what the copy did.
 """
@@ -58,8 +59,9 @@ from omh.tui.transcript import (
 )
 from omh.skin_pack import SKIN_THEMES
 
-# Every glyph a terminal could copy as a bar beside the text: the rail's old `┃` and its kin.
+# Every glyph a terminal could draw as a bar beside the text: the rail's `┃`, its light `│` and their kin.
 BAR_GLYPHS = set("┃│▎▍▌▋▏▕▐┆┊╎║█")
+RAILED = (UserBlock, CommandBlock, AssistantBlock, ToolGroup)  # the blocks that hang on a rail
 REPLY = "first line of the reply\nsecond line"
 KITTY = {"TERM": "xterm-kitty"}
 
@@ -87,8 +89,8 @@ def themes() -> list[tuple[str, object]]:
     return [("default", DEFAULT_THEME), ("prompt band", banded), ("NO_COLOR", without_colour(DEFAULT_THEME))]
 
 
-class NoBarOnTheMainScreenTests(unittest.TestCase):
-    def test_no_block_draws_a_bar_glyph_in_any_cell(self) -> None:
+class BarOnTheMainScreenTests(unittest.TestCase):
+    def test_a_railed_blocks_rows_draw_the_bar_in_their_first_cell_and_nowhere_else(self) -> None:
         for name, theme in themes():
             for block in every_block():
                 for expanded in (False, True):
@@ -97,22 +99,32 @@ class NoBarOnTheMainScreenTests(unittest.TestCase):
                         self.assertTrue(rows)
                         screen = VTScreen(len(rows) + 1, 60)
                         screen.feed("\r\n".join(paint_line(row, 60) for row in rows))
-                        drawn_glyphs = set("".join(screen.lines()))
-                        self.assertFalse(drawn_glyphs & BAR_GLYPHS, screen.lines())
+                        bars = {(at, column) for at, line in enumerate(screen.lines())
+                                for column, glyph in enumerate(line) if glyph in BAR_GLYPHS}
+                        if not isinstance(block, RAILED):
+                            self.assertEqual(bars, set(), screen.lines())
+                            continue
+                        light = name == "NO_COLOR" and isinstance(block, (UserBlock, CommandBlock))
+                        railed = [at for at, row in enumerate(rows) if row]  # the blank row between two calls has none
+                        self.assertEqual(bars, {(at, 0) for at in railed}, screen.lines())
+                        for at in railed:
+                            self.assertEqual(rows[at][0].text, "│" if light else "┃")
+                            self.assertEqual((rows[at][0].style.gutter, rows[at][0].style.reverse), (True, False))
 
-    def test_the_rail_is_a_reversed_space_in_its_colour(self) -> None:
-        for name, theme in themes()[:2]:  # NO_COLOR: `test_without_colour_only_a_replys_and_a_calls_rail_is_painted`
+    def test_the_rail_is_a_thin_bar_in_its_colour(self) -> None:
+        for name, theme in themes()[:2]:  # NO_COLOR: `test_without_colour_your_prompts_rail_is_the_light_bar`
             with self.subTest(theme=name):
                 (row, *_rest) = block_rows(UserBlock("hi"), 40, theme)
-                self.assertEqual((row[0].text, row[1].text), (" ", " "))
-                self.assertTrue(row[0].style.reverse)
+                self.assertEqual((row[0].text, row[1].text), ("┃", " "))
+                self.assertFalse(row[0].style.reverse)
                 roles = on_band(theme, theme.prompt_band) if theme.prompt_band.bg is not None else theme
                 self.assertEqual(row[0].style.fg, roles.dim.fg)  # the prompt's grey, measured against its band
                 screen = VTScreen(2, 40)
                 screen.feed(paint_line(row, 40))
-                self.assertIn(7, screen.attrs_at(0, 0))  # painted: reverse video
-                self.assertNotIn(7, screen.attrs_at(0, 2))
-                self.assertEqual(screen.line(0), "  ❯ hi")  # what a terminal's selection copies: two spaces, no bar
+                grey = tuple(int(roles.dim.fg[at:at + 2], 16) for at in (1, 3, 5))
+                self.assertEqual(screen.attrs_at(0, 0)[:5], (38, 2, *grey))  # the bar in its colour (on any band)
+                self.assertNotIn(7, screen.attrs_at(0, 0))  # not a painted cell
+                self.assertEqual(screen.line(0), "┃ ❯ hi")  # what a terminal's selection copies: the bar too
 
     def test_each_rail_keeps_its_blocks_colour(self) -> None:
         theme = DEFAULT_THEME
@@ -188,7 +200,8 @@ class PagerDragTests(unittest.TestCase):
         app._on_input(Mouse(BUTTON_LEFT, 60, second, motion=True))
         drawn(app)
         screen = app.terminal.screen  # type: ignore[attr-defined]
-        self.assertIn(7, screen.attrs_at(first - 1, 0))  # the rail's cell still shows, reversed as it always is
+        self.assertEqual(screen.line(first - 1)[0], "┃")
+        self.assertNotIn(7, screen.attrs_at(first - 1, 0))  # the rail's bar shows as it always does, not highlighted
         self.assertEqual([7 in screen.attrs_at(first - 1, column) for column in range(1, 5)], [False] * 3 + [True])
 
     def test_a_double_click_copies_a_word_and_a_triple_click_the_row(self) -> None:
@@ -387,7 +400,7 @@ class PagerWheelTests(unittest.TestCase):
         pager.handle_mouse(Mouse(BUTTON_LEFT, 40, 2, motion=True), 6, 0.0)
         copied = pager.handle_mouse(Mouse(BUTTON_LEFT, 40, 2, pressed=False), 6, 0.0)
         self.assertEqual(copied, "❯ hello\n  there")  # the prompt's mark stays; the rail's two cells do not
-        self.assertEqual([line_text(row) for row in rows], ["  ❯ hello", "    there"])
+        self.assertEqual([line_text(row) for row in rows], ["┃ ❯ hello", "┃   there"])
 
 
 class SecondDragTests(unittest.TestCase):
@@ -456,19 +469,20 @@ class CopiedTextTests(unittest.TestCase):
 
 
 class NoColorRailTests(unittest.TestCase):
-    def test_without_colour_only_a_replys_and_a_calls_rail_is_painted(self) -> None:
-        # With colour every rail is a reversed cell in its own colour; without, the prompt's would look the same as a
-        # reply's (dim on a reversed space showed no difference in Terminal.app), so it is left unpainted.
+    def test_without_colour_your_prompts_rail_is_the_light_bar(self) -> None:
+        # With colour every rail is the thin `┃` in its own colour; without, the prompt's would look the same as a
+        # reply's, so it is the light `│` (its `❯` marks it anyway).
         call = ToolGroup([ToolRow("a", "terminal", "ls", TOOL_OK)], done=True)
-        for name, theme, prompt_painted in (("NO_COLOR", without_colour(DEFAULT_THEME), False), ("colour", DEFAULT_THEME, True)):
+        for name, theme, prompt_bar in (("NO_COLOR", without_colour(DEFAULT_THEME), "│"), ("colour", DEFAULT_THEME, "┃")):
             with self.subTest(theme=name):
                 rows = [block_rows(block, 40, theme)[0] for block in
                         (UserBlock("hi"), CommandBlock("/model", done=True), AssistantBlock("ok"), call)]
                 screen = VTScreen(4, 40)
                 screen.feed("\r\n".join(paint_line(row, 40) for row in rows))
-                painted = [screen.attrs_at(row, 0)[:1] == (7,) for row in range(4)]
-                self.assertEqual(painted, [prompt_painted, prompt_painted, True, True])
-                self.assertEqual([screen.line(row)[:4] for row in range(2)], ["  ❯ ", "  ❯ "])
+                self.assertEqual([screen.line(row)[:4] for row in range(4)],
+                                 [f"{prompt_bar} ❯ ", f"{prompt_bar} ❯ ", "┃ ⚚ ", "┃ ● "])
+                self.assertEqual([7 in screen.attrs_at(row, 0) for row in range(4)], [False] * 4)  # no cell painted
+                self.assertEqual([bool(screen.attrs_at(row, 0)) for row in range(4)], [name == "colour"] * 4)
 
 
 class BotBoardWheelTests(FixtureRoot):

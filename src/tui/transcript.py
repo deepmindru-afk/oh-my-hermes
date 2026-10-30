@@ -22,10 +22,9 @@ one before it, so a block is flushed only after every block above it.
 Assistant text opens with a bold `● ` in the text colour on its first row, and
 every later row of that reply, however many flushes it arrives in, is indented
 to match, so a reply reads as one block beside the dim `❯ ` of the prompt above
-it. Three kinds of block hang on a rail in the left gutter (`RAIL`: one cell
-painted in the block's colour and a space; a painted cell meets the ones above
-and below it, so a block's rail is one line, and each cell holds a space, so a
-terminal's selection copies no bar with the text): your prompt's in dim grey,
+it. Three kinds of block hang on a rail in the left gutter (`RAIL`: a thin
+bar `┃` in the block's colour and a space; a bar meets the ones above and
+below it, so a block's rail is one line): your prompt's in dim grey,
 each tool call's in the launch look's `Theme.accent` (a failed or denied one's
 red, as its band is; its mark says every other state), and a reply's in the
 skin's accent, the banner's colour (`Theme.brand`). Nothing has a band behind it.
@@ -195,7 +194,8 @@ TOOL_MARKS = {
     TOOL_RUNNING: "○", TOOL_OK: "●", TOOL_ERROR: "✗", TOOL_DENIED: "✗", TOOL_INTERRUPTED: "▪", TOOL_RECORDED: "●",
     TOOL_GENERATING: "◌",
 }
-RAIL = "  "  # the left rail of a prompt, a tool call or a reply: a cell painted in the block's colour, and a space
+RAIL = "┃ "  # the left rail of a prompt, a tool call or a reply: a thin bar in the block's colour, and a space
+RAIL_LIGHT = "│"  # your prompt's bar without colour, so it differs from a reply's
 GUTTER = Style(gutter=True)  # a rail's or a reply margin's cells, which the pager's copy leaves out
 # A running tool's mark alternates the running blue and dim this often, counted from its own start, so calls that run
 # side by side pulse each on its own. Only the live region is drawn with a clock; scrollback gets the settled mark.
@@ -1088,16 +1088,16 @@ def _glinted(text: str, style: Style, band: int, theme: Theme) -> list[Span]:
 
 
 def rail_cell(style: Style, faint: bool = False) -> Span:
-    """A rail's painted cell: a space in `style`'s colour, reversed so it shows without colour too. It holds no bar
-    glyph, so a terminal's selection copies none. Without colour a `faint` one (your prompt's, which its `❯` marks
-    anyway) is left unpainted, so a reply's bar still differs from it: dim on a reversed space showed no difference
-    in Terminal.app (measured for #2371)."""
-    plain = faint and style.depth == NO_COLOR
-    return Span(RAIL[0], Style(fg=style.fg, reverse=not plain, depth=style.depth, gutter=True))
+    """A rail's cell: the thin bar `┃` in `style`'s colour (owner, 2026-10-30: the painted full cell of #2371 read too
+    heavy; the README's `┃` is the look wanted). A terminal's own selection copies the bar; the pager's copy leaves
+    the gutter out. Without colour a `faint` one (your prompt's, which its `❯` marks anyway) is the light `│`, so a
+    reply's bar still differs from it."""
+    bar = RAIL_LIGHT if faint and style.depth == NO_COLOR else RAIL[0]
+    return Span(bar, Style(fg=style.fg, depth=style.depth, gutter=True))
 
 
 def _rail(style: Style, faint: bool = False) -> Line:
-    """The rail's cells: the painted one (`rail_cell`) and the space before the text."""
+    """The rail's cells: the bar (`rail_cell`) and the space before the text."""
     return (rail_cell(style, faint), Span(RAIL[1:], GUTTER))
 
 

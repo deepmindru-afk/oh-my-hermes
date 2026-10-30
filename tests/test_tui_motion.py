@@ -61,7 +61,7 @@ def ev(kind: str, **payload: object) -> Event:
 
 
 def mark(line: tuple) -> object:
-    """The span of a tool row's mark: after its rail (a painted cell and a space)."""
+    """The span of a tool row's mark: after its rail (the bar and a space)."""
     return line[2]
 
 
@@ -163,8 +163,8 @@ class PulseTests(unittest.TestCase):
         with mock.patch.object(app.transcript, "take_stable_lines", recorded):
             app._render()
         history = app.terminal.screen.history() + app.terminal.screen.lines()  # type: ignore[attr-defined]
-        self.assertTrue(any(line.startswith("  ● terminal") for line in history), history)
-        self.assertTrue(any(line.startswith("  ✗ read_file") for line in history), history)
+        self.assertTrue(any(line.startswith("┃ ● terminal") for line in history), history)
+        self.assertTrue(any(line.startswith("┃ ✗ read_file") for line in history), history)
         calls = [row for row in flushed if len(row) > 4 and row[0].style.gutter and row[4].text in ("terminal", "read_file")]
         self.assertEqual([mark(row).style for row in calls], [THEME.ok, THEME.error])  # settled, never a frame of a pulse
 
@@ -183,7 +183,7 @@ class PulseTests(unittest.TestCase):
         app._render()
         history = app.terminal.screen.history()  # type: ignore[attr-defined]  # scrollback and the screen
         rows = [line for line in history if "terminal" in line and "sleep 9" in line]
-        self.assertEqual([row.split()[0] for row in rows], ["▪"], history)  # the settled mark, not a frame of ○
+        self.assertEqual([row.split()[:2] for row in rows], [["┃", "▪"]], history)  # settled, not a frame of ○
 
 
 class SweepTests(unittest.TestCase):

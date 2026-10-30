@@ -242,7 +242,7 @@ class RecallGlintTests(unittest.TestCase):
         self.complete("omh_memory", recall_result())
         start = self.rows(100.0)
         self.assertEqual([text(line) for line in start][1:], [
-            "    ⎿  decision  rotate refresh tokens per session", "       fact      the guard lives in src/auth/guard.py"])
+            "┃   ⎿  decision  rotate refresh tokens per session", "┃      fact      the guard lives in src/auth/guard.py"])
         frames = [self.rows(100.0 + step * RECALL_GLINT_SECONDS / 6) for step in range(1, 6)]
         self.assertTrue(all(self.glinting(rows) for rows in frames), "the band is on the rows through the sweep")
         self.assertEqual(len({tuple(rows) for rows in frames}), 5, "and it moves every frame")
@@ -259,7 +259,7 @@ class RecallGlintTests(unittest.TestCase):
         self.complete("omh_memory", recall_result(hostile))
         rows = self.transcript.live_lines(80, self.theme)
         shown = [text(line) for line in rows][1:]
-        self.assertEqual(shown[0], "    ⎿  decision  line one okmore", "the first line only, nothing unpainted in it")
+        self.assertEqual(shown[0], "┃   ⎿  decision  line one okmore", "the first line only, nothing unpainted in it")
         self.assertTrue(all("\x1b" not in row and "\r" not in row and "\x00" not in row for row in shown))
         self.assertTrue(all(line_width(line) <= 80 for line in rows), "cut to the width like any output row")
         self.assertTrue(shown[1].endswith("…"))
@@ -274,7 +274,7 @@ class RecallGlintTests(unittest.TestCase):
         self.complete("omh_memory", recall_result([
             {"record_type": "a-record-type-far-longer-than-any-real-one", "summary": "still in sight"}]))
         shown = [text(line) for line in self.transcript.live_lines(120, self.theme)][1:]
-        self.assertEqual(shown, ["    ⎿  a-record-ty…  still in sight"])
+        self.assertEqual(shown, ["┃   ⎿  a-record-ty…  still in sight"])
 
     def test_records_that_are_not_a_list_print_nothing_and_raise_nothing(self) -> None:
         for records in (5, "decision", {"record_type": "fact"}, None):
@@ -337,7 +337,7 @@ class RecallGlintTests(unittest.TestCase):
         self.transcript.apply(Event("message.complete", "s", {"text": "done"}))
         taken = self.transcript.take_stable_lines(80, self.theme)
         self.assertFalse(self.glinting(taken), "the rows as scrollback keeps them")
-        self.assertIn("    ⎿  decision  rotate refresh tokens per session", [text(line) for line in taken])
+        self.assertIn("┃   ⎿  decision  rotate refresh tokens per session", [text(line) for line in taken])
 
     def test_the_app_glints_only_where_the_aura_moves(self) -> None:
         app, _client = make_app(busy=True, cols=80)

@@ -268,8 +268,8 @@ class SendTests(ImageTestCase):
         (user,) = self.users()
         self.assertEqual(user.images, ("[Image #1]", "[Image #2]"))
         rows = lines_text(block_rows(user, 60, DEFAULT_THEME))
-        # Under the prompt, behind its painted rail cell: one row for each image.
-        self.assertEqual([row.rstrip() for row in rows[-2:]], ["    ⎿  [Image #1]", "    ⎿  [Image #2]"])
+        # Under the prompt, on its rail: one row for each image.
+        self.assertEqual([row.rstrip() for row in rows[-2:]], ["┃   ⎿  [Image #1]", "┃   ⎿  [Image #2]"])
         self.assertEqual(self.hermes.held, [])
 
     def test_the_prompt_waits_for_hermes_to_answer_every_staging_before_it_goes(self) -> None:
