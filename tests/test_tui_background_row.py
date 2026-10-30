@@ -1,4 +1,4 @@
-"""The row above the composer for this session's background processes (`omh.tui.background`).
+"""The background-process row on the info line under the composer (`omh.tui.background`).
 
 A `terminal` command Hermes runs in the background with `notify_on_complete`
 off ends without waking the session, so the screen looked dead for an hour
@@ -30,11 +30,11 @@ from test_tui_modes import SID, drawn, make_app, type_text
 
 from omh.tui.app import IDLE_READ_SECONDS, WORKING_GLYPHS
 from omh.tui.background import (
-    LABEL_CELLS, PROCESSES_FILE, PROCESSES_MAX_BYTES, BackgroundProcess, finished_line, process_label,
-    read_processes, report_prompt, running_line, still_running,
+    LABEL_CELLS, PROCESSES_FILE, PROCESSES_MAX_BYTES, BackgroundProcess, finished_forms, process_label,
+    read_processes, report_prompt, running_forms, still_running,
 )
 from omh.tui.bot_board import ON_POSIX, process_facts
-from omh.tui.keys import ENTER, Key
+from omh.tui.keys import CHAR, ENTER, Key
 from omh.skin_pack import theme_for_name
 from omh.tui.layout import MIN_COLS
 from omh.tui.panels import (
@@ -102,6 +102,17 @@ def process(**fields: object) -> BackgroundProcess:
 
 def text(line) -> str:
     return line_text(line) if line is not None else ""
+
+
+def info_row(screen: list[str]) -> str:
+    """The info line: the screen's last row with text (no agent view is under it here)."""
+    return next((line for line in reversed(screen) if line), "")
+
+
+def row_text(app) -> str:
+    """The background-process row's longest form, as the info line shows it with room for it; "" with none."""
+    forms = app._background_forms()
+    return line_text(forms[0]) if forms else ""
 
 
 def bells(app) -> int:
@@ -526,7 +537,7 @@ class OwnershipTests(unittest.TestCase):
         self.processes([old], "reset")
         self.poller.poll_once()
         app._take_hud()
-        self.assertIsNone(app._background_line(120))
+        self.assertEqual(app._background_forms(), ())
         app._on_input(Key(ENTER))
         self.assertEqual(client.named("prompt.submit"), [])
 
@@ -757,7 +768,7 @@ class TurnEndTests(unittest.TestCase):
         self.app.turn_pending = True
         self.app.busy_since = self.clock.at
         self.read()
-        self.assertTrue(text(self.app._background_line(120)).startswith(f"{GLYPH} background"))
+        self.assertTrue(row_text(self.app).startswith(f"{GLYPH} background"))
         self.clock.at += 1
 
     def end_turn(self) -> None:
@@ -772,7 +783,7 @@ class TurnEndTests(unittest.TestCase):
                 self.read()  # the read after the turn: nothing in it changed, and it is delivered
                 self.app.poller.poll_once()
                 self.assertIsNone(self.app.poller.take())  # an idle session's reads are unchanged from here on
-                self.assertTrue(text(self.app._background_line(120)).endswith("OMH is watching it"))
+                self.assertTrue(row_text(self.app).endswith("OMH is watching it"))
                 before = bells(self.app)
             finally:
                 child.kill()
@@ -780,8 +791,8 @@ class TurnEndTests(unittest.TestCase):
         self.clock.at += 3600
         self.wall.at += 3600
         self.read()
-        self.assertTrue(text(self.app._background_line(120)).startswith("✓ background"),
-                        text(self.app._background_line(120)))
+        self.assertTrue(row_text(self.app).startswith("✓ background"),
+                        row_text(self.app))
         self.assertEqual(bells(self.app), before + 1)
         self.read()
         self.assertEqual(bells(self.app), before + 1)
@@ -804,7 +815,7 @@ class TurnEndTests(unittest.TestCase):
         self.app._take_hud()  # the mid-turn read, taken with no turn running
         self.clock.at += 1
         self.read()  # the read the refresh asked for: the process is gone
-        self.assertIsNone(self.app._background_line(120))
+        self.assertEqual(self.app._background_forms(), ())
         self.assertEqual(bells(self.app), before)
 
     def test_a_process_that_ended_during_the_turn_just_goes(self) -> None:
@@ -817,7 +828,7 @@ class TurnEndTests(unittest.TestCase):
             child.wait(timeout=30)
         self.end_turn()
         self.read()
-        self.assertIsNone(self.app._background_line(120))
+        self.assertEqual(self.app._background_forms(), ())
         self.assertEqual(bells(self.app), before)
 
 
@@ -843,11 +854,11 @@ class RowTests(unittest.TestCase):
         self.app._take_hud()
 
     def shown(self) -> str:
-        return text(self.app._background_line(120))
+        return row_text(self.app)
 
     def test_nothing_shows_without_a_process(self) -> None:
         self.deliver()
-        self.assertIsNone(self.app._background_line(120))
+        self.assertEqual(self.app._background_forms(), ())
         self.assertFalse(any("background" in line for line in drawn(self.app)))
 
     def test_a_turn_in_progress_shows_no_right_side(self) -> None:
@@ -871,14 +882,105 @@ class RowTests(unittest.TestCase):
         self.assertTrue(
             shown.startswith(f"{GLYPH} background  terminal(uv run python -m unittest tests…)  1h 07m 13s"))
         self.assertTrue(shown.endswith("  🔕 Hermes won't be pinged · OMH is watching it"), shown)
-        self.assertEqual(line_width(self.app._background_line(120)), 120)
-        self.assertIn(shown.rstrip(), [line.rstrip() for line in drawn(self.app)])
 
-    def test_the_row_sits_right_above_the_composer_s_top_rule(self) -> None:
+    def wide(self, cols: int = 200):
+        """An app as wide as the row's longest form needs beside the badge and the right side."""
+        app, client = make_app(cols=cols, clock=self.clock, wall_clock=self.wall)
+        app.stored_id = STORED
+        self.app, self.client = app, client
+        return app
+
+    def test_the_row_sits_on_the_info_line_after_the_badge_not_above_the_composer(self) -> None:
+        """Owner, 2026-10-30, picked from a rendered comparison: the row moved from above the composer's top rule to
+        the info line under the composer, on its left after the badge; the right side stays as it was."""
+        self.wide()
         self.deliver(process())
         screen = drawn(self.app)
+        info = info_row(screen)
+        self.assertTrue(info.startswith(f"  [⚚ OMH Native]  {self.shown()}"), info)
+        self.assertTrue(info.endswith("ctrl+t effort"), info)
         rule = next(index for index, line in enumerate(screen) if line.startswith("─") and index > 0)
-        self.assertTrue(screen[rule - 1].startswith(f"{GLYPH} background"), screen[rule - 1])
+        self.assertNotIn("background", screen[rule - 1])
+        self.assertEqual(sum("background" in line for line in screen), 1, "\n".join(screen))
+        self.assertTrue(self.app.bg_row_shown)
+
+    def test_the_branch_stays_between_the_badge_and_the_row(self) -> None:
+        from types import SimpleNamespace
+
+        from omh.tui.git_status import GitState
+
+        self.wide()
+        self.app.git = SimpleNamespace(state=GitState("main", 0, 0), refresh=lambda: None, stop=lambda: None)
+        self.deliver(process(notify=True))
+        info = info_row(drawn(self.app))
+        self.assertTrue(info.startswith(f"  [⚚ OMH Native]  branch:main  {GLYPH} background  terminal("), info)
+        self.assertIn("  🔔 will ping you when done", info)
+
+    def test_the_finished_row_offers_enter_on_the_info_line(self) -> None:
+        self.wide()
+        self.deliver(process())
+        self.clock.at += 8
+        self.wall.at += 8
+        self.deliver()
+        info = info_row(drawn(self.app))
+        self.assertIn("✓ background  terminal(uv run python -m unittest tests…)  finished 0:00 ago  ↵ report result",
+                      info)
+        self.app._on_input(Key(ENTER))
+        self.assertEqual(self.client.named("prompt.submit"), [{"session_id": SID, "text": report_prompt((process(),))}])
+        self.assertNotIn("background", info_row(drawn(self.app)))
+
+    def test_the_info_line_s_clock_ticks_with_the_row(self) -> None:
+        """The info line's right side is held between changes (`_info_right`); the left, where the row is, is not."""
+        self.wide()
+        self.deliver(process())
+        self.app._render_when_due()
+        self.assertIn("  1h 07m 13s", info_row(self.app.terminal.screen.lines()))
+        self.app.dirty = False
+        self.clock.at += 1
+        self.wall.at += 1
+        self.app._render_when_due()  # due for the row's clock alone
+        self.assertIn("  1h 07m 14s", info_row(self.app.terminal.screen.lines()))
+
+    def test_a_picker_or_the_search_hides_the_row_from_the_info_line(self) -> None:
+        self.wide()
+        self.deliver(process())
+        self.assertIn("background", info_row(drawn(self.app)))
+        self.app._on_input(Key(CHAR, "r", ctrl=True))  # Ctrl+R: the history search has the keys, and the line says them
+        self.assertIsNotNone(self.app.search)
+        self.assertNotIn("background", "\n".join(drawn(self.app)))
+        self.assertFalse(self.app.bg_row_shown)
+        self.assertIsNone(self.app._background_second())
+
+    def test_the_row_gives_way_after_the_title_and_before_the_model_context_and_effort(self) -> None:
+        """The narrow-width order: the session's title goes first, then the row shortens (its label, then who will be
+        told, then the call) and goes, and only then does the right side shorten; the badge and the branch go after
+        that, as before."""
+        from types import SimpleNamespace
+
+        from omh.tui.git_status import GitState
+
+        model = "deepseek/deepseek-v4.1-flash"
+        seen = set()
+        for cols in range(230, 19, -1):
+            app = self.wide(cols)
+            app.git = SimpleNamespace(state=GitState("main", 0, 0), refresh=lambda: None, stop=lambda: None)
+            app.model, app.context_percent, app.effort = model, 5.0, "medium"
+            app.session_title = "Fix the login bug"
+            self.deliver(process())
+            forms = [line_text(form) for form in app._background_forms()]
+            info = info_row(drawn(app))
+            row = next((index for index, form in enumerate(forms) if form in info), None)
+            with self.subTest(cols=cols, info=info):
+                self.assertLessEqual(cell_width(info), cols)
+                if row != 0:
+                    self.assertNotIn("Fix the login bug", info)  # the title went before the row shortened
+                if model not in info:
+                    self.assertIsNone(row)  # the row went before the model shortened
+                if "branch:main" not in info:
+                    self.assertIsNone(row)
+                self.assertEqual(app.bg_row_shown, row is not None)
+            seen.add(row)
+        self.assertEqual(seen, {*range(len(forms)), None})  # every form was shown at some width
 
     def test_the_elapsed_clock_ticks_in_seconds(self) -> None:
         self.deliver(process())
@@ -895,7 +997,7 @@ class RowTests(unittest.TestCase):
 
     def test_another_session_s_snapshot_is_not_taken(self) -> None:
         self.deliver(process(), session="another")
-        self.assertIsNone(self.app._background_line(120))
+        self.assertEqual(self.app._background_forms(), ())
 
     def test_an_unreported_end_shows_the_finished_row_and_rings_once(self) -> None:
         self.deliver(process())
@@ -940,7 +1042,7 @@ class RowTests(unittest.TestCase):
         self.deliver(process(proc_id="proc_b", command="make lint"))  # proc_a ended unreported
         self.assertIn("finished", self.shown())
         self.rotate("20261028_111500_cd34ef")
-        self.assertIsNone(self.app._background_line(120))  # nothing decided yet: hidden, not reported
+        self.assertEqual(self.app._background_forms(), ())  # nothing decided yet: hidden, not reported
         self.assertFalse(self.app._background_live())
         self.deliver(process(proc_id="proc_b", command="make lint"), session="20261028_111500_cd34ef",
                      earlier=(STORED,))
@@ -957,7 +1059,7 @@ class RowTests(unittest.TestCase):
         self.rotate("20261028_111500_cd34ef")
         self.app._on_input(Key(ENTER))  # hidden while undecided: Enter is not the row's
         self.deliver(session="20261028_111500_cd34ef", earlier=("20261028_000000_ffffff",))
-        self.assertIsNone(self.app._background_line(120))
+        self.assertEqual(self.app._background_forms(), ())
         self.app.turn_pending = False
         self.app._on_input(Key(ENTER))
         self.assertEqual(self.client.named("prompt.submit"), [])
@@ -970,14 +1072,14 @@ class RowTests(unittest.TestCase):
         type_text(self.app, "what next")
         self.app._on_input(Key(ENTER))
         self.assertEqual(self.client.named("prompt.submit"), [{"session_id": SID, "text": "what next"}])
-        self.assertIsNone(self.app._background_line(120))  # a turn started: the offer was for an idle session
+        self.assertEqual(self.app._background_forms(), ())  # a turn started: the offer was for an idle session
 
     def test_a_process_hermes_reports_just_goes(self) -> None:
         self.deliver(process(notify=True))
         before = bells(self.app)
         self.clock.at += 8
         self.deliver()
-        self.assertIsNone(self.app._background_line(120))
+        self.assertEqual(self.app._background_forms(), ())
         self.assertEqual(bells(self.app), before)
 
     def test_a_watched_process_just_goes_since_hermes_may_report_its_end(self) -> None:
@@ -987,7 +1089,7 @@ class RowTests(unittest.TestCase):
         before = bells(self.app)
         self.clock.at += 8
         self.deliver()
-        self.assertIsNone(self.app._background_line(120))
+        self.assertEqual(self.app._background_forms(), ())
         self.assertEqual(bells(self.app), before)
 
     def test_a_process_whose_end_cannot_be_asked_never_finishes(self) -> None:
@@ -998,7 +1100,7 @@ class RowTests(unittest.TestCase):
         before = bells(self.app)
         self.clock.at += 8
         self.deliver()  # dropped by a foreign rewrite
-        self.assertIsNone(self.app._background_line(120))
+        self.assertEqual(self.app._background_forms(), ())
         self.assertEqual(bells(self.app), before)
 
     def test_several_ends_make_one_offer_that_reports_them_all(self) -> None:
@@ -1027,18 +1129,17 @@ class RowTests(unittest.TestCase):
         self.assertEqual(self.client.named("prompt.submit"), [])
         self.assertIn("finished", self.shown())
 
-    def test_with_one_row_the_queue_keeps_it(self) -> None:
+    def test_the_queue_keeps_the_slot_since_the_row_is_on_the_info_line(self) -> None:
         self.app.turn_pending = True
         self.deliver(process())
         type_text(self.app, "next step")
         self.app._on_input(Key(ENTER))  # queued behind the turn
         self.assertEqual(len(self.app.queued), 1)
-        with patch("omh.tui.app.slot_cap", return_value=1):
-            (only,) = self.app._slot_lines(120, 30)
-        self.assertTrue(line_text(only).startswith("⧗"), line_text(only))
-        with patch("omh.tui.app.slot_cap", return_value=2):
-            shown = [line_text(line) for line in self.app._slot_lines(120, 30)]
-        self.assertTrue(shown[0].startswith("⧗") and shown[1].startswith(f"{GLYPH} background"), shown)
+        for cap in (1, 2, 4):
+            with self.subTest(cap=cap), patch("omh.tui.app.slot_cap", return_value=cap):
+                shown = [line_text(line) for line in self.app._slot_lines(120, 30)]
+                self.assertTrue(shown[0].startswith("⧗"), shown)
+                self.assertFalse(any("background" in line for line in shown), shown)
 
     def test_a_process_that_ends_during_a_turn_or_after_one_started_just_goes(self) -> None:
         self.deliver(process())
@@ -1048,14 +1149,14 @@ class RowTests(unittest.TestCase):
         self.deliver(process())
         self.clock.at += 1
         self.deliver()
-        self.assertIsNone(self.app._background_line(120))
+        self.assertEqual(self.app._background_forms(), ())
 
         self.app.turn_pending = False  # the turn ended; the next read is the first since it
         self.deliver(process(proc_id="proc_b"))
         self.app.busy_since = self.clock.at + 1  # a turn came and went between two reads
         self.clock.at += 2
         self.deliver()
-        self.assertIsNone(self.app._background_line(120))
+        self.assertEqual(self.app._background_forms(), ())
 
     def test_bell_off_rings_nothing(self) -> None:
         app, _client = make_app(cols=120, clock=self.clock, wall_clock=self.wall, environ={"OMH_TUI_BELL": "0"})
@@ -1065,7 +1166,7 @@ class RowTests(unittest.TestCase):
             app.poller.take = lambda snapshot=snapshot: snapshot
             self.clock.at += 1
             app._take_hud()
-        self.assertIn("finished", text(app._background_line(120)))
+        self.assertIn("finished", row_text(app))
         self.assertEqual(bells(app), 0)
 
     def test_the_spinner_turns_and_reduced_motion_shows_its_first_frame(self) -> None:
@@ -1091,7 +1192,7 @@ class RowTests(unittest.TestCase):
         still._take_hud()
         for step in range(len(WORKING_GLYPHS)):
             self.clock.at, self.wall.at = 100.0 + step * 0.37, NOW + step * 0.37
-            self.assertEqual(text(still._background_line(120))[0], WORKING_GLYPHS[0])
+            self.assertEqual(row_text(still)[0], WORKING_GLYPHS[0])
 
     def test_the_row_keeps_the_loop_ticking(self) -> None:
         self.assertFalse(self.app._background_live())
@@ -1205,9 +1306,16 @@ class StyleTests(unittest.TestCase):
         skin = theme_for_name("amber")
         self.theme = with_catch_colours(build_theme(skin, DARK), skin, DARK, "spectrum")
 
-    def running(self, theme=None, width: int = 120, turn_runs: bool = False, **fields: object):
-        return running_line(process(**fields), more=0, now=NOW, glyph=WORKING_GLYPHS[0], turn_runs=turn_runs,
-                            theme=theme or self.theme, width=width)
+    def running_forms(self, theme=None, turn_runs: bool = False, **fields: object):
+        return running_forms(process(**fields), more=0, now=NOW, glyph=WORKING_GLYPHS[0], turn_runs=turn_runs,
+                             theme=theme or self.theme)
+
+    def running(self, theme=None, turn_runs: bool = False, **fields: object):
+        """The longest form: what an info line with room for it shows."""
+        return self.running_forms(theme, turn_runs, **fields)[0]
+
+    def finished(self, theme=None):
+        return finished_forms(process(), ago=12, theme=theme or self.theme)
 
     def test_the_left_side_takes_its_roles(self) -> None:
         line = self.running()
@@ -1250,7 +1358,7 @@ class StyleTests(unittest.TestCase):
         self.assertEqual(styles["🔔 will ping you when done"], self.theme.ok)
 
     def test_the_finished_row_is_ok_and_its_key_bold(self) -> None:
-        line = finished_line(process(), ago=12, theme=self.theme, width=120)
+        line = self.finished()[0]
         styles = {span.text: span.style for span in line}
         self.assertEqual(styles["✓"].fg, self.theme.ok.fg)
         self.assertEqual((styles["background"].fg, styles["background"].bold), (self.theme.ok.fg, True))
@@ -1261,21 +1369,41 @@ class StyleTests(unittest.TestCase):
     def test_without_colour_the_text_is_the_same(self) -> None:
         plain = without_colour(self.theme)
         self.assertEqual(text(self.running(theme=plain)), text(self.running()))
-        self.assertEqual(text(finished_line(process(), ago=12, theme=plain, width=120)),
-                         text(finished_line(process(), ago=12, theme=self.theme, width=120)))
+        self.assertEqual([text(form) for form in self.finished(plain)], [text(form) for form in self.finished()])
         self.assertTrue(all(span.style.depth == NO_COLOR for span in self.running(theme=plain) if span.style.fg))
 
-    def test_narrow_rows_stay_inside_the_width_and_keep_the_clock_longest(self) -> None:
-        for width in (1, 5, 12, 20, 30, 40, 60, 80, 100, 119, 140):
-            for line in (self.running(width=width), self.running(width=width, notify=True),
-                         self.running(width=width, host=False, pid=None),
-                         self.running(width=width, turn_runs=True), finished_line(process(), ago=12, theme=self.theme,
-                                                                                   width=width)):
-                with self.subTest(width=width, line=text(line)):
-                    self.assertLessEqual(line_width(line), width)
-        self.assertTrue(text(self.running(width=60)).endswith("1h 07m 13s"), text(self.running(width=60)))
-        self.assertIn("terminal(uv run python -m unittest…)  1h 07m 13s  🔕", text(self.running(width=110)))
-        self.assertTrue(text(self.running(width=110)).endswith("OMH is watching it"))  # the label gave way first
+    def test_the_forms_shorten_the_label_then_drop_the_right_side_then_the_call_and_keep_the_clock(self) -> None:
+        clock = "  1h 07m 13s"
+        self.assertEqual([text(form) for form in self.running_forms()], [
+            f"{WORKING_GLYPHS[0]} background  terminal(uv run python -m unittest tests…){clock}"
+            "  🔕 Hermes won't be pinged · OMH is watching it",
+            f"{WORKING_GLYPHS[0]} background  terminal(uv run …){clock}  🔕 Hermes won't be pinged · OMH is watching it",
+            f"{WORKING_GLYPHS[0]} background  terminal(uv run python -m unittest tests…){clock}",
+            f"{WORKING_GLYPHS[0]} background  terminal(uv run …){clock}",
+            f"{WORKING_GLYPHS[0]} background{clock}",
+        ])
+        self.assertEqual([text(form) for form in self.finished()], [
+            "✓ background  terminal(uv run python -m unittest tests…)  finished 0:12 ago  ↵ report result",
+            "✓ background  terminal(uv run …)  finished 0:12 ago  ↵ report result",
+            "✓ background  terminal(uv run python -m unittest tests…)  finished 0:12 ago",
+            "✓ background  terminal(uv run …)  finished 0:12 ago",
+            "✓ background  finished 0:12 ago",
+        ])
+        for forms in (self.running_forms(), self.running_forms(notify=True), self.running_forms(host=False, pid=None),
+                      self.running_forms(turn_runs=True), self.finished()):
+            widths = [line_width(form) for form in forms]
+            with self.subTest(forms=[text(form) for form in forms]):
+                # Not narrower at every step: the cut label keeps the right side, which the next form drops.
+                self.assertEqual((widths[0], widths[-1]), (max(widths), min(widths)))
+                self.assertTrue(text(forms[-1]).endswith(("1h 07m 13s", "finished 0:12 ago")))
+                self.assertEqual(len(set(forms)), len(forms))
+        # While a turn runs there is no right side: three forms, the short label's and the bare one included.
+        self.assertEqual(len(self.running_forms(turn_runs=True)), 3)
+        short = running_forms(process(command="make"), more=2, now=NOW, glyph=WORKING_GLYPHS[0], turn_runs=True,
+                              theme=self.theme)
+        self.assertEqual([text(form) for form in short],
+                         [f"{WORKING_GLYPHS[0]} background  terminal(make){clock}  +2 more",
+                          f"{WORKING_GLYPHS[0]} background{clock}  +2 more"])
 
     def test_the_background_word_is_label_a_little_darker(self) -> None:
         for name in ("sky", "amber", "crimson", "mono"):
