@@ -71,6 +71,8 @@ GUARD_DEFINITIONS = {
 UNGUARDED: dict[tuple[str, str], tuple[int, str]] = {
     ("src/coding/hermes_child_receipts.py", "load_hermes_child_receipt"):
         (1, "re-reads observed_at only after validate_routing_observation (guarded) accepted it"),
+    ("src/install/self_update_state.py", "_held_by_gateways"):
+        (1, "activated_at is written by _record_activation from now() or the activation marker's marker_written_at, itself now()"),
     ("src/maintenance/doctor.py", "_awareness_delivery_check"):
         (1, "first_attempted_at comes from record_awareness_delivery, whose one caller (hooks/llm_hooks.py) passes a strftime clock stamp"),
     ("src/maintenance/hermes_gateway.py", "_installed_at_epoch"):

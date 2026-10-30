@@ -69,6 +69,20 @@ def gateway_restart_hints(paths: OmhPaths) -> list[str]:
     return hints
 
 
+def recorded_gateway_starts(hermes_home: Path) -> list[float]:
+    """The last recorded start of each gateway the home and its profiles name.
+
+    Update's generation retention reads this, on the same evidence as the
+    hint: a pid record naming the home and a wall-clock start in its ledger.
+    """
+    starts: list[float] = []
+    for home in (hermes_home, *(profile for _name, profile in hermes_profile_dirs(hermes_home))):
+        start = _last_gateway_start(home / GATEWAY_STARTS_FILENAME) if _pid_record_names_home(home) else None
+        if start is not None:
+            starts.append(start)
+    return starts
+
+
 def gateway_restart_hint(hermes_home: Path, *, label: str, restart_command: str) -> str | None:
     """The hint for one home, or None when the files do not prove a stale gateway."""
     if not _pid_record_names_home(hermes_home):
