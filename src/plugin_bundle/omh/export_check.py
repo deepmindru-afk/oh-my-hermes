@@ -22,6 +22,7 @@ import ast
 import logging
 import os
 import sys
+import time
 from typing import Final
 
 MAX_FILES: Final = 50
@@ -46,16 +47,21 @@ class _Unknown(Exception):
     """The module binds names this reader cannot see; nothing is said about it."""
 
 
-def round_end_note(changed_paths: object) -> str:
+def round_end_note(session_id: str, changed_paths: object) -> str:
     """``pre_verify`` attempt 0: the note naming dangling exports in this turn's edited files, or ``""``."""
     try:
+        started = time.monotonic()
         rows: list[tuple[str, int, str]] = []
         trees: dict[str, ast.Module | None] = {}
-        for path in _edited_python_files(changed_paths):
+        files = _edited_python_files(changed_paths)
+        for path in files:
             rows.extend(_file_rows(path, trees))
+        if files:
+            _LOG.info("export_check round_end session=%s files=%d rows=%d ms=%d", session_id, len(files), len(rows),
+                      (time.monotonic() - started) * 1000)
         return format_note(rows)
     except Exception as exc:  # noqa: BLE001 - a broken check says nothing rather than fail the turn
-        _LOG.warning("export_check round_end failed=%s", type(exc).__name__)
+        _LOG.warning("export_check round_end session=%s failed=%s", session_id, type(exc).__name__)
         return ""
 
 

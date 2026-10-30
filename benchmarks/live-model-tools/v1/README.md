@@ -1330,7 +1330,10 @@ recomputed from the raw records and the profiles' session databases, not from dr
 1. Must improve: `L-RENAME-ALIAS` new passes at least base passes + 2 (of 12 each).
 2. Must hold: total new passes at least base passes - 1 (of 60 each).
 3. Must hold: 0 export notes in the new arm's `I-CONTROL` and `L-RENAME-EXPORTS` sessions (24). A
-   note is a user message in the session database that starts `OMH export check`.
+   note fired when the new profile's agent log has an `export_check round_end` line for the
+   session with `rows` above 0. (Amended before any counted run, after a one-instance smoke: Hermes
+   does not store a `pre_verify` message in the session database, so the first wording could not
+   be counted. The check now logs that line.)
 4. Must hold: new median tokens at most 1.05 x base median tokens, over all 60 runs per arm.
 
 If base passes 11 or 12 of 12 `L-RENAME-ALIAS` in this run, clause 1 cannot be met and the gate is

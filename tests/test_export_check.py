@@ -41,7 +41,7 @@ class _Workspace(unittest.TestCase):
         return str(path)
 
     def note(self, *relatives: str) -> str:
-        return export_check.round_end_note([str(self.root / relative) for relative in relatives])
+        return export_check.round_end_note("s", [str(self.root / relative) for relative in relatives])
 
 
 class StaleAllTest(_Workspace):
@@ -55,6 +55,14 @@ class StaleAllTest(_Workspace):
             "src/benchapp/api.py:3: `__all__` lists `compute_quota`, which this module no longer defines or imports",
             "Update or remove each stale name.",
         ])
+
+    def test_each_check_of_edited_python_files_logs_its_row_count(self):
+        self.write("src/benchapp/__init__.py", "")
+        self.write("src/benchapp/quota.py", QUOTA)
+        self.write("src/benchapp/api.py", STALE_API)
+        with self.assertLogs("omh.export_check", "INFO") as logs:
+            self.note("src/benchapp/api.py")
+        self.assertRegex(logs.output[0], r"export_check round_end session=s files=1 rows=1 ms=\d+$")
 
     def test_a_correct_rename_is_silent(self):
         self.write("src/benchapp/__init__.py", "")
@@ -112,9 +120,9 @@ class StaleAllTest(_Workspace):
         self.assertEqual(self.note("pkg/broken.py", "pkg/notes.txt", "pkg/missing.py"), "")
         # Hermes reports landed paths as absolute; a relative one has no root to resolve against.
         self.write("pkg/mod.py", "__all__ = ['gone']\n")
-        self.assertEqual(export_check.round_end_note(["pkg/mod.py"]), "")
+        self.assertEqual(export_check.round_end_note("s", ["pkg/mod.py"]), "")
         for value in (None, "pkg/mod.py", 7, [None, 3]):
-            self.assertEqual(export_check.round_end_note(value), "")
+            self.assertEqual(export_check.round_end_note("s", value), "")
 
 
 class StaleImportTest(_Workspace):

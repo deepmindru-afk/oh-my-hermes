@@ -748,7 +748,7 @@ CLASSIFIED_SITES: tuple[ClassifiedSite, ...] = (
         "round_end_note",
         INTENTIONAL,
         "An unexpected failure reading the edited files is logged as a warning naming the exception class "
-        "(`export_check round_end failed=`) and yields no note; the turn ends as it would without the check. "
+        "(`export_check round_end ... failed=`) and yields no note; the turn ends as it would without the check. "
         "A note is only ever built from names the parsed files show missing, so a failure never claims one is.",
     ),
     ClassifiedSite(

@@ -132,7 +132,7 @@ def pre_verify(
     # workspace modules they import from) with `ast`, so it costs no language server and no
     # extra round of its own. It names an `__all__` entry or a `from x import name` that no
     # longer resolves -- a rename's leftover that no type error reports -- and is empty otherwise.
-    export_message = export_note(changed_paths) if attempt_value == 0 else ""
+    export_message = export_note(session_id, changed_paths) if attempt_value == 0 else ""
     surface_message = checklist_message = plan_message = ""
     open_items = 0
     if valid_coding:
