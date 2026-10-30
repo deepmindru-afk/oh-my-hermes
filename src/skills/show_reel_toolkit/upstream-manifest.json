@@ -183,7 +183,7 @@
     "scripts/music_tools.py": {
       "classification": "modified_derivative",
       "license": "MIT",
-      "local_sha256": "48ad32d9405dfa7617cce53c5185ed2f0c29b18999897dafb3fd0570fb90fb94",
+      "local_sha256": "3b73212027c6cb51e12f6f59f137174cd3acc8052ebaa85b03b7af905ad8c915",
       "modification_notice": "English messages, tool paths overridable (default from PATH), outputs must be new, numpy only for analyze/gap, synth_music event keys accepted, gap writes 16-bit PCM for mix.py; analyze takes a tempo hint and fit window and reports grid strength, alternatives and drops",
       "upstream": [
         {

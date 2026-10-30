@@ -1,5 +1,5 @@
 {
-  "catalog_revision": "86b1f08f10539dfd927aca25c12335fc7a8a6c30ab501777bf64ca816d46eca9",
+  "catalog_revision": "3e009f024541c4a918926f6f8ca613ddfadf5f4c4f904fb8968cda11943092b3",
   "files": {
     "omh-accessibility-audit/SKILL.md": "eb5011ae3f74d84dbe66bf2dcea9533c08ca407b246680b0bd686122f09b27fe",
     "omh-accessibility-audit/references/a11y-rules.md": "cd7e0404576923cfd3bcec9e055b1de7a78f3fc55971fd033598aac1043e4469",
@@ -254,7 +254,7 @@
     "omh-show-reel/toolkit/scripts/font-coverage.mjs": "e804c3f6144259720356fde91e7b6c40f2168a839ea0aa95f46f955f85586b7e",
     "omh-show-reel/toolkit/scripts/mix.py": "481664087918ed94757bb917bfcc794c159531ea292bb136fb0333085145635a",
     "omh-show-reel/toolkit/scripts/motion_check.py": "7996fd01f8576cea033bc25028c1f53d443749f5f529349f65f719d3a3dcde98",
-    "omh-show-reel/toolkit/scripts/music_tools.py": "48ad32d9405dfa7617cce53c5185ed2f0c29b18999897dafb3fd0570fb90fb94",
+    "omh-show-reel/toolkit/scripts/music_tools.py": "3b73212027c6cb51e12f6f59f137174cd3acc8052ebaa85b03b7af905ad8c915",
     "omh-show-reel/toolkit/scripts/narrate.py": "22124b3f1124c6cbfaede7d8884f4d2e46d60bb19de7eef8242246bb88111916",
     "omh-show-reel/toolkit/scripts/new_project.py": "63f326fdb4502bc555ab4878f6d3bea898b374b06d6637b3bdb271cba3ff4eee",
     "omh-show-reel/toolkit/scripts/preflight.py": "195670f4fc7d9652b04213422c79b6c52ebc282f20bae419f9d0e2b9056d9aa8",
@@ -264,7 +264,7 @@
     "omh-show-reel/toolkit/scripts/synth_music.py": "4b277e282d2324ad256a75c79db823781b2611e5d02731eac34921260a0f2929",
     "omh-show-reel/toolkit/scripts/timeline.py": "595ba11069d52668c04ca17e85c7a5aa1e80b9d0c338aa7c58896ac1ab667313",
     "omh-show-reel/toolkit/scripts/tools/cutout.swift": "7050d5764aa724691c9982c51dc73fc10cc0b70483c9df77092614b195bda837",
-    "omh-show-reel/toolkit/upstream-manifest.json": "9e227fec068cc3a0bb8ddbf8d784f3b63a25dd670552a204218e925264dd3c5d",
+    "omh-show-reel/toolkit/upstream-manifest.json": "762f37629ad701c734156eec3255d8cf975653b728db781d70c7b6e83999f730",
     "omh-skill-health/SKILL.md": "4b7d70f00dd63e164ee3d3186bd61e1512dd59f2e04894a9c01ec755503be63f",
     "omh-skill-scout/SKILL.md": "17032ae95438a94ef7a536927e2160802e94836d69945d544d5c72d157375f26",
     "omh-source-finder/SKILL.md": "5945540d8aaa0430b009de0bb8a1a351ba13d7754c3997fd51ba4e4085b06076",

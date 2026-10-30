@@ -116,6 +116,18 @@ class TempoGridTests(unittest.TestCase):
                 self.assertEqual(fit["grid_strength"], 0)
                 self.assertNotIn("warning", fit)
 
+    def test_flat_envelope_stays_flat_when_the_mean_rounds_low(self):
+        # Python before 3.12 sums floats naively; 0.3 * 500 then averages to a
+        # hair below 0.3 and every flat sample looked like a tiny onset.
+        api = load("music_tools.py")
+        flat = [0.3] * 500
+        naive = 0.0
+        for v in flat:
+            naive += v
+        self.assertNotEqual(naive / len(flat), 0.3)
+        fit = api["fit_grid"](flat, 100, bpm_hint=174)
+        self.assertEqual(fit["grid_strength"], 0)
+
     def test_hint_is_a_search_center_not_a_fixed_bpm(self):
         api = load("music_tools.py")
         fit = api["fit_grid"](clicks(171), 100, bpm_hint=174)

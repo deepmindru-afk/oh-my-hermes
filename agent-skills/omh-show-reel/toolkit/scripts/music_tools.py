@@ -261,8 +261,11 @@ def fit_grid(envelope, frame_rate, *, bpm_hint=None, start=0, window=0):
     selected = values[lo:hi]
     if not selected:
         raise ValueError("fit window contains no frames")
-    baseline = sum(selected) / len(selected)
-    evidence = [max(0.0, v - baseline) for v in selected]
+    baseline = math.fsum(selected) / len(selected)
+    # Rounding noise is not an onset: a flat envelope must leave no peaks on any
+    # interpreter (float sum() rounds differently before Python 3.12).
+    noise = 1e-9 * max(1.0, max(selected))
+    evidence = [v - baseline if v - baseline > noise else 0.0 for v in selected]
     peaks = sorted(v for v in evidence if v > 0)
     scale = peaks[min(len(peaks) - 1, int(0.95 * len(peaks)))] if peaks else 1.0
     evidence = [min(1.0, v / scale) for v in evidence]
