@@ -1164,6 +1164,82 @@ Reported, not gated:
 Recomputed from the raw run records and the session-DB snapshots, not from the driver log.
 If any clause fails, the failure is recorded here and the branch does not ask to merge.
 
+#### Result: gate failed on one clause (final answer kept)
+
+The run setup:
+- omh `16047b44d` against base origin/main `531f7034f`.
+- Hermes Agent v0.22.5, driven through its venv entry point.
+- 168 of 168 run records, all completed, with no retries.
+- One uncounted smoke ran before the counted runs: `gpt-6-luna`, new arm, `C-SCOPE-TRAP`.
+
+Recomputed from the run records and the profile session-DB snapshots by `OPT/A/gate.py` in the
+research folder.
+
+| Model | base pass | new pass | base tokens (median) | new tokens (median) | base wall (median) | new wall (median) |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| `claude-haiku-4-5-20251001` | 21 / 21 | 21 / 21 | 143,516 | 118,019 | 55.2 s | 43.0 s |
+| `claude-sonnet-5-5` | 21 / 21 | 21 / 21 | 77,795 | 54,524 | 35.0 s | 29.9 s |
+| `gpt-6-luna` | 20 / 21 | 20 / 21 | 100,214 | 93,712 | 54.8 s | 48.6 s |
+| `gpt-6.1-sol` | 18 / 21 | 18 / 21 | 98,520 | 81,790 | 62.8 s | 61.1 s |
+| **Total** | **80 / 84** | **80 / 84** | 8.97M total | 7.14M total | 53.0 s | 43.1 s |
+
+Per template, base vs new:
+- `C-DUPLICATE` 12 vs 12, `C-DECOY` 12 vs 12.
+- `C-SCOPE-TRAP` 12 vs 12, `E-BUGFIX` 12 vs 12, `E-RENAME` 12 vs 12, `I-CONTROL` 12 vs 12.
+- `L-RENAME-ALIAS` 8 vs 8. Every miss is `semantic_validator_failed`: `gpt-6.1-sol` 0 of 3 in both arms, `gpt-6-luna` 1 in each arm.
+
+Model calls after the last edit (median): base 6, new 4. On Sonnet, 4 and 2.
+
+The gate:
+
+1. Total passes, new at least base - 1: 80 vs 80. Pass.
+2. `C-DUPLICATE`, new at least base: 12 vs 12. Pass.
+3. `mutation_outside_scope`, new at most base: 0 vs 0. Pass.
+4. Final answer kept, new at least base - 2: 61 vs 66. **Fail.**
+5. Fire rate on the five no-copy templates, new at most half of base: 0 / 54 vs 54 / 54. Pass.
+6. Strong models, each model below base:
+   - `claude-sonnet-5-5` tokens 54,524 vs 77,795, wall 29.9 vs 35.0 s;
+   - `gpt-6.1-sol` tokens 81,790 vs 98,520, wall 61.1 vs 62.8 s.
+
+   Pooled, tokens 0.679x and wall 0.817x, against the registered 0.90x and 0.95x. Pass.
+
+The trigger's verdicts in the new arm:
+- `copy` 19: every `C-DECOY` session, and 7 of 11 `C-DUPLICATE` coding sessions.
+- `no_copy_or_reference` 58. In the other 4 `C-DUPLICATE` sessions the model had already edited
+  both copies, and all 4 passed.
+- No verdict was a fail-open.
+- The decision took 0 to 225 ms, the smoke included.
+
+What clause 4 measures here. Kept means the last assistant message contains `changed_paths`.
+- **Where the gap is.** Most of it is Sonnet: 21 kept in base, 17 in new. In both arms, Sonnet
+  usually ends on prose, and whether that prose names `changed_paths` varies from run to run.
+- **What the check itself changed.** A paired reading of the base arm compares each fired
+  session's interim answer (the answer the model gave before the check) with its final row. The
+  check changed the kept status in 4 of 75 fired sessions:
+  - +3: all Haiku `C-DUPLICATE`, where the new arm fires too;
+  - -1.
+- **On the no-copy templates**, where the new arm skips the check, its net effect on kept in the
+  base arm was 0 or less.
+
+So the 5-run gap is between-run variance in how models end, not the skipped check (61/84 vs
+66/84, two-sided Fisher exact p = 0.47). That is a reading after the fact. The clause is
+recorded as failed as registered, and this branch does not ask to merge on this measurement.
+
+One miss the trigger cannot see, which the check did not catch either:
+- **The miss.** In `L-RENAME-ALIAS`, `gpt-6-luna` and `gpt-6.1-sol` left the string
+  `__all__ = ["compute_quota"]` in `api.py`.
+- **Why the trigger misses it.** The models had already edited that file, and the `renamed`
+  signal scans only unedited files.
+- **The base arm did no better.** It failed this template in 4 of 12 runs, the same models and
+  the same count as the new arm. The check, firing there, did not repair the leftover string.
+
+Spend: 16.18M tokens, $0.
+- CPA Claude subscription: 8,174,148 (base 4,696,070, new 3,478,078).
+- Codex subscription: 8,002,558 (base 4,272,958, new 3,666,536, smoke 63,064).
+
+No gateway was signalled; the eight `opta-*` profiles were deleted after their databases and
+logs were kept.
+
 ### 2026-10-30 impact check: callers broken by an edit, off vs on (`impact_check` + `lsp_diagnostics`), gate passed
 
 One question, from oh-my-pi's workspace diagnostics: when an edit changes a definition, does
