@@ -35,6 +35,7 @@ from omh.tui.app import (
     UNSENT_BACK_SWITCH,
     App,
     Attachment,
+    could_be_drop,
     read_image,
 )
 from omh.tui.gateway import Event, Response
@@ -458,24 +459,45 @@ class GateTests(ImageTestCase):
             with self.subTest(warm=warm):
                 self.setUp(warm)
                 type_text(self.app, "describe ")
-                self.app._on_input(Paste("the second paragraph"))  # offered to detect_drop first: an intake
+                self.app._on_input(Paste("~/notes"))  # shaped like a path: offered to detect_drop first, an intake
                 self.app._on_input(Key(ENTER))
                 self.hermes.pump()
                 if not warm:
                     self.hermes.admit()
-                self.assertEqual(self.hermes.turns, [("describe the second paragraph", [])])
+                self.assertEqual(self.hermes.turns, [("describe ~/notes", [])])
                 self.assertEqual(self.shown(), "")
+
+    def test_a_text_paste_no_path_could_start_is_typed_at_once_and_asks_hermes_nothing(self) -> None:
+        type_text(self.app, "describe ")
+        self.app._on_input(Paste("the second paragraph"))
+        self.assertEqual(self.shown(), "describe the second paragraph")  # before any answer: none is asked for
+        self.app._on_input(Key(ENTER))
+        self.hermes.pump()
+        self.hermes.admit()
+        self.assertEqual(self.hermes.turns, [("describe the second paragraph", [])])
+        self.assertEqual(self.methods("input."), [])
+
+    def test_ime_syllables_pasted_one_by_one_land_before_the_space_read_with_them(self) -> None:
+        # Termius wraps each committed syllable in paste markers; on a slow link the space after one shares its read.
+        # Each read is answered before the next arrives, as a fast gateway would; the order still has to hold.
+        bracketed = lambda text: b"\x1b[200~" + text.encode("utf-8") + b"\x1b[201~"  # noqa: E731
+        for data in (bracketed("안"), bracketed("녕") + b" ", bracketed("하") + bracketed("세") + bracketed("요") + b" ",
+                     bracketed("반")):
+            self.app._take_input(data)
+            self.hermes.pump()
+        self.assertEqual(self.shown(), "안녕 하세요 반")
+        self.assertEqual(self.methods("input."), [])
 
     def test_a_text_paste_hermes_refuses_to_look_at_still_joins_the_held_prompt(self) -> None:
         type_text(self.app, "describe ")
-        self.app._on_input(Paste("the second paragraph"))
+        self.app._on_input(Paste("~/notes"))
         self.app._on_input(Key(ENTER))
         (drop,) = [index for index, (method, _params) in enumerate(self.client.calls) if method == "input.detect_drop"]
         self.hermes.answered = len(self.client.calls)
         self.app._on_response(Response(drop + 1, None, {"code": 5000, "message": "detect failed"}))
         self.hermes.pump()
         self.hermes.admit()
-        self.assertEqual(self.hermes.turns, [("describe the second paragraph", [])])
+        self.assertEqual(self.hermes.turns, [("describe ~/notes", [])])
 
     def test_an_armed_ctrl_c_over_a_new_draft_does_not_exit_past_a_held_submit(self) -> None:
         self.app._on_input(ctrl("c"))  # on the empty composer: arms the exit
@@ -857,6 +879,22 @@ class NoTokenCharacterLeavesTests(ImageTestCase):
         sinks = [*map(repr, self.client.calls), *remembered, *self.app.composer.history]
         for item in sinks:
             self.assertFalse(any(ord(ch) in TOKEN_RANGE for ch in item), item)
+
+
+class DropShapeTests(unittest.TestCase):
+    """`could_be_drop` is Hermes' own first test in `cli._detect_file_drop`: a paste it says no to is never a drop."""
+
+    def test_the_shapes_hermes_looks_at_and_the_ones_it_answers_no_drop_for(self) -> None:
+        drops = ("/a/b.png", " /fixture/x.png ", "~", "~/a", "./a", "../a", "file:///a.png", "'~/a b.png'",
+                 '"/a b.png"', "C:\\a.png", "c:/a.png", "\t/a")
+        typed = ("안", "녕 ", " and hello", "hello", "a/b", ".hidden", "'file:///a'", '"file://a"', "C:", "C:a",
+                 "1:/a", "", " ", "하세요 ")
+        for text in drops:
+            with self.subTest(text=text):
+                self.assertTrue(could_be_drop(text))
+        for text in typed:
+            with self.subTest(text=text):
+                self.assertFalse(could_be_drop(text))
 
 
 class ReadImageTests(unittest.TestCase):
