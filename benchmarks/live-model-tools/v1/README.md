@@ -554,12 +554,11 @@ Results describe this pinned corpus, OMH version, Hermes version, provider,
 model id and conditions only. They do not establish universal model
 superiority.
 
-### 2026-10-30 round-end checklist in `pre_verify`: off vs on, gate failed as registered, merged by owner decision
+### 2026-10-30 round-end consistency check in `pre_verify`: off vs on, five measurements
 
-Four measurements. The last two added a decoy template and a final-answer clause, and both
-failed the token and scope clauses as registered. The owner then relaxed the token clause and
-accepted the scope miss for the measurement-4 design. See "Owner decision" at the end of this
-section.
+Measurements 1 to 4 failed their gates. The owner then relaxed the token clause to 1.4x
+("Owner decision" below). Measurement 5, with the sentinel swap, passed every clause it was
+registered against. Each measurement is recorded below as it ran.
 
 One question, from oh-my-pi's prewalk checklist and its delivery rules: after a turn
 that edited code, does one short checklist at the first stop (consistency, scope,
@@ -971,6 +970,64 @@ The scope clause is stated as registered, and its result is reported as measured
 
 The result is reported here, with pooled `C-DUPLICATE` over all five measurements.
 If measurement 5 fails a clause, it is recorded and there is no further iteration.
+
+#### Measurement 5 result: every clause passes
+
+omh `b707b6281` on origin/main `4b7674616`, Hermes Agent v0.22.5 · stable · local
+bf0203a794a0. 180 of 180 run records, all completed. A three-run smoke on a separate
+profile (`cebench-smoke5`) checked the swap before the run, and is not counted here.
+
+| Model | off | on | off tokens (median) | on tokens (median) |
+| --- | ---: | ---: | ---: | ---: |
+| `claude-haiku-4-5-20251001` | 12 / 15 | 15 / 15 | 268,044 | 388,258 |
+| `claude-haiku-5-5` | 15 / 15 | 15 / 15 | 216,739 | 317,480 |
+| `gpt-6-luna` | 10 / 15 | 15 / 15 | 226,839 | 335,894 |
+| `claude-sonnet-5-5` | 14 / 15 | 15 / 15 | 172,393 | 248,950 |
+| `claude-opus-5-5` | 15 / 15 | 15 / 15 | 208,639 | 280,572 |
+| `gpt-6.1-sol` | 12 / 15 | 15 / 15 | 174,684 | 217,182 |
+| **Total** | **78 / 90** | **90 / 90** | 19.3M total | 26.7M total |
+
+Per template, off vs on: `E-BUGFIX` 16 vs 18, `E-RENAME` 18 vs 18, `C-DUPLICATE` 8 vs 18,
+`C-SCOPE-TRAP` 18 vs 18, `C-DECOY` 18 vs 18. Failure codes: off has `copy_not_updated`
+10 and `mutation_outside_scope` 2; on has none.
+
+The gate:
+
+- Total, on at least off + 3: 90 vs 78. Pass.
+- Strong models, on at least off - 1: 45 vs 41. Pass.
+- `mutation_outside_scope`, on at most off: 0 vs 2. Pass.
+- Median tokens, on at most 1.4x off: 283,865 vs 206,990, 1.37x. Pass.
+- No on run above 3x its off pair's median. Pass.
+- Fired in at least 90% of coding sessions, at most once per turn: 90 / 90, never twice;
+  0 rows in the off arm. Pass.
+- Final answer kept, on at least off - 2: 67 / 90 vs 61 / 90. Pass.
+- `C-DECOY`, on at least off - 1: 18 vs 18. Pass.
+- Swap fidelity: 67 sessions used the sentinel and their final row equals the pre-check
+  answer byte for byte; 0 final rows are still the sentinel line. Pass.
+
+What it shows, and what it does not:
+
+- **`C-DUPLICATE` is 18 vs 8** (two-sided Fisher exact p = 0.0003). Pooled over all five
+  measurements it is 76 vs 38 of 90 (p ≈ 5e-9). That is five measurements of one feature
+  family, and the template plants exactly the miss the check names. `C-DECOY` stayed
+  even in all three measurements that had it.
+- **Weak models gained most:** 37 to 45. Strong models went from 41 to 45.
+- **Tokens are 1.37x** the off median, with no test re-runs after the check (0 calls).
+  The cost is the extra round itself. Measured only on these short tasks of about 200k
+  tokens; whether long turns pay proportionally less is not measured.
+- **A residual, inside the gate.** In 23 on-arm sessions the model did not use the
+  sentinel. For 11 of them the final answer was an updated answer that carried
+  `changed_paths`: 8 from gpt-6-luna, gpt-6.1-sol, sonnet and haiku-5-5, and 3 from
+  haiku-4-5. For 12 of the 15
+  `claude-haiku-4-5-20251001` sessions it was a report on the check ("No other call
+  sites exist ...") rather than the answer. So that model's final response is still
+  displaced. The final-answer clause passes because, read by `changed_paths`, the off
+  arm also often ends on prose.
+- **Swap fidelity is read from the DB only.** The model's raw reply is not stored once
+  swapped, so "the sentinel was used" is inferred from final == pre-check byte for byte.
+
+Measurement 5 passed the gate registered for it at `b707b6281`. The owner decided to
+merge if it passed.
 
 Pass counts come from the run records. Firing, final answers and tool calls come from
 each profile's session DB.
