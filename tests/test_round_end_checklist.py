@@ -215,6 +215,12 @@ class WithTheImpactNoteTest(_Homes):
             message = self._fire(coding=False, changed_paths=self.PATHS)["message"]
         self.assertEqual(message, f"{self.NOTE}\n{CLOSING}")
 
+    def test_a_delegated_child_with_only_the_impact_note_returns_its_full_answer(self):
+        with patch.object(verify_hooks, "round_end_note", lambda session_id, changed_paths: self.NOTE):
+            message = self._fire(coding=False, platform="subagent", changed_paths=self.PATHS)["message"]
+        self.assertEqual(message, f"{self.NOTE}\n{verify_hooks.ROUND_END_CLOSING_UNSTASHED}")
+        self.assertNotIn(SESSION, verify_hooks._STASHED_ANSWERS)
+
     def test_the_swap_fires_only_on_the_exact_sentinel_after_an_impact_fix(self):
         self._fire_with_note()
         updated = '{"changed_paths": ["src/shop/quote.py", "src/shop/report.py"]}'
@@ -230,18 +236,56 @@ class SentinelSwapTest(_Homes):
         self.assertIsNone(verify_hooks.restore_round_end_answer(session_id=SESSION, response_text=SENTINEL))
 
     def test_light_wrapping_of_the_sentinel_still_matches(self):
-        for reply in (f"  {SENTINEL}\n", f"`{SENTINEL}`", f'"{SENTINEL}"'):
+        bare = SENTINEL.removesuffix(".")
+        for reply in (f"  {SENTINEL}\n", f"`{SENTINEL}`", f'"{SENTINEL}"', f"**{SENTINEL}**", f"_{SENTINEL}_",
+                      bare, f"**{bare}**", f"*{bare}*"):
             with self.subTest(reply=reply):
                 self._fire()
                 self.assertEqual(verify_hooks.restore_round_end_answer(session_id=SESSION, response_text=reply), ANSWER)
 
-    def test_any_other_reply_is_kept_and_clears_the_stash(self):
+    def test_the_sentinel_inside_longer_text_is_not_a_match(self):
+        for reply in (f"{SENTINEL} Also X.", f"No other call sites exist.\n{SENTINEL}", f"Done: {SENTINEL}",
+                      f"{SENTINEL}\n{ANSWER}", "OMH: no further changes were needed."):
+            with self.subTest(reply=reply):
+                self._fire()
+                self.assertIsNone(verify_hooks.restore_round_end_answer(session_id=SESSION, response_text=reply))
+
+    def test_an_updated_answer_is_kept_as_the_model_wrote_it(self):
         self._fire()
         updated = '{"changed_paths": ["src/benchapp/pricing.py", "src/benchapp/refunds.py"]}'
         self.assertIsNone(verify_hooks.restore_round_end_answer(session_id=SESSION, response_text=updated))
+
+    def test_a_non_sentinel_reply_does_not_consume_the_stash(self):
+        # Hermes's background review is a fork with the parent's session id that still fires
+        # transform_llm_output; its reply must not take the parent's stash.
+        self._fire()
+        fork_reply = "Saved one memory about the rounding helper."
+        self.assertIsNone(verify_hooks.restore_round_end_answer(session_id=SESSION, response_text=fork_reply))
+        self.assertIsNone(result_transforms.transform_llm_output(
+            response_text=fork_reply, session_id=SESSION, model="m", platform="cli", turn_id="fork",
+        ))
+        self.assertEqual(verify_hooks.restore_round_end_answer(session_id=SESSION, response_text=SENTINEL), ANSWER)
+
+    def test_the_next_turn_start_clears_a_leftover_stash(self):
+        self._fire()
+        verify_hooks.clear_round_end_answer(SESSION)
         self.assertIsNone(verify_hooks.restore_round_end_answer(session_id=SESSION, response_text=SENTINEL))
         self._fire()
-        self.assertIsNone(verify_hooks.restore_round_end_answer(session_id=SESSION, response_text=f"{SENTINEL} Also X."))
+        verify_hooks.clear_round_end_answer("other-session")
+        verify_hooks.clear_round_end_answer(None)
+        self.assertEqual(verify_hooks.restore_round_end_answer(session_id=SESSION, response_text=SENTINEL), ANSWER)
+
+    def test_omh_pre_llm_call_clears_it_but_a_detached_fork_does_not(self):
+        from omh.plugin_bundle.omh.hooks import llm_hooks
+
+        self._fire()
+        # A fork names the parent's own id as its parent and returns before the clear.
+        llm_hooks.pre_llm_call(session_id=SESSION, parent_session_id=SESSION, omh_home=str(self.home),
+                               hermes_home=str(self.hermes))
+        self.assertIn(SESSION, verify_hooks._STASHED_ANSWERS)
+        llm_hooks.pre_llm_call(session_id=SESSION, omh_home=str(self.home), hermes_home=str(self.hermes),
+                               user_message="next request", platform="cli")
+        self.assertNotIn(SESSION, verify_hooks._STASHED_ANSWERS)
 
     def test_never_swaps_without_a_stash_or_for_another_session(self):
         self.assertIsNone(verify_hooks.restore_round_end_answer(session_id=SESSION, response_text=SENTINEL))
@@ -274,18 +318,24 @@ class SentinelSwapTest(_Homes):
 
 
 class TuiKeepsTheSentinelLineTest(unittest.TestCase):
-    def _turn(self, final_text: str, streamed: str = SENTINEL) -> list[str]:
+    def _turn(self, final_text: str, streamed: str = SENTINEL, transformed: bool = True) -> list[str]:
         transcript = Transcript()
         sid = "tui-session"
         transcript.apply(Event("message.start", sid, {}))
         transcript.apply(Event("message.delta", sid, {"text": ANSWER}))
         transcript.apply(Event("message.interim", sid, {"text": ANSWER, "already_streamed": True}))
         transcript.apply(Event("message.delta", sid, {"text": streamed}))
-        transcript.apply(Event("message.complete", sid, {"text": final_text, "status": "complete"}))
+        complete = {"text": final_text, "status": "complete"}
+        if transformed:
+            complete["response_transformed"] = True
+        transcript.apply(Event("message.complete", sid, complete))
         return [block.text for block in transcript.blocks if isinstance(block, AssistantBlock)]
 
     def test_the_swapped_answer_is_not_printed_a_second_time(self):
         self.assertEqual(self._turn(ANSWER), [ANSWER, SENTINEL])
+
+    def test_without_the_transformed_flag_the_gateway_text_is_adopted_as_before(self):
+        self.assertEqual(self._turn(ANSWER, transformed=False), [ANSWER, ANSWER])
 
     def test_an_updated_answer_still_settles_the_live_block(self):
         updated = '{"changed_paths": ["a.py"]}'

@@ -1771,10 +1771,13 @@ class Transcript:
         error = as_text(payload.get("error"))
         bare_error = status == "error" and _is_bare_error(text, error)
         block = self._live(AssistantBlock)
-        if block is not None and not bare_error and self._repeats_sealed_answer(text, block):
+        if (block is not None and not bare_error and payload.get("response_transformed")
+                and self._repeats_sealed_answer(text, block)):
             # OMH's round-end check swaps a one-line "no further changes" reply
             # back to the answer the turn stopped with, which already shows here
             # as a sealed block: keep the streamed line rather than print it twice.
+            # Only a reply Hermes marks as rewritten after streaming qualifies; a
+            # model that says the same words twice is printed as it said them.
             pass
         elif block is not None and not bare_error:
             self._settle_reply(block, text)

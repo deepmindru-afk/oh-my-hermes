@@ -1029,6 +1029,21 @@ What it shows, and what it does not:
 Measurement 5 passed the gate registered for it at `b707b6281`. The owner decided to
 merge if it passed.
 
+After measurement 5, a review changed the stash lifecycle. That is why the description
+above, written for `b707b6281`, no longer matches the shipped code.
+
+- The stash is now consumed only by a sentinel match. A non-sentinel
+  `transform_llm_output` no longer clears it, because Hermes's background-review fork
+  shares the session id and could otherwise take it.
+- A leftover stash is cleared at the session's next turn start (`pre_llm_call`).
+- The sentinel also matches when wrapped in `**` or `_`, or written without its period.
+- A delegated child that gets only the impact note is asked for its full answer, and
+  nothing is stashed for it.
+- The OMH TUI dedupes only when Hermes marks the reply `response_transformed`.
+
+None of these changes the measured path: no review fork ran in these one-shot bench
+sessions, and no bench run is a delegated child. Measurement 5 was not re-run.
+
 Pass counts come from the run records. Firing, final answers and tool calls come from
 each profile's session DB.
 ### 2026-10-30 impact check: callers broken by an edit, off vs on (`impact_check` + `lsp_diagnostics`), gate passed

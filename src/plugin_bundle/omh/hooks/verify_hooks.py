@@ -83,9 +83,9 @@ ROUND_END_CLOSING_UNSTASHED: Final = (
 # non-interactive platforms such as `subagent` no coding posture otherwise, so
 # `coding` is already False for them.
 _NO_CHECKLIST_PLATFORMS: Final = frozenset({"subagent"})
-# One stashed answer per session, for the turn that is ending. Bounded like the
-# other per-session maps in this bundle, and aged out so an answer can never be
-# swapped into a later turn that skipped the output hook.
+# One stashed answer per session, for the turn that is ending. Consumed only by
+# a sentinel match, cleared at the session's next turn start, bounded like the
+# other per-session maps in this bundle, and aged out as a last backstop.
 MAX_STASHED_ANSWERS: Final = 64
 STASHED_ANSWER_SECONDS: Final = 3600.0
 _STASHED_ANSWERS: "OrderedDict[str, tuple[float, str]]" = OrderedDict()
@@ -159,7 +159,12 @@ def pre_verify(
     # answer to ask for yet.
     closing = ""
     if (impact_message or checklist_message) and not plan_message:
-        closing = ROUND_END_CLOSING if _stash_answer(session_id, final_response) else ROUND_END_CLOSING_UNSTASHED
+        # A delegated child's reply is its parent's tool result: it returns
+        # its full answer, never a sentinel, so nothing is stashed for it.
+        if str(platform) in _NO_CHECKLIST_PLATFORMS or not _stash_answer(session_id, final_response):
+            closing = ROUND_END_CLOSING_UNSTASHED
+        else:
+            closing = ROUND_END_CLOSING
     messages = [text for text in (surface_message, impact_message, checklist_message, plan_message, closing) if text]
     if not messages:
         return None
@@ -187,24 +192,43 @@ def _stash_answer(session_id: object, answer: object) -> bool:
 def restore_round_end_answer(*, session_id: object, response_text: object) -> str | None:
     """The stashed answer when this turn's reply is the round-end sentinel; None otherwise.
 
-    Called once per turn from `transform_llm_output`. The stash is cleared on
-    every call, whatever the reply, so it never outlives the turn it was taken
-    in; a reply that is not the sentinel keeps the model's own text.
+    Called from `transform_llm_output`. The stash is consumed only by a
+    sentinel match. Hermes's background review runs as a fork that shares the
+    parent's session id and still fires `transform_llm_output`, so a fork
+    finishing during the consistency round must not take the parent's stash
+    with it. Anything left is cleared at the session's next turn start
+    (`clear_round_end_answer`, from `pre_llm_call`), overwritten by the next
+    attempt-0 stash, or aged out.
     """
-    if not isinstance(session_id, str) or not session_id:
+    if not isinstance(session_id, str) or not session_id or not isinstance(response_text, str):
+        return None
+    if not _is_sentinel(response_text):
         return None
     with _STASH_LOCK:
         stashed = _STASHED_ANSWERS.pop(session_id, None)
-    if stashed is None or not isinstance(response_text, str):
+    if stashed is None:
         return None
     taken_at, answer = stashed
     if time.monotonic() - taken_at > STASHED_ANSWER_SECONDS:
         return None
-    return answer if _is_sentinel(response_text) else None
+    return answer
+
+
+def clear_round_end_answer(session_id: object) -> None:
+    """Drop a stash a finished turn left behind; called at the session's next turn start."""
+    if isinstance(session_id, str) and session_id:
+        with _STASH_LOCK:
+            _STASHED_ANSWERS.pop(session_id, None)
+
+
+# Light wrapping a model adds to a one-line reply: code ticks, quotes, bold or
+# italic markers. Longer text, or the line after a report, is not the sentinel.
+_SENTINEL_WRAPPING: Final = "`\"'*_"
 
 
 def _is_sentinel(text: str) -> bool:
-    return text.strip().strip("`\"'").strip() == ROUND_END_SENTINEL
+    core = text.strip().strip(_SENTINEL_WRAPPING).strip()
+    return core.removesuffix(".") == ROUND_END_SENTINEL.removesuffix(".")
 
 
 def reset_stashed_answers() -> None:
