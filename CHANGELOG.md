@@ -21,6 +21,12 @@ All notable changes will be documented here.
   the check. `agent.max_verify_nudges: 0` turns it off, together with OMH's
   other end-of-turn nudges.
 
+- **The default look keeps the terminal's own background.** Spectrum set
+  its navy ground with OSC 11, and Otty took a set background only on the
+  cells written after it, so the launch card showed holes of the terminal's
+  own black. The default look, which draws no picture, now takes the
+  terminal's background as its ground; the other seven looks keep theirs.
+
 - **The working glow is smaller.** The light that goes round the screen
   while a turn runs read too big and hid most of the top row's text as it
   passed. Its trail is half as long (a seventh of the way round, from a

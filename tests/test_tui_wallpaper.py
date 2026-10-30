@@ -493,7 +493,9 @@ class AppWallpaperTests(unittest.TestCase):
 
     def test_the_first_frame_sets_the_looks_ground_and_the_theme_is_measured_against_it(self) -> None:
         app, _clock = self.app()
-        ground = look_ground("spectrum", False)
+        app.launch_look = "moonlit"
+        app.theme = app._themed()
+        ground = look_ground("moonlit", False)
         self.assertEqual(app._surface(), ground)
         self.assertEqual(app.theme.glow_surface.bg, ground)
         app._render()
@@ -503,8 +505,9 @@ class AppWallpaperTests(unittest.TestCase):
 
     def test_a_light_terminal_gets_the_looks_light_ground(self) -> None:
         app, _clock = self.app(answered="#FAFAFA")
+        app.launch_look = "moonlit"
         app._render()
-        self.assertIn(background_set(look_ground("spectrum", True)), self.writes(app))
+        self.assertIn(background_set(look_ground("moonlit", True)), self.writes(app))
 
     def test_a_look_change_and_the_pickers_preview_set_the_new_ground(self) -> None:
         app, _clock = self.app()
@@ -541,6 +544,7 @@ class AppWallpaperTests(unittest.TestCase):
 
     def test_a_stop_puts_it_back_and_the_first_frame_after_sets_it_again(self) -> None:
         app, _clock = self.app()
+        app.launch_look = "moonlit"
         app._render()
         stopped_at: list[int] = []
         original = app.terminal.suspend
@@ -555,7 +559,7 @@ class AppWallpaperTests(unittest.TestCase):
         before_stop = self.writes(app)[: stopped_at[0]]
         self.assertIn(background_restore(ANSWERED), before_stop)
         app._render()
-        ground = background_set(look_ground("spectrum", False))
+        ground = background_set(look_ground("moonlit", False))
         self.assertGreater(self.writes(app).rfind(ground), self.writes(app).rfind(background_restore(ANSWERED)))
 
     def test_nothing_is_set_where_it_cannot_be_put_back_or_is_not_wanted(self) -> None:
@@ -666,11 +670,14 @@ class AppWallpaperTests(unittest.TestCase):
             self.assertGreaterEqual(len(seen - {-1}), 15, "each tick moved the glyph on screen")
             self.assertEqual(app.terminal.screen.line(36).count(MARK), 1, "and took it off where it was")
 
-    def test_the_default_look_keeps_its_ground_and_an_idle_screen_never_wakes_for_it(self) -> None:
+    def test_the_default_look_keeps_the_terminals_background_and_an_idle_screen_never_wakes_for_it(self) -> None:
+        # Owner, 2026-10-30: the default look's own ground showed through Otty as holes of the terminal's black, Otty
+        # taking a set background only on the cells written after it. The default look's ground is the terminal's own.
         app, clock = self.app(rows=42, cols=150)
         self.assertEqual(app.launch_look, DEFAULT_LAUNCH)
+        self.assertEqual(app._ground(), ANSWERED)
         app._render()
-        self.assertIn(background_set(look_ground(DEFAULT_LAUNCH, False)), self.writes(app))
+        self.assertNotIn(background_set(look_ground(DEFAULT_LAUNCH, False)), self.writes(app))
         self.assertEqual(app._ambient(), ())
         self.assertFalse(app._wallpaper_moves())
         self.assertNotAlmostEqual(app._read_timeout() or 0.0, app_module.WALLPAPER_TICK_SECONDS)
@@ -736,6 +743,7 @@ class AppWallpaperTests(unittest.TestCase):
             for mode in ("auto", "light", "dark"):
                 with self.subTest(answered=answered, mode=mode):
                     app, _clock = self.app(answered=answered)
+                    app.launch_look = "moonlit"
                     app._render()
                     before = len(app.terminal.writes)
                     app._theme(mode)
@@ -746,7 +754,7 @@ class AppWallpaperTests(unittest.TestCase):
                         self.assertIn(background_restore(answered), "".join(app.terminal.writes[before:]))
                         self.assertIsNone(app.ground_set)
                     else:
-                        self.assertEqual(ground, look_ground("spectrum", light))
+                        self.assertEqual(ground, look_ground("moonlit", light))
                         for fg in foregrounds[light]:
                             self.assertGreaterEqual(contrast_ratio(fg, ground), 7.0)
 
@@ -833,17 +841,19 @@ class AppWallpaperTests(unittest.TestCase):
 
     def test_reduced_motion_keeps_the_ground_and_a_still_scene(self) -> None:
         app, clock = self.app({**WALLPAPER_ON, "OMH_TUI_REDUCED_MOTION": "1"})
+        app.launch_look = "moonlit"
         first = app._ambient()
         clock.at += 7
         self.assertEqual(app._ambient(), first)
         self.assertFalse(app._wallpaper_moves())
         app._render()
-        self.assertIn(background_set(look_ground("spectrum", False)), self.writes(app))
+        self.assertIn(background_set(look_ground("moonlit", False)), self.writes(app))
 
     def test_wallpaper_off_puts_the_background_back_at_once_and_clears_the_cells(self) -> None:
         home = Path(tempfile.mkdtemp(prefix="omh-wallpaper-test-")) / ".omh"
         with mock.patch.object(app_module, "scene", everywhere):
             app, clock = self.app({**WALLPAPER_ON, "OMH_HOME": str(home)})
+            app.launch_look = "moonlit"
             self.busy(app, clock, flushes=2)
             self.assertIn(MARK, "".join(app.terminal.screen.lines()))
             for char in "/wallpaper off":
@@ -858,7 +868,7 @@ class AppWallpaperTests(unittest.TestCase):
         app._wallpaper_command("")  # alone, it switches
         self.assertIs(read_wallpaper_choice(home), True)
         app._render()
-        self.assertGreater(self.writes(app).rfind(background_set(look_ground("spectrum", False))),
+        self.assertGreater(self.writes(app).rfind(background_set(look_ground("moonlit", False))),
                            self.writes(app).rfind(background_restore(ANSWERED)))
 
     def test_theme_light_on_a_dark_terminal_says_it_holds_the_wallpaper_off(self) -> None:
