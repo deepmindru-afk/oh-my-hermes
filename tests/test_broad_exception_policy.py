@@ -749,6 +749,23 @@ CLASSIFIED_SITES: tuple[ClassifiedSite, ...] = (
         "off. A note is only ever built from fresh server diagnostics, so a failure never claims callers broke.",
     ),
     ClassifiedSite(
+        "src/plugin_bundle/omh/consistency_trigger.py",
+        "snapshot_before_edit",
+        INTENTIONAL,
+        "Runs in pre_tool_call before an edit and must never fail or alter that edit. A failure is logged as a "
+        "warning naming the exception class (`consistency_trigger snapshot failed=`) and keeps no snapshot, and "
+        "a changed file without a snapshot fires the round-end check (`no_snapshot`); it is never read as a "
+        "file with nothing to find.",
+    ),
+    ClassifiedSite(
+        "src/plugin_bundle/omh/consistency_trigger.py",
+        "round_end_trigger",
+        INTENTIONAL,
+        "A failure deciding whether the round-end check can pay off becomes the verdict `fire=True, "
+        "reason=error` naming the exception class, logged with every verdict: the check fires exactly as it "
+        "did before the trigger, so a failure can only cost a round, never skip one.",
+    ),
+    ClassifiedSite(
         "src/plugin_bundle/omh/lsp_nav.py",
         "_write_atomic",
         INTENTIONAL,
@@ -861,8 +878,12 @@ CLASSIFIED_SITES: tuple[ClassifiedSite, ...] = (
 # 88 -> 89 / 80 -> 81: `package_backend._off_path_install`, the look for an
 # install the import path skips, inside `load_backend`'s handler (a failure
 # leaves `off_path_install` empty, never a raise out of a tool; #2415).
-EXPECTED_HANDLER_COUNT = 89
-EXPECTED_ANCHOR_COUNT = 81
+# 89 -> 91 / 81 -> 83: `consistency_trigger.snapshot_before_edit` and
+# `round_end_trigger`, the round-end check's trigger: a pre_tool_call body that
+# logs a named warning and keeps nothing, and a verdict that fires the check on
+# any failure, so a failure costs a round and never skips one.
+EXPECTED_HANDLER_COUNT = 91
+EXPECTED_ANCHOR_COUNT = 83
 
 
 class DerivedSite(NamedTuple):

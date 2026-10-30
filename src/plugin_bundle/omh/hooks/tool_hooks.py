@@ -11,6 +11,7 @@ from typing import Protocol, runtime_checkable
 from ..degradation import runtime_binding_degradation
 from ..approval_bypass import record_approval_bypass
 from ..catch_log import REPEAT_LOOP, record_catch
+from ..consistency_trigger import snapshot_before_edit
 from ..dag_define_gate import delegate_before_define_directive
 from ..delegation_route_restore import dispatch_route_directive
 from ..host_observation import host_session_id, observe_plugin_hook_call
@@ -133,6 +134,9 @@ def pre_tool_call(**kwargs: object) -> dict[str, object] | None:
     # First, before any gate can return early: a new turn's first tool call drops the impact
     # check's state from an earlier turn of this session, whatever happens to the call itself.
     forget_other_turn(str(kwargs.get("session_id", "") or kwargs.get("task_id", "") or ""), kwargs.get("turn_id"))
+    # Also before any gate: the round-end consistency trigger keeps the pre-edit text of the Python
+    # files this call edits, so a call a gate here sends to a person for approval is covered too.
+    snapshot_before_edit(kwargs, _tool_arguments(kwargs))
     if str(kwargs.get("tool_name", "") or "") == "omh_jev_ask":
         # First, before any early return: the call carries the turn it runs
         # in, and `omh_jev_ask` proceeds only when that is the turn whose own

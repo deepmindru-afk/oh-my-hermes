@@ -89,6 +89,27 @@ coding posture means Hermes's `cli`, `tui`, `acp` or `desktop` surface in a
 code workspace, or `agent.coding_context: on`; the suffixes are listed in
 `_CODE_SUFFIXES` in `hooks/verify_hooks.py`.
 
+When the check would be the only nudge continuing the turn, it fires only
+when it can pay off (`consistency_trigger.py`). `pre_tool_call` keeps the
+pre-edit text of each Python file the turn edits. At the first stop, the
+changed definitions are compared with the workspace's other Python files, the
+ones the turn did not edit. The check fires when one of these is true:
+
+- a touched top-level definition is also defined in another file;
+- a definition the edit removed or renamed is still named in another file;
+- a touched function's signature changed and another file names it;
+- a replaced line of 30 or more characters appears in another file.
+
+Otherwise the turn ends at its first stop. Anything the trigger cannot decide
+fires the check as before:
+
+- a changed source file that is not Python;
+- a file without a snapshot or that does not parse;
+- a scan past 3,000 files or 2 s;
+- an error.
+
+Beside another nudge, the check rides along without a verdict.
+
 The check asks the model to look for other copies or call sites of the logic
 it changed that have to change with it, and to fix any it finds. It also tells
 the model not to re-run tests for this check, unless something beside it asks

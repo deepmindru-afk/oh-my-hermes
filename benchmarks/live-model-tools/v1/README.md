@@ -1047,6 +1047,123 @@ sessions, and no bench run is a delegated child. Measurement 5 was not re-run.
 
 Pass counts come from the run records. Firing, final answers and tool calls come from
 each profile's session DB.
+
+### 2026-10-30 round-end check trigger: fire only on a copy or a reference
+
+Pre-registered before its first live run.
+
+The round-end consistency check above costs one extra round wherever it fires. In the
+2026-10-30 head-to-head against oh-my-pi, in the product-default configuration (Hermes
+`tool_search` default), it continued 33 of 33 Haiku 4.5 sessions and 19 of 33 Sonnet 5.5
+sessions. On Sonnet, OMH ran 4 model calls after its last edit against 2 for plain Hermes.
+Its measured wins are narrow:
+- `C-DUPLICATE`, a second copy of the edited helper;
+- `mutation_outside_scope` 2 to 0 in measurement 5, at n = 2.
+
+The change: `pre_verify` asks `consistency_trigger.round_end_trigger` first, whenever the
+check would be the only nudge continuing the turn.
+- **Snapshot.** `pre_tool_call` keeps the pre-edit text of each `.py`/`.pyi` file a
+  `patch` or `write_file` call edits, once per turn.
+- **Diff.** At the first stop, the trigger diffs each snapshot against the disk and finds
+  the definitions the changed lines touch, with stdlib `ast`.
+- **Scan.** It scans the workspace's other Python files, the ones this turn did not edit,
+  for four signals:
+  - `copy`: a touched top-level definition is also defined at the top level elsewhere;
+  - `renamed`: a definition the edit removed is still named elsewhere;
+  - `signature`: a touched function's parameters or return annotation changed, and it
+    is named elsewhere;
+  - `line_copy`: a replaced line of 30 or more characters also appears elsewhere.
+
+No signal skips the check, and the turn ends at its first stop. The trigger fires the
+check, as before, whenever it cannot decide:
+- a changed source file that is not Python;
+- a changed file without a snapshot, or one that does not parse;
+- more than 3,000 files or 2 s of scanning;
+- any error.
+
+Beside another nudge (served-surface gate, impact note, open plan) the check rides along
+without a verdict, since the round happens anyway. The check text and the closing are
+unchanged.
+
+Offline replay, before this registration: the H2H omt sessions' own `patch` and
+`write_file` calls were applied to fresh fixtures (`OPT/A/replay_h2h.py` in the research
+folder). The trigger:
+- fired on every Haiku `C-DUPLICATE` and `C-DECOY` session, each naming the other module's
+  `_to_cents`;
+- fired on `I-SIGNATURE` and `I-KWARG`, through the changed signature;
+- skipped all 23 sessions on `C-SCOPE-TRAP`, `E-BUGFIX`, `E-RENAME`, `L-RENAME-ALIAS` and
+  `I-CONTROL` in which the base check had fired.
+
+The replay cannot apply `terminal` edits.
+
+The setup, fixed before the first live run:
+
+- **Arms.** `base` links the OMH plugin bundle at origin/main `531f7034f`. `new` links
+  this branch. The bundles differ only in `consistency_trigger.py`, `verify_hooks.py`
+  and `tool_hooks.py`.
+- **Profiles.** Both arms use the H2H omt configuration:
+  - Hermes's default `tools.tool_search`;
+  - `impact_check: true` and `lsp_tools: true`;
+  - `pyright` pinned by an absolute `lsp.servers.pyright.command`;
+  - `agent.max_turns: 120` and `agent.run_budget_seconds: 600`.
+
+  Profiles `opta-<lane>-<arm>`; edit surface `impact` (toolsets
+  `file,terminal,omh-lsp`).
+- **Prompt.** `baseline` condition, no edit directive, `--git-init-workspace`,
+  `--test-env`, effort `medium`.
+- **Panel.** Subscription routes only:
+
+  | Lane | Model | Route | Tier |
+  | --- | --- | --- | --- |
+  | h45 | `claude-haiku-4-5-20251001` | `claude-proxy` (CPA) | weak |
+  | s55 | `claude-sonnet-5-5` | `claude-proxy` (CPA) | strong |
+  | luna | `gpt-6-luna` | `openai-codex` | weak |
+  | sol | `gpt-6.1-sol` | `openai-codex` | strong |
+
+- **Templates and seeds.** Seven templates, seeds 104729, 130363 and 155921: 21 instances
+  per lane per arm, 84 per arm.
+  - Positive: `C-DUPLICATE`.
+  - Negatives: `C-DECOY`, a look-alike that must not change, and five templates with no
+    copy elsewhere: `C-SCOPE-TRAP`, `E-BUGFIX`, `E-RENAME`, `L-RENAME-ALIAS` and
+    `I-CONTROL`.
+- **Order.** Per instance, the two arms run back to back, and the order alternates.
+- **Retries.** A run classified `rate_limited`, `provider_error`, `model_unavailable` or
+  `authentication_failed` is retried on the same route. Any other outcome is final. A run
+  with no completed record is a fail.
+- **Ceiling check on the base arm, from the H2H omt sessions.** The check fired in 14 of
+  15 Haiku sessions and 9 of 15 Sonnet sessions on the five no-copy templates. So the
+  base arm leaves room for the fire rate to drop.
+
+The gate. Must hold, `new` against `base`:
+
+1. Total passes: new at least base - 1.
+2. `C-DUPLICATE` passes: new at least base.
+3. `mutation_outside_scope` count: new at most base.
+4. Final answer kept (the last assistant message contains `changed_paths`, read from the
+   session DB): new at least base - 2.
+
+Must improve:
+
+5. **Fire rate on the five no-copy templates.** It is the share of coding sessions with
+   an assistant row whose `finish_reason` is `verify_hook_continue`. A coding session is
+   a completed session with a `patch` or `write_file` call on a `.py` path. New must be
+   at most half of base.
+6. **Strong models (`claude-sonnet-5-5`, `gpt-6.1-sol`).**
+   - Each model's median tokens and median wall time per run: new strictly below base.
+   - Pooled over both models (42 runs per arm), the pre-registered minimum improvement is
+     median tokens at most 0.90x base and median wall time at most 0.95x base.
+
+Reported, not gated:
+- the weak-model medians;
+- the per-template table;
+- the trigger's own verdicts (`consistency_trigger ... reason=`) from the new arm's
+  profile log;
+- model calls after the last edit;
+- tokens and money by route.
+
+Recomputed from the raw run records and the session-DB snapshots, not from the driver log.
+If any clause fails, the failure is recorded here and the branch does not ask to merge.
+
 ### 2026-10-30 impact check: callers broken by an edit, off vs on (`impact_check` + `lsp_diagnostics`), gate passed
 
 One question, from oh-my-pi's workspace diagnostics: when an edit changes a definition, does
