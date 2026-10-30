@@ -1258,6 +1258,231 @@ What it shows, and what it does not:
   dispatch, so those callers still break silently. A deleted or moved module is not checked.
   n = 12 per model per arm.
 
+### 2026-10-30 big files: read outline off vs on (`bigfile-ab`), gate failed
+
+Status: the gate failed and the feature did not merge (PR #2408, draft, branch `feature/read-outline`). The outline code, the `bigfile-ab` split, `lib/bigfile.py` and `tests/test_read_outline.py` exist only on that branch, not on main; the commands and file names below refer to the branch, and this section records the measurement only.
+
+One question, from oh-my-pi's read summary: when a `read_file` result is truncated, does
+appending an outline of the whole file (classes, functions and methods with their line ranges)
+let the model jump to the right offset instead of paging? OMH's version (on the branch) appends and never cuts:
+`src/plugin_bundle/omh/read_outline.py`, Python only (stdlib `ast`), once per file version per
+session, at most 60 lines, for files of at least 400 lines.
+
+The setup, fixed before the first live run:
+
+- Split `bigfile-ab` (branch only; `--split bigfile-ab`, `lib/bigfile.py`; the evaluation corpus and its
+  digest are unchanged). One generated module, `src/benchapp/tariffs.py`, of 4,750-5,030 lines
+  (past both of Hermes' read limits: 2,000 lines and 100,000 characters). Two templates, 3 seeds
+  each, 6 instances per model per arm:
+  - `B-DEEP-BUG`: a pricing helper defined past line 3,000 has an off-by-one threshold. The
+    task names the failing test and the symptom ("a shipment of exactly N pieces is quoted as if
+    it got no crate discount"), never the helper, the module path or the line. Graded on hidden
+    quotes from the correct module, so editing the test does not pass.
+  - `B-DEEP-RENAME`: rename a public function defined past line 3,000, used near the top of the
+    module, deep in it, in a second module and in the tests, next to a same-named method, a log
+    string and a comment that must stay. Graded by AST plus behaviour.
+- Both arms: no edit directive, `--git-init-workspace`, `--test-env`, effort `medium`, toolsets
+  `file,terminal`. Two profiles that differ only in `plugins.entries.omh.settings.read_outline`
+  (`true` / `false`) and the OMH home; `agent.max_turns: 120`; `tools.tool_search` off.
+  `OMH_READ_OUTLINE` is unset in the run environment.
+- Subscription routes only. Weak: `claude-haiku-4-5-20251001`, `claude-haiku-5-5` (Hermes
+  provider `claude-proxy`, the local CPA at `http://127.0.0.1:8317/v1`) and `gpt-5.6-luna`
+  (Hermes provider `openai-codex`). Strong: `claude-sonnet-5-5`, `claude-opus-5-5`
+  (`claude-proxy`) and `gpt-6.1-sol` (`openai-codex`). Both Codex ids answered a one-word probe
+  through the off profile on 2026-10-30; the subscription also serves `gpt-6-luna`, and the
+  older-generation small tier, `gpt-5.6-luna`, is the weak model. Condition `baseline` (no
+  family calibration), as in the sections below.
+- Hermes runs through `~/.hermes/hermes-agent/.venv/bin/python -m hermes_cli.main -p <profile>`,
+  never the `hermes` launcher. `--oneshot` is a client of the host gateway, which runs the turn
+  and loads each profile's plugins (reloaded for both profiles after they were configured), so
+  the harness timeout only detaches the client. After every run that did not complete, the
+  driver sends the gateway `session.interrupt` (the RPC behind the chat client's `/stop`) for
+  that run's sessions; a smoke check stopped a detached turn this way.
+
+The merge gate, written before the first live run:
+
+- Weak models, on at least off + 3 passes (of 18 per arm).
+- Strong models, on at least off - 1 passes (of 18 per arm).
+- The on arm's median tokens per run, over all its runs, at most the off arm's.
+- No on-arm run above 3x the median tokens of its model's off-arm runs on the same template.
+- The outline fired (a `read_file` result carried `omh_read_outline`) in at least half of the
+  on-arm sessions, counted from the on profile's session database; and in no off-arm session.
+- Small and untruncated reads byte-identical: `tests/test_read_outline.py` (branch)
+  (`test_small_and_untruncated_reads_are_byte_identical`).
+
+A run with no record, or one that timed out, is scored as a fail; its tokens come from the
+session database when the session can be found, and are reported as unobserved otherwise, never
+imputed. If the gate fails, the outline does not merge and the result is recorded here. It failed.
+
+The result: on this corpus the outline changes nothing measurable, and the weak-model clause
+fails, so the outline does **not** merge.
+
+| Model | off | on | off tokens (median) | on tokens (median) |
+| --- | ---: | ---: | ---: | ---: |
+| `claude-haiku-4-5-20251001` | 6 / 6 | 5 / 6 | 579,517 | 591,108 |
+| `claude-haiku-5-5` | 6 / 6 | 6 / 6 | 291,562 | 293,271 |
+| `gpt-5.6-luna` | 6 / 6 | 6 / 6 | 226,699 | 208,058 |
+| `claude-sonnet-5-5` | 6 / 6 | 6 / 6 | 136,573 | 139,692 |
+| `claude-opus-5-5` | 6 / 6 | 6 / 6 | 189,040 | 190,275 |
+| `gpt-6.1-sol` | 6 / 6 | 6 / 6 | 265,919 | 269,421 |
+| **Total** | **36 / 36** | **35 / 36** | 239,844 | 228,715 |
+
+Token medians are per model over its 6 runs per arm; the total row is the median over all 36
+runs per arm. Session-database sums: 11.85M off, 10.91M on.
+
+The gate, clause by clause:
+
+- Weak models, on at least off + 3: **fail**, 17 vs 18. The off arm passed every weak run, so
+  no arm could have cleared + 3; the one on-arm fail is a `claude-haiku-4-5` rename that left a
+  reference behind (1.09M tokens).
+- Strong models, on at least off - 1: pass, 18 vs 18.
+- On-arm median tokens at most the off arm's: pass, 228,715 vs 239,844.
+- No on-arm run above 3x its model's off-arm median on the same template: pass, none.
+- Outline fired in at least half of the on-arm sessions: pass, 29 of 37 on-profile sessions
+  (every session that had a truncated `read_file` result; the other 8 never had one), and in 0
+  of 38 off-profile sessions.
+- Small and untruncated reads byte-identical: pass (`tests/test_read_outline.py`, branch).
+
+What it shows, and what it does not:
+
+- Every model, weak ones included, finds the deep helper by searching for names from the test
+  and the call site, then reads a window around the hit. `read_file` calls per session have the
+  same median in both arms (4). The outline arrives, and the models do not need it: the corpus
+  does not reproduce the paging loop of #1723, where the model never searched.
+- A fair test of the outline needs a task where search does not lead to the location (a symptom
+  with no searchable name) or a model that pages instead of searching. Neither is in this split.
+- Infrastructure: at 01:59:51 KST the shared host gateway received SIGTERM from its supervisor
+  (another session's action, not this run) and interrupted 15 turns. The 17 runs that ended in
+  that window (exit 130, then exit 1 within 3 s) were moved out of the records and run again on
+  the same routes; no completed record was removed. An earlier smoke, before the bench
+  profiles' plugins were reloaded in the gateway, had no outline and is not counted.
+- After the outage the bench profiles also set `agent.run_budget_seconds: 600`. No run in the
+  table timed out or needed a stop.
+- omh `feature/read-outline` `237321b92` on origin/main `5cc1ed311`; Hermes Agent checkout `bf0203a794` (with uncommitted gateway changes from another session).
+  n = 6 per model per arm, Python only.
+
+### 2026-10-30 shell edits: the built-in shell-edit rule, off vs on, gate failed
+
+Status: the gate failed and the feature did not merge (PR #2411, draft, branch `feature/shell-edit-rules`). The rule, the `shell-ab` split and the harness changes exist only on that branch, not on main; the commands and file names below refer to the branch, and this section records the measurement only.
+
+One question, from oh-my-pi's bash interceptor (shipped off there): when a model may use the
+terminal however it likes, does refusing in-place shell edits of source files (`sed -i`,
+`perl -i`, a `python -c` that rewrites a file, `>`/`>>`/`tee` onto an existing source file) and
+naming `patch`/`write_file` instead make it pass more tasks? The rule (on the branch) is
+`src/plugin_bundle/omh/shell_edit_rules.py`, run at `pre_tool_call` after the person's own
+`toolcall_rules`; it matches on `shlex`-parsed shell segments, never refuses reads, searches,
+tests, `git`, new files, non-source files or anything under a generated directory such as
+`build/`, and lets through any command it cannot parse.
+
+The setup, fixed before the first live run:
+
+- Pinned `E-RENAME` and `E-BUGFIX` (3 seeds each), **without**
+  `--edit-directive`, so the model is free to edit through the shell.
+- The negative template `S-GENERATED` in the separate split `shell-ab` (branch only; 3 seeds, the pinned
+  corpus and its digest are unchanged): every write it needs is a new file under `build/` made by
+  shell redirection (a generated `.py` module and a test log), plus `git apply --check` on a patch
+  that must not be applied, and a line read from a source file. It fails if any existing file
+  changes.
+- Both arms: `--git-init-workspace`, `--test-env`, effort `medium`, toolsets `file,terminal`.
+  Two profiles that differ only in `plugins.entries.omh.settings.shell_edit_rules` (true/false)
+  and OMH home, both loading the same plugin snapshot; `agent.max_turns: 120`,
+  `agent.run_budget_seconds: 600`. Arm order alternates per instance.
+- Subscription routes only. Weak: `claude-haiku-4-5-20251001`, `claude-haiku-5-5`
+  (`claude-proxy`), `gpt-6-luna` (`openai-codex`). Strong: `claude-sonnet-5-5`,
+  `claude-opus-5-5` (`claude-proxy`), `gpt-6.1-sol` (`openai-codex`).
+- A run classified `rate_limited` / `provider_error` is retried on the same route; every other
+  outcome, a timeout included, is final and scored as recorded.
+- Ceiling check before the result run: a smoke of the off arm on the weak models. If the off arm
+  passes every smoke run, the main split is too easy to show a gain, and harder rename templates
+  where a text replace misleads (`L-RENAME-ALIAS`, `L-RENAME-SHADOW` from `lsp-ab`) are added to
+  both arms; the choice is written here before the result run.
+- Ceiling smoke result (off arm, seed 104729, the three weak models): 9 / 9 passed, and 0
+  terminal calls edited source. Every edit went through `patch` / `write_file` without any
+  directive. So, as stated above, `L-RENAME-ALIAS` and `L-RENAME-SHADOW` (3 seeds each) join the
+  main split in both arms: 12 main instances per model per arm. The smoke runs are not counted.
+- Free data from earlier sessions (no directive, same panel, the 2026-10-30 read-outline split
+  on a 3,600-line file): only `claude-sonnet-5-5` and `claude-opus-5-5` edited source through
+  the shell (`sed -i ''` with line addresses, 3 of 6 sessions each, in both profiles); the weak
+  models and both GPT models made 0 such calls. That off arm passed 36 / 36, so those shell edits
+  did not fail. The weak-model clause may therefore have nothing to act on; it stays as written.
+
+The merge gate, written before the first live run. Counts are passes over the main split
+(everything except `S-GENERATED`) unless a clause says otherwise.
+
+1. Weak models: on at least off + 2.
+2. Strong models: on at least off - 1.
+3. Shell edits that ran in the on arm: at most 1 in total. Counted over every terminal call in
+   the on arm's session DBs that was not refused, by a broad text match independent of the
+   rule's parser (`sed`/`perl`/`ruby` with an in-place flag; `python` code that opens a file for
+   writing or calls `write_text`/`write_bytes`; `>`, `>>` or `tee` onto a path with a source
+   suffix), each hit checked by hand against the workspace's existing files.
+4. No on-arm session with more than 5 consecutive refusals (refusal tool results with no other
+   tool result between them).
+5. No on-arm run above 3x the median tokens of the same model's off-arm runs on the same
+   template.
+6. Final answer preserved: on-arm sessions whose last assistant message carries the task's
+   answer key (`changed_paths` for `E-*`, `generated_lines` for `S-GENERATED`) at least the
+   off arm's count minus 2, counted from the session DBs.
+7. Negative template: `S-GENERATED` passes, all models pooled, on at least off - 1.
+
+The result. On this panel the rule does not make any model pass more tasks, so the branch
+(`feature/shell-edit-rules`) does not merge and main has no such rule.
+
+| Model | off | on | off tokens (median) | on tokens (median) |
+| --- | ---: | ---: | ---: | ---: |
+| `claude-haiku-4-5-20251001` | 12 / 12 | 11 / 12 | 268,489 | 259,064 |
+| `claude-haiku-5-5` | 12 / 12 | 12 / 12 | 223,649 | 223,204 |
+| `gpt-6-luna` | 11 / 12 | 12 / 12 | 229,689 | 240,554 |
+| `claude-sonnet-5-5` | 12 / 12 | 12 / 12 | 134,980 | 207,348 |
+| `claude-opus-5-5` | 12 / 12 | 12 / 12 | 169,812 | 210,912 |
+| `gpt-6.1-sol` | 9 / 12 | 9 / 12 | 152,544 | 155,859 |
+| **Total** | **68 / 72** | **68 / 72** | 18.3M total | 19.3M total |
+
+Pass counts are the main split (`E-RENAME`, `E-BUGFIX`, `L-RENAME-ALIAS`, `L-RENAME-SHADOW`);
+token medians and totals are over every run of the model, `S-GENERATED` included. Per template,
+off vs on: `E-RENAME` 18 vs 18, `E-BUGFIX` 18 vs 17, `L-RENAME-ALIAS` 14 vs 15, `L-RENAME-SHADOW`
+18 vs 18, `S-GENERATED` 18 vs 17. 180 of 180 records, all `completed`, no retries, no timeouts.
+
+The gate, clause by clause:
+
+1. Weak, on at least off + 2: 35 vs 35, **fail**.
+2. Strong, on at least off - 1: 33 vs 33, pass.
+3. Shell edits that ran in the on arm, at most 1: 0, pass. The broad text match flagged 21
+   calls; by hand every one wrote a new file under `build/` or the answer JSON.
+4. At most 5 consecutive refusals: the longest streak was 1, pass. 21 refusals in 21 of 90
+   on-arm sessions.
+5. No on run above 3x its pair median: none, pass.
+6. Final answer preserved, on at least off - 2: 69 vs 61 sessions, pass.
+7. `S-GENERATED`, on at least off - 1: 17 vs 18, pass. The on-arm fail is a `claude-haiku-4-5`
+   run that copied the generator's output by hand without the last newline and reported 4 lines
+   for 5; no refusal in that session.
+
+What it shows:
+
+- Weak models and both GPT models do not edit source through the shell here. They use `patch` /
+  `write_file` without being told to, so the rule has nothing to refuse for them, and the
+  weak-model clause cannot move. The smoke and the earlier session DBs said the same before the
+  run.
+- `claude-sonnet-5-5` and `claude-opus-5-5` reach for `sed -i ''` on renames: in the on arm every
+  one of their `E-RENAME` and `L-RENAME-*` sessions was refused once (18 of 18) and then finished
+  with `patch`. Their shell edits in the off arm passed anyway, so the refusal bought nothing and
+  cost tokens: sonnet's renames went from about 133k-135k to 207k-249k median tokens, opus's
+  from 136k-206k to 207k-288k (+40% to +84%). Below the 3x clause, but a real cost for no gain.
+- Three of the 21 refusals were wrong: `gpt-6-luna` and `gpt-6.1-sol` ran `python` programs on
+  `S-GENERATED` that hashed every existing file and wrote only `build/` output and the answer.
+  The detector fell back to "the program writes something and names an existing source file" when
+  a write path was `root / 'build/...'` or `outputs[0]`. Fixed after the run: joins and indexed
+  lists are now read as paths, and the fallback only counts source literals the program hands to
+  its own helper functions (`def sub(p): open(p, 'w')`, which opus used and which is still
+  refused). Replaying all 482 terminal calls of this run against the measured detector
+  (`ebaf7c6ac`) and the fixed one changes 7 verdicts, all on `S-GENERATED` (3 on-arm refusals and
+  4 off-arm calls that would have been refused), and none on the main split; the fixed detector
+  refuses no call on `S-GENERATED`. The pass counts above are from the measured detector and are
+  not re-run.
+- Plugin snapshot `ebaf7c6ac` (the rule as measured); the bench ran from `a9d7f848c`, which adds
+  only this README's smoke record and docs. Hermes Agent v0.22.5. n = 12 main instances plus 3
+  negative instances per model per arm.
+
 ### 2026-10-29 debugging: builtin `patch` vs a debugpy tool (`omh-dap`), gate failed
 
 One question, from oh-my-pi's `debug` tool: does giving the model a debugger (breakpoints,

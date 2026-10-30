@@ -19,10 +19,11 @@ from omh.tui.frame import badge_forms, branch_forms
 from omh.tui.git_status import MIN_GAP_SECONDS, GitState, GitWatcher, parse_status, read_status
 from omh.tui.layout import allocate
 from omh.tui.modes import info_line
-from omh.tui.style import Span
+from omh.tui.style import Span, Style
 from omh.tui.theme import (
     LAUNCH_PRESETS, TEXT_CONTRAST, build_theme, contrast_ratio, launch_palette, launch_styles, launch_wordmark,
 )
+from test_tui_modes import make_app
 
 PORCELAIN = """# branch.oid 9d013ddd827e803eea5b5d2d1259acad43b295d9
 # branch.head omh/terminology-unification
@@ -234,11 +235,12 @@ class BottomLineTests(unittest.TestCase):
     THEME = build_theme(default_theme(), "#0D1117")
     RIGHT = ((Span("deepseek-v4.1-flash · ctx 12% · effort high", THEME.muted),), (Span("ctx 12% · effort high", THEME.muted),))
     STATE = GitState("omh/terminology-unification", 3, 128)
+    NAME = Style(fg="#C3D2E3")
 
     def line(self, width: int, state: GitState | None = STATE, **facts: object) -> str:
         word, accent = native("spectrum", "#0D1117")
         return line_text(info_line(mode=facts.pop("mode", "normal"), width=width, theme=self.THEME,
-                                   right=self.RIGHT, badge=badge_forms(self.THEME, accent, word),
+                                   right=self.RIGHT, badge=badge_forms(self.THEME, accent, word, self.NAME),
                                    branch=branch_forms(state, self.THEME), **facts))  # type: ignore[arg-type]
 
     def test_the_badge_then_the_branch_on_the_left_and_the_fields_on_the_right(self) -> None:
@@ -281,11 +283,12 @@ class BottomLineTests(unittest.TestCase):
 
     def test_the_badge_and_the_branch_keep_their_colours(self) -> None:
         word, accent = native("spectrum", "#0D1117")
-        row = info_line(mode="normal", width=120, theme=self.THEME, badge=badge_forms(self.THEME, accent, word),
+        row = info_line(mode="normal", width=120, theme=self.THEME, badge=badge_forms(self.THEME, accent, word, self.NAME),
                         branch=branch_forms(self.STATE, self.THEME))
         styles = {span.text: span.style for span in row}
         self.assertEqual((styles["!3"], styles["?128"], styles["⚚"]), (self.THEME.warn, self.THEME.faint, accent))
         self.assertEqual(styles["omh/terminology-unification"], self.THEME.label)
+        self.assertEqual(styles["OMH"], self.NAME)
         self.assertEqual([span.style for span in row if span.text in "Native"][:6], [span.style for span in word])
 
     def test_native_reads_in_every_launch_look_on_light_and_dark(self) -> None:
@@ -297,6 +300,21 @@ class BottomLineTests(unittest.TestCase):
                         self.assertGreaterEqual(contrast_ratio(span.style.fg, background), TEXT_CONTRAST)
         sweep, _accent = native("spectrum", "#0D1117")
         self.assertGreater(len({span.style.fg for span in sweep}), 3, "the spectrum sweeps its hues across the word")
+
+    def test_omh_is_pale_silver_blue_and_reads_on_light_and_dark(self) -> None:
+        # Owner, 2026-10-30: `OMH` in a light sky, white or silver colour rather than the faint grey.
+        app, _client = make_app(environ={"COLORTERM": "truecolor", "TERM": "xterm-256color"})
+        for background in ("#0D1117", "#0A0E14", "#FFFFFF", "#F5F5F0"):
+            app.background = background
+            app.theme = app._themed()
+            styles = [{span.text: span.style for span in form} for form in app._badge_forms()[:2]]
+            with self.subTest(background=background):
+                self.assertEqual(styles[0]["OMH"], styles[1]["OMH"])
+                fg = styles[0]["OMH"].fg
+                self.assertNotEqual(fg, app.theme.faint.fg)
+                self.assertGreaterEqual(contrast_ratio(fg, background), TEXT_CONTRAST)
+                if background.startswith("#0"):
+                    self.assertEqual(fg, "#C3D2E3")
 
     def test_no_row_of_its_own_at_any_height(self) -> None:
         for rows in (24, 29, 30, 40):

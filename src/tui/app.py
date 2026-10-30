@@ -539,6 +539,8 @@ EXIT_SIGNALS = ("SIGTERM", "SIGHUP")
 
 BANNER_BRAND = "⚚ OH-MY-HERMES"
 NATIVE_WORD = "Native"  # the last word of the badge that starts the info line, in the launch look's colours
+# The badge's `OMH`: a pale silver blue (owner, 2026-10-30), lifted to body-text contrast on the terminal's ground.
+OMH_SILVER = "#C3D2E3"
 # The block logo goes above the banner from this many rows (and as many columns as it is wide): its six rows and
 # the blank under it leave the composer region its room there.
 LOGO_MIN_ROWS = 24
@@ -5794,16 +5796,17 @@ class App(ModesMixin, AgentViewMixin):
         if self.badge_cache[0] == key:
             return self.badge_cache[1]
         background = self._surface()
-        palette = launch_palette(self._shown_look(), surface_for(self._skin(), background))
+        surface = surface_for(self._skin(), background)
+        ink = BLACK if is_light(surface) else WHITE
+        palette = launch_palette(self._shown_look(), surface)
         if palette.sweep or palette.faces:  # the spectrum's hues across the letters, or the look's own colour
             native = launch_wordmark(NATIVE_WORD, self._skin(), background, palette)
         else:  # graphite: its turquoise, the one hue it has
-            surface = surface_for(self._skin(), background)
-            ink = BLACK if is_light(surface) else WHITE
             native = (Span(NATIVE_WORD, Style(fg=lifted_colour(palette.spark, surface, TEXT_CONTRAST, ink), bold=True)),)
+        name = Style(fg=lifted_colour(OMH_SILVER, surface, TEXT_CONTRAST, ink), depth=self.color_depth)
         if self.color_depth == NO_COLOR:
             native = tuple(Span(span.text, replace(span.style, depth=NO_COLOR)) for span in native)
-        forms = badge_forms(self.theme, self._launch_paint().look.brand, native)
+        forms = badge_forms(self.theme, self._launch_paint().look.brand, native, name)
         self.badge_cache = (key, forms)
         return forms
 
