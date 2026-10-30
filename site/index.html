@@ -40,22 +40,22 @@ body::after{content:"";position:fixed;inset:-50%;pointer-events:none;z-index:100
 @keyframes grain{0%{transform:translate(0,0)}25%{transform:translate(-3%,2%)}50%{transform:translate(2%,-3%)}75%{transform:translate(-2%,-1%)}}
 .prog{position:fixed;left:0;top:0;height:2px;width:100%;z-index:60;transform-origin:0 50%;transform:scaleX(0);background:var(--spectrum);box-shadow:0 0 12px var(--pink)}
 
-.top{position:fixed;inset:0 0 auto 0;z-index:50;height:104px;pointer-events:none;transition:transform var(--slow) var(--ease)}
-.top.hide{transform:translateY(-104px)}
-.top::before{content:"";position:absolute;inset:0;background:linear-gradient(180deg,var(--bg),rgba(12,10,18,.82) 45%,transparent);
+.top,.topbar{position:fixed;inset:0 0 auto 0;z-index:50;height:104px;pointer-events:none;transition:transform var(--slow) var(--ease)}
+.topbar.hide{transform:translateY(-104px)}
+.topbar::before{content:"";position:absolute;inset:0;background:linear-gradient(180deg,var(--bg),rgba(12,10,18,.82) 45%,transparent);
   backdrop-filter:blur(10px);-webkit-mask-image:linear-gradient(180deg,#000 42%,transparent);mask-image:linear-gradient(180deg,#000 42%,transparent)}
 .top__in{position:relative;pointer-events:auto;height:68px;display:flex;align-items:center;justify-content:space-between;padding:0 var(--edge)}
 .brand{display:flex;align-items:center;gap:10px;font:600 16px/1 var(--sans);letter-spacing:-.01em}
 .brand img{width:30px;height:30px;transition:transform var(--slow) var(--spring)}
 .brand:hover img{transform:rotate(-8deg) scale(1.08)}
 .nav{position:relative;display:flex;align-items:center;gap:6px}
-.nav > a:not(.pill){position:relative;padding:9px 13px;border-radius:999px;color:var(--ink-2);transition:color var(--fast)}
-.nav > a:not(.pill):hover{color:var(--ink)}
+.nav > a:not(.pill):not(.nav__icon){position:relative;padding:9px 13px;border-radius:999px;color:var(--ink-2);transition:color var(--fast)}
+.nav > a:not(.pill):not(.nav__icon):hover{color:var(--ink)}
 .nav .slider{position:absolute;height:34px;border-radius:999px;border:1px solid var(--line-2);background:rgba(255,255,255,.03);opacity:0;transition:all var(--base) var(--ease);pointer-events:none}
-.pill{display:inline-flex;align-items:center;gap:7px;height:34px;padding:0 12px;border:1px solid var(--line-2);border-radius:999px;color:var(--ink);transition:border-color var(--fast),background var(--fast)}
-.pill:hover{border-color:var(--ink-3);background:rgba(255,255,255,.03)}
-.pill svg{width:16px;height:16px;fill:currentColor}
-.pill b{font:500 12px var(--mono);color:var(--ink-2)}
+.pill,.nav__icon{display:inline-flex;align-items:center;gap:7px;height:34px;padding:0 12px;border:1px solid var(--line-2);border-radius:999px;color:var(--ink);transition:border-color var(--fast),background var(--fast)}
+.pill:hover,.nav__icon:hover{border-color:var(--ink-3);background:rgba(255,255,255,.03)}
+.pill svg,.nav__icon svg{width:16px;height:16px;fill:currentColor}
+.pill b,.nav__icon b{font:500 12px var(--mono);color:var(--ink-2)}
 .pill::after{content:"↗";font-size:11px;color:var(--ink-3)}
 
 .rail{position:fixed;left:22px;top:50%;transform:translateY(-50%);z-index:40;display:flex;flex-direction:column;gap:8px}
@@ -362,7 +362,7 @@ footer{position:relative;padding:110px var(--edge) 40px;overflow:hidden;border-t
   .demo .gwrap{display:none}
 }
 @media (max-width:760px){
-  .nav > a:not(.pill){display:none}
+  .nav > a:not(.pill):not(.nav__icon){display:none}
   .hero{padding-top:100px;align-items:flex-start;padding-bottom:320px}
   .hero::after{content:"";position:absolute;inset:0;z-index:1;pointer-events:none;background:linear-gradient(180deg,var(--bg) 0%,rgba(12,10,18,.86) 64%,rgba(12,10,18,0) 84%)}
   .lockup{flex-direction:column;align-items:flex-start;gap:16px}
@@ -398,19 +398,68 @@ footer{position:relative;padding:110px var(--edge) 40px;overflow:hidden;border-t
   .rv,.pts li,.tg span{opacity:1!important;transform:none!important;filter:none!important}
   .show{height:auto}.show__stick{position:relative;height:auto;padding:40px 0}
 }
+.langswitch{position:relative}
+.langswitch__button{all:unset;cursor:pointer;display:inline-flex;align-items:center;gap:7px;height:34px;padding:0 12px;border:1px solid var(--line-2);border-radius:999px;color:var(--ink);font:500 11px var(--mono);letter-spacing:.12em}
+.langswitch__button svg{width:15px;height:15px;fill:currentColor}
+.langswitch__button b{font-weight:500}
+.langswitch__button:hover{border-color:var(--ink-3)}
+.langswitch__menu{position:absolute;right:0;top:42px;min-width:150px;margin:0;padding:6px;list-style:none;border:1px solid var(--line-2);border-radius:14px;background:rgba(17,14,24,.96);backdrop-filter:blur(10px);box-shadow:0 20px 60px rgba(0,0,0,.5)}
+.langswitch__menu button{all:unset;box-sizing:border-box;cursor:pointer;width:100%;display:flex;justify-content:space-between;gap:12px;padding:8px 12px;border-radius:999px;font:400 13px var(--sans);color:var(--ink-2);text-transform:none;letter-spacing:0}
+.langswitch__menu button span{font:500 10.5px var(--mono);color:var(--ink-4)}
+.langswitch__menu button:hover,.langswitch__menu [aria-selected="true"] button{background:rgba(242,123,182,.12);color:var(--ink)}
+.nav .pill::after{content:none}
+.nav__icon::after{content:"↗";font-size:11px;color:var(--ink-3)}
+#workflows h2{min-height:0}
+#workflows .section__lead{color:#7f788d;font:500 clamp(34px,4.2vw,54px)/1.06 var(--sans);letter-spacing:-.04em;margin:-14px 0 20px}
+.models{margin-top:70px;display:grid;gap:26px}
+.route-states{display:grid;grid-template-columns:repeat(3,1fr);margin:0;border-top:1px solid var(--line)}
+.route-states div{padding:22px 24px 0 0}
+.route-states div + div{padding-left:24px;border-left:1px solid var(--line)}
+.route-states dt{font:500 12px var(--mono);color:var(--pink)}
+.route-states dd{margin:8px 0 0;color:var(--ink-3);font-size:14.5px}
+details.chains summary{cursor:pointer;list-style:none;font:500 13px var(--mono);color:var(--ink-2)}
+details.chains summary::before{content:"▸";display:inline-block;margin-right:8px;transition:transform var(--fast) var(--ease)}
+details.chains[open] summary::before{transform:rotate(90deg)}
+.table-scroll{overflow-x:auto;margin-top:16px}
+.chain-table{width:100%;border-collapse:collapse;font-size:13.5px}
+.chain-table th,.chain-table td{text-align:left;padding:10px 14px 10px 0;border-bottom:1px solid var(--line);vertical-align:top}
+.chain-table thead th{font:500 10.5px var(--mono);letter-spacing:.16em;text-transform:uppercase;color:var(--ink-4)}
+.chain-table th[scope=row] span{font:500 12.5px var(--mono);color:var(--ink)}
+.chain-table td{color:var(--ink-3)}
+.chain-order code{font:400 12px var(--mono);color:var(--ink-2)}
+.chain-arrow{color:var(--pink);margin:0 6px}
+.chain-badge{display:inline-block;margin-right:4px;padding:2px 8px;border-radius:999px;border:1px solid var(--line-2);font:500 10.5px var(--mono);color:var(--ink-2)}
+.models .note{color:var(--ink-4);font-size:13.5px;margin:12px 0 0}
+.wfcount{margin-top:8px}
+.wfcount strong{color:var(--ink);font-weight:500;margin-right:8px}
+.inst__cmd code[hidden]{display:none}
+.inst__cmd code{font:inherit;color:inherit;display:inline-block;transition:opacity var(--base),transform var(--base) var(--ease)}
+.inst__cmd code.swap{opacity:0;transform:translateY(-6px)}
+.mini code{font:inherit;color:inherit}
+details.agent .copy--agent{margin-top:12px;padding:8px 14px;border:1px solid var(--line-2);border-radius:999px}
+@media (max-width:900px){.route-states{grid-template-columns:1fr}.route-states div + div{padding-left:0;border-left:0}}
 </style>
 </head>
 <body>
 <div class="prog" data-prog></div>
 
-<header class="top" data-top>
+<header class="topbar topbar--glass" data-top>
   <div class="top__in">
     <a class="brand" href="#" data-totop><img src="assets/omh-logo-pinklight-64.png" alt="">Oh My Hermes</a>
     <nav class="nav caps" aria-label="Primary" data-nav>
       <span class="slider" aria-hidden="true"></span>
-      <a href="docs/">Docs</a>
+      <a href="docs/" data-i18n="nav.docs">Docs</a>
+      <div class="langswitch" data-lang-switch>
+        <button class="langswitch__button pill" type="button" id="lang-button" aria-haspopup="listbox" aria-expanded="false" aria-controls="lang-menu" data-i18n-attr="aria-label:nav.lang" aria-label="Change language"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2.6a9.4 9.4 0 1 0 0 18.8 9.4 9.4 0 0 0 0-18.8Zm0 1.7c1.28 0 2.62 1.9 3.2 4.85H8.8C9.38 6.2 10.72 4.3 12 4.3ZM6.9 9.15A13.9 13.9 0 0 1 7.2 12c0 .98.07 1.93.2 2.85H4.7A7.7 7.7 0 0 1 4.3 12c0-.98.14-1.93.4-2.85h2.2Zm1.75 0h6.7c.13.9.2 1.86.2 2.85s-.07 1.94-.2 2.85h-6.7A20 20 0 0 1 8.45 12c0-.99.07-1.95.2-2.85Zm8.45 0h2.2c.26.92.4 1.87.4 2.85s-.14 1.93-.4 2.85h-2.2c.13-.92.2-1.87.2-2.85s-.07-1.94-.2-2.85ZM8.8 16.55h6.4C14.62 19.5 13.28 21.4 12 21.4s-2.62-1.9-3.2-4.85Z"/></svg><b data-lang-current>EN</b></button>
+        <ul class="langswitch__menu" id="lang-menu" role="listbox" aria-labelledby="lang-button" hidden>
+          <li role="option" aria-selected="true"><button type="button" data-lang="en">English<span>EN</span></button></li>
+          <li role="option" aria-selected="false"><button type="button" data-lang="ko">한국어<span>KO</span></button></li>
+          <li role="option" aria-selected="false"><button type="button" data-lang="ja">日本語<span>JA</span></button></li>
+          <li role="option" aria-selected="false"><button type="button" data-lang="zh">中文<span>ZH</span></button></li>
+        </ul>
+      </div>
       <a class="pill" href="https://discord.gg/6EjTP3cWM" aria-label="Discord: Oh-My-Hermes Community"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20.317 4.3698a19.7913 19.7913 0 00-4.8851-1.5152.0741.0741 0 00-.0785.0371c-.211.3753-.4447.8648-.6083 1.2495-1.8447-.2762-3.68-.2762-5.4868 0-.1636-.3933-.4058-.8742-.6177-1.2495a.077.077 0 00-.0785-.037 19.7363 19.7363 0 00-4.8852 1.515.0699.0699 0 00-.0321.0277C.5334 9.0458-.319 13.5799.0992 18.0578a.0824.0824 0 00.0312.0561c2.0528 1.5076 4.0413 2.4228 5.9929 3.0294a.0777.0777 0 00.0842-.0276c.4616-.6304.8731-1.2952 1.226-1.9942a.076.076 0 00-.0416-.1057c-.6528-.2476-1.2743-.5495-1.8722-.8923a.077.077 0 01-.0076-.1277c.1258-.0943.2517-.1923.3718-.2914a.0743.0743 0 01.0776-.0105c3.9278 1.7933 8.18 1.7933 12.0614 0a.0739.0739 0 01.0785.0095c.1202.099.246.1981.3728.2924a.077.077 0 01-.0066.1276 12.2986 12.2986 0 01-1.873.8914.0766.0766 0 00-.0407.1067c.3604.698.7719 1.3628 1.225 1.9932a.076.076 0 00.0842.0286c1.961-.6067 3.9495-1.5219 6.0023-3.0294a.077.077 0 00.0313-.0552c.5004-5.177-.8382-9.6739-3.5485-13.6604a.061.061 0 00-.0312-.0286zM8.02 15.3312c-1.1825 0-2.1569-1.0857-2.1569-2.419 0-1.3332.9555-2.4189 2.157-2.4189 1.2108 0 2.1757 1.0952 2.1568 2.419 0 1.3332-.9555 2.4189-2.1569 2.4189zm7.9748 0c-1.1825 0-2.1569-1.0857-2.1569-2.419 0-1.3332.9554-2.4189 2.1569-2.4189 1.2108 0 2.1757 1.0952 2.1568 2.419 0 1.3332-.946 2.4189-2.1568 2.4189Z"/></svg></a>
-      <a class="pill" href="https://github.com/rlaope/oh-my-hermes" aria-label="Star oh-my-hermes on GitHub"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38v-1.33c-2.23.48-2.7-1.07-2.7-1.07-.36-.92-.89-1.17-.89-1.17-.73-.5.06-.49.06-.49.8.06 1.23.83 1.23.83.72 1.22 1.87.87 2.33.66.07-.52.28-.87.5-1.07-1.78-.2-3.65-.89-3.65-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82a7.6 7.6 0 0 1 4 0c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.28.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48v2.2c0 .21.15.46.55.38A8 8 0 0 0 16 8c0-4.42-3.58-8-8-8z"/></svg><b data-stars>4.9k</b></a>
+      <a class="nav__icon" href="https://github.com/rlaope/oh-my-hermes" aria-label="Star oh-my-hermes on GitHub"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38v-1.33c-2.23.48-2.7-1.07-2.7-1.07-.36-.92-.89-1.17-.89-1.17-.73-.5.06-.49.06-.49.8.06 1.23.83 1.23.83.72 1.22 1.87.87 2.33.66.07-.52.28-.87.5-1.07-1.78-.2-3.65-.89-3.65-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82a7.6 7.6 0 0 1 4 0c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.28.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48v2.2c0 .21.15.46.55.38A8 8 0 0 0 16 8c0-4.42-3.58-8-8-8z"/></svg><b data-stars>4.9k</b></a>
     </nav>
   </div>
 </header>
@@ -427,7 +476,7 @@ footer{position:relative;padding:110px var(--edge) 40px;overflow:hidden;border-t
 </nav>
 
 <main>
-<section class="hero" aria-labelledby="h1" data-hero>
+<section class="hero hero--center" aria-labelledby="h1" data-hero>
   <canvas id="planet" aria-hidden="true"></canvas>
   <div class="flyer" data-flyer aria-hidden="true">
     <div class="flyer__bob">
@@ -456,8 +505,8 @@ footer{position:relative;padding:110px var(--edge) 40px;overflow:hidden;border-t
     <div class="lockup">
       <div class="kami" data-kami><img src="assets/omh-logo-pinklight.png" alt="Oh My Hermes logo: Kami"></div>
       <div>
-        <canvas id="wordmark" role="img" aria-label="OH-MY-HERMES"></canvas>
-        <div class="lockup__sub caps">For Hermes Agent · v4.0.3</div>
+        <canvas id="wordmark" role="img" aria-label="Oh My Hermes"><img src="assets/oh-my-hermes-wordmark.png" alt="Oh My Hermes" width="2412" height="288"></canvas>
+        <div class="lockup__sub caps"><span data-i18n="hero.badge">For Hermes Agent · v4.0.3</span></div>
       </div>
     </div>
     <h1 id="h1" data-tw='[["The coding harness with ",""],["Hermes Agent","spec"],[" wired into IDE.",""]]'>The coding harness with <span class="spec">Hermes Agent</span> wired into IDE.</h1>
@@ -473,7 +522,7 @@ footer{position:relative;padding:110px var(--edge) 40px;overflow:hidden;border-t
       </div>
       <div class="inst__box">
         <div class="inst__cmd"><span class="p">$</span><span data-cmd>curl -fsSL https://raw.githubusercontent.com/rlaope/oh-my-hermes/main/install.sh | sh</span><br><span class="p">$</span>omh setup</div>
-        <button class="copy" data-copy>Copy</button>
+        <button class="copy" data-cbtn>Copy</button>
       </div>
     </div>
     <div class="compat" data-compat>
@@ -554,6 +603,50 @@ footer{position:relative;padding:110px var(--edge) 40px;overflow:hidden;border-t
       <a class="btn btn--ghost" href="docs/model-routing/">Read the routing setup guide →</a>
     </div>
   </div>
+  <div class="models" id="models">
+        <dl class="route-states">
+          <div><dt>resolved</dt><dd data-i18n="route.state.resolved">A confirmed model was selected.</dd></div>
+          <div><dt>choice_required</dt><dd data-i18n="route.state.choice">The model you named explicitly is unavailable. Nothing is substituted.</dd></div>
+          <div><dt>owner_default</dt><dd data-i18n="route.state.owner_default">No eligible candidate. The selected owner keeps its default model.</dd></div>
+        </dl>
+        <details class="chains rv">
+          <summary data-i18n="chain.title">Shipped chains, in order</summary>
+          <div class="table-scroll">
+            <table class="chain-table">
+              <thead>
+                <tr>
+                  <th scope="col" data-i18n="chain.head.category">Category</th>
+                  <th scope="col" data-i18n="chain.head.purpose">Purpose</th>
+                  <th scope="col" data-i18n="chain.head.order">Shipped order</th>
+                  <th scope="col" data-i18n="chain.head.effort">Effort</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr><th scope="row"><span>ultrabrain</span></th><td data-i18n="chain.ultrabrain">Deepest reasoning</td><td class="chain-order"><code>GPT-6 Astra</code></td><td class="chain-effort"><span class="chain-badge">xhigh</span></td></tr>
+                <tr><th scope="row"><span>deep</span></th><td data-i18n="chain.deep">Strong default tier</td><td class="chain-order"><code>Claude Opus 5.5</code><span class="chain-arrow" aria-hidden="true">→</span><code>GPT-6.1 Sol</code><span class="chain-arrow" aria-hidden="true">→</span><code>Kimi K3.1 Pro</code></td><td class="chain-effort"><span class="chain-badge">high</span></td></tr>
+                <tr><th scope="row"><span>architect</span></th><td data-i18n="chain.architect">Architecture and system design</td><td class="chain-order"><code>Claude Opus 5.5</code><span class="chain-arrow" aria-hidden="true">→</span><code>GPT-6 Astra</code><span class="chain-arrow" aria-hidden="true">→</span><code>Claude Fable 5.1</code><span class="chain-arrow" aria-hidden="true">→</span><code>Kimi K3.1 Pro</code></td><td class="chain-effort"><span class="chain-badge">xhigh</span></td></tr>
+                <tr><th scope="row"><span>unspecified-high</span></th><td data-i18n="chain.unspecified-high">Default working model</td><td class="chain-order"><code>GPT-6.1 Sol</code><span class="chain-arrow" aria-hidden="true">→</span><code>Claude Opus 5.5</code><span class="chain-arrow" aria-hidden="true">→</span><code>Kimi K3.1 Pro</code></td><td class="chain-effort"><span class="chain-badge">medium</span></td></tr>
+                <tr><th scope="row"><span>unspecified-low</span></th><td data-i18n="chain.unspecified-low">Cheaper fallback</td><td class="chain-order"><code>GLM 5.3</code><span class="chain-arrow" aria-hidden="true">→</span><code>DeepSeek V4.1 Flash</code><span class="chain-arrow" aria-hidden="true">→</span><code>GPT-6.1 Sol</code><span class="chain-arrow" aria-hidden="true">→</span><code>Claude Sonnet 5.5</code></td><td class="chain-effort"><span class="chain-badge">low</span></td></tr>
+                <tr><th scope="row"><span>quick</span></th><td data-i18n="chain.quick">Short tasks</td><td class="chain-order"><code>GLM 5.3 Flash</code><span class="chain-arrow" aria-hidden="true">→</span><code>GPT-6 Luna</code><span class="chain-arrow" aria-hidden="true">→</span><code>Claude Haiku 5.5</code><span class="chain-arrow" aria-hidden="true">→</span><code>Kimi K3.1 Pro</code></td><td class="chain-effort"><span class="chain-badge">low</span></td></tr>
+                <tr><th scope="row"><span>writing</span></th><td data-i18n="chain.writing">Prose and docs</td><td class="chain-order"><code>Claude Opus 5.5</code><span class="chain-arrow" aria-hidden="true">→</span><code>Claude Sonnet 5.5</code><span class="chain-arrow" aria-hidden="true">→</span><code>Kimi K3.1 Pro</code><span class="chain-arrow" aria-hidden="true">→</span><code>Gemini 4 Argon</code></td><td class="chain-effort"><span class="chain-badge">medium</span></td></tr>
+                <tr><th scope="row"><span>visual-engineering</span></th><td data-i18n="chain.visual-engineering">Frontend and visual</td><td class="chain-order"><code>Claude Opus 5.5</code><span class="chain-arrow" aria-hidden="true">→</span><code>Claude Fable 5.1</code><span class="chain-arrow" aria-hidden="true">→</span><code>Gemini 4 Argon</code><span class="chain-arrow" aria-hidden="true">→</span><code>Kimi K3.1 Pro</code></td><td class="chain-effort"><span class="chain-badge">high</span></td></tr>
+                <tr><th scope="row"><span>artistry</span></th><td data-i18n="chain.artistry">Unconventional work</td><td class="chain-order"><code>Gemini 4 Argon</code><span class="chain-arrow" aria-hidden="true">→</span><code>Claude Opus 5.5</code><span class="chain-arrow" aria-hidden="true">→</span><code>Claude Fable 5.1</code><span class="chain-arrow" aria-hidden="true">→</span><code>Kimi K3.1 Pro</code></td><td class="chain-effort"><span class="chain-badge">high</span></td></tr>
+                <tr><th scope="row"><span>capable</span></th><td data-i18n="chain.capable">Strong general work</td><td class="chain-order"><code>Claude Opus 5.5</code><span class="chain-arrow" aria-hidden="true">→</span><code>GPT-6.1 Sol</code><span class="chain-arrow" aria-hidden="true">→</span><code>Claude Fable 5.1</code><span class="chain-arrow" aria-hidden="true">→</span><code>Kimi K3.1 Pro</code></td><td class="chain-effort"><span class="chain-badge">medium</span></td></tr>
+                <tr><th scope="row"><span>simple-work</span></th><td data-i18n="chain.simple-work">Small everyday tasks</td><td class="chain-order"><code>GPT-6 Luna</code><span class="chain-arrow" aria-hidden="true">→</span><code>Claude Haiku 5.5</code><span class="chain-arrow" aria-hidden="true">→</span><code>DeepSeek V4.1 Flash</code></td><td class="chain-effort"><span class="chain-badge">low</span></td></tr>
+                <tr><th scope="row"><span>deep-work</span></th><td data-i18n="chain.deep-work">Long tasks at frontier depth</td><td class="chain-order"><code>Claude Opus 5.5</code><span class="chain-arrow" aria-hidden="true">→</span><code>GPT-6.1 Sol</code></td><td class="chain-effort"><span class="chain-badge">max</span></td></tr>
+                <tr><th scope="row"><span>google-search</span></th><td data-i18n="chain.google-search">Research grounded in Google Search</td><td class="chain-order"><code>Gemini 4 Argon</code><span class="chain-arrow" aria-hidden="true">→</span><code>GPT-6.1 Sol</code><span class="chain-arrow" aria-hidden="true">→</span><code>Claude Opus 5.5</code></td><td class="chain-effort"><span class="chain-badge">medium</span></td></tr>
+                <tr><th scope="row"><span>x-search</span></th><td data-i18n="chain.x-search">Live search on X</td><td class="chain-order"><code>Grok 4.7</code><span class="chain-arrow" aria-hidden="true">→</span><code>Kimi K3.1 Pro</code><span class="chain-arrow" aria-hidden="true">→</span><code>Gemini 4 Argon</code></td><td class="chain-effort"><span class="chain-badge">high</span></td></tr>
+                <tr><th scope="row"><span>review</span></th><td data-i18n="chain.review">A different model tries to break the diff</td><td class="chain-order"><code>GPT-6.1 Sol</code><span class="chain-arrow" aria-hidden="true">→</span><code>Claude Opus 5.5</code><span class="chain-arrow" aria-hidden="true">→</span><code>Kimi K3.1 Pro</code></td><td class="chain-effort"><span class="chain-badge">xhigh</span></td></tr>
+                <tr><th scope="row"><span>swarm</span></th><td data-i18n="chain.swarm">Many parallel workers on separate slices</td><td class="chain-order"><code>DeepSeek V4.1 Flash</code><span class="chain-arrow" aria-hidden="true">→</span><code>GLM 5.3 Flash</code><span class="chain-arrow" aria-hidden="true">→</span><code>GPT-6 Luna</code></td><td class="chain-effort"><span class="chain-badge">low</span></td></tr>
+                <tr><th scope="row"><span>forensics</span></th><td data-i18n="chain.forensics">Root-causing a live symptom or a captured trace</td><td class="chain-order"><code>GPT-6 Astra</code><span class="chain-arrow" aria-hidden="true">→</span><code>Claude Opus 5.5</code><span class="chain-arrow" aria-hidden="true">→</span><code>Kimi K3.1 Pro</code></td><td class="chain-effort"><span class="chain-badge">xhigh</span></td></tr>
+                <tr><th scope="row"><span>synthesize</span></th><td data-i18n="chain.synthesize">Merging many results into one answer</td><td class="chain-order"><code>Claude Opus 5.5</code><span class="chain-arrow" aria-hidden="true">→</span><code>GPT-6.1 Sol</code><span class="chain-arrow" aria-hidden="true">→</span><code>Gemini 4 Argon</code></td><td class="chain-effort"><span class="chain-badge">xhigh</span><span class="chain-badge">xhigh</span><span class="chain-badge">high</span></td></tr>
+              </tbody>
+            </table>
+          </div>
+          <p class="note" data-i18n-html="chain.edit">Every chain is yours to reorder. Edit <code>~/.omh/routing/model-chains.json</code>, then run <code>omh model-chains show</code> to print what is in effect.</p>
+          <p class="note" data-i18n="chain.note">The result is prepared routing configuration, not provider availability, credential, dispatch, or execution evidence.</p>
+        </details>
+  </div>
 </section>
 
 <section class="s" id="evidence" aria-labelledby="ev-t">
@@ -563,27 +656,135 @@ footer{position:relative;padding:110px var(--edge) 40px;overflow:hidden;border-t
   </div>
   <div class="ev rv" data-ev>
     <div class="ev__track"></div><div class="ev__fill" data-evfill></div>
-    <div class="ev__st" style="--c:var(--violet)"><div class="n">01</div><h3>Plan · <em>not run</em></h3><p>A prompt or plan is ready. Nothing has run yet.</p></div>
-    <div class="ev__st" style="--c:var(--pink)"><div class="n">02</div><h3>Code · <em>running</em></h3><p>An executor is running now, and OMH is watching it.</p></div>
-    <div class="ev__st" style="--c:var(--amber)"><div class="n">03</div><h3>Code · <em>reported done</em></h3><p>The executor said it finished. Nobody checked the result.</p></div>
-    <div class="ev__st" style="--c:var(--lime)"><div class="n">04</div><h3>Test · <em>verified</em></h3><p>A test, review, or CI gate actually passed.</p></div>
+    <div class="ev__st" style="--c:var(--violet)"><div class="n">01</div><h3>Plan · not run</h3><p data-i18n="ev.plan.body">A prompt or plan is ready. Nothing has run yet.</p></div>
+    <div class="ev__st" style="--c:var(--pink)"><div class="n">02</div><h3>Code · running</h3><p data-i18n="ev.running.body">An executor is running now, and OMH is watching it.</p></div>
+    <div class="ev__st" style="--c:var(--amber)"><div class="n">03</div><h3>Code · reported done</h3><p data-i18n="ev.reported.body">The executor said it finished. Nobody checked the result.</p></div>
+    <div class="ev__st" style="--c:var(--lime)"><div class="n">04</div><h3>Test · verified</h3><p data-i18n="ev.verified.body">A test, review, or CI gate actually passed.</p></div>
   </div>
 </section>
 
-<section class="s" id="workflows" aria-labelledby="wf-t">
-  <div class="rv">
-    <div class="kicker caps"><b>04</b> Flagship workflows</div>
-    <h2 id="wf-t" data-tw='[["The ",""],["ulw-*","spec"],[" family. ",""],["Ten long-horizon lanes.","dim"]]'>The <span class="spec">ulw-*</span> family. <span class="dim">Ten long-horizon lanes.</span></h2>
-    <p class="body" style="max-width:580px">A hundred-plus <code>omh-*</code> specialists ride along. You never call them; the router loads the right ones into the run.</p>
-  </div>
-  <div class="lw pal rv" data-pal>
-    <div class="pal__l">
-      <div class="pal__in"><span class="p">run</span><span data-typed></span><span class="tw-caret" aria-hidden="true"></span></div>
-      <ul class="pal__list" role="listbox" aria-label="Workflows" data-list></ul>
-    </div>
-    <div class="pal__r" data-detail aria-live="polite"></div>
-  </div>
-</section>
+      <!-- omh:ulw-site:begin (generated: uv run python -m omh.cli docs ulw-site; source: src/skills/catalog.py) -->
+      <section class="section section--rail" id="workflows" aria-labelledby="ulw-title">
+        <div class="section__head" data-reveal>
+          <p class="kicker" data-i18n="ulw.kicker">Flagship workflows</p>
+          <h2 id="ulw-title" data-i18n="ulw.title">The ulw-* family.</h2>
+          <p class="section__lead" data-i18n="ulw.lead">Ten long-horizon lanes.</p>
+        </div>
+
+        <ol class="ulw-list">
+          <li class="glass-card ulw-row" data-reveal>
+            <div class="ulw-row__head">
+              <code class="ulw-row__slug">ulw-context</code>
+              <span class="ulw-row__tag" data-i18n="ulw.context.tag">Terminology alignment</span>
+            </div>
+            <div class="ulw-row__body">
+              <h3 data-i18n="ulw.context.title">Context</h3>
+              <p data-i18n="ulw.context.body">Aligns the words a repository uses before plans and handoffs.</p>
+              <p class="ulw-row__say"><em data-i18n="ulw.trigger">Say</em> <q>ulw-context</q> <q>review project terms</q></p>
+            </div>
+          </li>
+          <li class="glass-card ulw-row" data-reveal>
+            <div class="ulw-row__head">
+              <code class="ulw-row__slug">ulw-interview</code>
+              <span class="ulw-row__tag" data-i18n="ulw.interview.tag">Clarification</span>
+            </div>
+            <div class="ulw-row__body">
+              <h3 data-i18n="ulw.interview.title">Deep Interview</h3>
+              <p data-i18n="ulw.interview.body">One question at a time until the brief is clear.</p>
+              <p class="ulw-row__say"><em data-i18n="ulw.trigger">Say</em> <q>deep-interview</q> <q>clarify</q></p>
+            </div>
+          </li>
+          <li class="glass-card ulw-row" data-reveal>
+            <div class="ulw-row__head">
+              <code class="ulw-row__slug">ulw-research</code>
+              <span class="ulw-row__tag" data-i18n="ulw.research.tag">Decision grounding</span>
+            </div>
+            <div class="ulw-row__body">
+              <h3 data-i18n="ulw.research.title">Research</h3>
+              <p data-i18n="ulw.research.body">Reference implementations, live web evidence, verified claims.</p>
+              <p class="ulw-row__say"><em data-i18n="ulw.trigger">Say</em> <q>web research</q> <q>source-backed research</q></p>
+            </div>
+          </li>
+          <li class="glass-card ulw-row" data-reveal>
+            <div class="ulw-row__head">
+              <code class="ulw-row__slug">ulw-plan</code>
+              <span class="ulw-row__tag" data-i18n="ulw.plan.tag">Reviewed plan</span>
+            </div>
+            <div class="ulw-row__body">
+              <h3 data-i18n="ulw.plan.title">Ralplan</h3>
+              <p data-i18n="ulw.plan.body">Consensus planning with review gates.</p>
+              <p class="ulw-row__say"><em data-i18n="ulw.trigger">Say</em> <q>ralplan</q> <q>consensus plan</q></p>
+            </div>
+          </li>
+          <li class="glass-card ulw-row" data-reveal>
+            <div class="ulw-row__head">
+              <code class="ulw-row__slug">ulw-work</code>
+              <span class="ulw-row__tag" data-i18n="ulw.work.tag">Parallel delivery</span>
+            </div>
+            <div class="ulw-row__body">
+              <h3 data-i18n="ulw.work.title">Ultrawork</h3>
+              <p data-i18n="ulw.work.body">Splits an accepted plan into disjoint lanes.</p>
+              <p class="ulw-row__say"><em data-i18n="ulw.trigger">Say</em> <q>ultrawork</q> <q>parallel work</q></p>
+            </div>
+          </li>
+          <li class="glass-card ulw-row" data-reveal>
+            <div class="ulw-row__head">
+              <code class="ulw-row__slug">dag-ulw</code>
+              <span class="ulw-row__tag" data-i18n="ulw.dag-ulw.tag">Graph run</span>
+            </div>
+            <div class="ulw-row__body">
+              <h3 data-i18n="ulw.dag-ulw.title">DAG ULW</h3>
+              <p data-i18n="ulw.dag-ulw.body">Plans a graph of small nodes, runs them in parallel, verifies and repairs.</p>
+              <p class="ulw-row__say"><em data-i18n="ulw.trigger">Say</em> <q>dag ulw</q> <q>/dag-ulw</q></p>
+            </div>
+          </li>
+          <li class="glass-card ulw-row" data-reveal>
+            <div class="ulw-row__head">
+              <code class="ulw-row__slug">ulw-maestro</code>
+              <span class="ulw-row__tag" data-i18n="ulw.maestro.tag">External handoff</span>
+            </div>
+            <div class="ulw-row__body">
+              <h3 data-i18n="ulw.maestro.title">Maestro</h3>
+              <p data-i18n="ulw.maestro.body">Runs the work on Claude Code or Codex, spawned live with a steerable session.</p>
+              <p class="ulw-row__say"><em data-i18n="ulw.trigger">Say</em> <q>ulw-maestro</q> <q>coding handoff</q></p>
+            </div>
+          </li>
+          <li class="glass-card ulw-row" data-reveal>
+            <div class="ulw-row__head">
+              <code class="ulw-row__slug">ulw-loop</code>
+              <span class="ulw-row__tag" data-i18n="ulw.loop.tag">Goal loop</span>
+            </div>
+            <div class="ulw-row__body">
+              <h3 data-i18n="ulw.loop.title">Loop</h3>
+              <p data-i18n="ulw.loop.body">Interview → plan → research → build → review.</p>
+              <p class="ulw-row__say"><em data-i18n="ulw.trigger">Say</em> <q>loop</q> <q>long horizon goal</q></p>
+            </div>
+          </li>
+          <li class="glass-card ulw-row" data-reveal>
+            <div class="ulw-row__head">
+              <code class="ulw-row__slug">ulw-qa</code>
+              <span class="ulw-row__tag" data-i18n="ulw.qa.tag">Adversarial QA</span>
+            </div>
+            <div class="ulw-row__body">
+              <h3 data-i18n="ulw.qa.title">UltraQA</h3>
+              <p data-i18n="ulw.qa.body">Hostile scenarios, end-to-end runs, release QA.</p>
+              <p class="ulw-row__say"><em data-i18n="ulw.trigger">Say</em> <q>ultraqa</q> <q>release qa</q></p>
+            </div>
+          </li>
+          <li class="glass-card ulw-row" data-reveal>
+            <div class="ulw-row__head">
+              <code class="ulw-row__slug">ulw-perf</code>
+              <span class="ulw-row__tag" data-i18n="ulw.perf.tag">Measured optimization</span>
+            </div>
+            <div class="ulw-row__body">
+              <h3 data-i18n="ulw.perf.title">Ultraperf</h3>
+              <p data-i18n="ulw.perf.body">Finds where the system is actually slow, leaking, or expensive.</p>
+              <p class="ulw-row__say"><em data-i18n="ulw.trigger">Say</em> <q>ultraperf</q> <q>find the bottleneck</q></p>
+            </div>
+          </li>
+        </ol>
+      </section>
+      <!-- omh:ulw-site:end -->
 
 <section class="s skillrain" id="skills" aria-labelledby="sk-t">
   <canvas id="rain" aria-hidden="true"></canvas>
@@ -592,14 +793,15 @@ footer{position:relative;padding:110px var(--edge) 40px;overflow:hidden;border-t
     <h2 id="sk-t" data-tw='[["153 skills. ",""],["You never call them.","dim"]]'>153 skills. <span class="dim">You never call them.</span></h2>
     <p class="body">The router loads the right ones into the run.</p>
     <div class="skillcount mono"><b data-skn>0</b> skills · <span data-skpick>omh-plan</span></div>
+    <div class="skillcount wfcount mono"><strong data-count-to="10">10</strong><span data-i18n="stat.workflows">ulw workflows</span></div>
   </div>
 </section>
 
-<section class="s" id="install" aria-labelledby="in-t">
+<section class="s" id="install" aria-labelledby="in-t" data-package-manager-status="public">
   <div class="rv">
     <div class="kicker caps"><b>06</b> Install</div>
     <h2 id="in-t" data-tw='[["Install once. ",""],["Set up once.","dim"]]'>Install once. <span class="dim">Set up once.</span></h2>
-    <p class="body">Pick one way to install the command, then run setup. Doctor is a separate check you can run any time.</p>
+    <p class="body" data-i18n="install.lead">Pick one way to install the command, then run setup. Doctor is a separate check you can run any time.</p>
   </div>
   <div class="inst rv" data-inst style="max-width:none">
     <div class="inst__tabs caps" role="tablist">
@@ -611,17 +813,19 @@ footer{position:relative;padding:110px var(--edge) 40px;overflow:hidden;border-t
       <span class="inst__os" data-os>macOS · Linux</span>
       <span class="inst__ind" aria-hidden="true"></span>
     </div>
-    <div class="inst__box"><div class="inst__cmd"><span class="p">$</span><span data-cmd>curl -fsSL https://raw.githubusercontent.com/rlaope/oh-my-hermes/main/install.sh | sh</span></div><button class="copy" data-copy>Copy</button></div>
+    <div class="inst__box"><div class="inst__cmd"><span class="p">$</span><code id="cmd-unix" data-k="curl">curl -fsSL https://raw.githubusercontent.com/rlaope/oh-my-hermes/main/install.sh | sh</code><code id="cmd-win" data-k="ps1" hidden>irm https://raw.githubusercontent.com/rlaope/oh-my-hermes/main/install.ps1 | iex</code><code class="install-method--package-manager" id="cmd-brew" data-k="brew" hidden>brew install rlaope/tap/omh</code><code class="install-method--package-manager" id="cmd-bun" data-k="bun" hidden>bun install -g oh-my-hermes</code><code class="install-method--package-manager" id="cmd-npm" data-k="npm" hidden>npm install -g oh-my-hermes</code></div><button class="copy" data-cbtn>Copy</button></div>
   </div>
   <div class="steps rv">
-    <div class="step"><span class="caps">Step 01</span><h3>Install the command</h3><p>The installers find Python 3.11+ themselves. Homebrew brings its own Python; Bun and npm need Node 18+ and Python 3.11+ on PATH.</p></div>
-    <div class="step"><span class="caps">Step 02</span><h3>Set it up</h3><div class="mini"><span><span class="p">$</span>omh setup</span><button class="copy" data-copy-text="omh setup">Copy</button></div><p>Run it after any of the installs above.</p></div>
-    <div class="step"><span class="caps">Step 03</span><h3>Verify or troubleshoot</h3><div class="mini"><span><span class="p">$</span>omh doctor</span><button class="copy" data-copy-text="omh doctor">Copy</button></div><p>Refresh later with <code>omh update</code>.</p></div>
+    <div class="step"><span class="caps">Step 01</span><h3 data-i18n="install.step1">Install the command</h3><p data-i18n="install.prereq.note">Use the macOS · Linux or Windows installer; it finds Python 3.11+ itself. Homebrew, Bun, and npm install the published release: Bun and npm also need Node 18+ and Python 3.11+ on PATH, and Homebrew brings its own Python.</p></div>
+    <div class="step"><span class="caps">Step 02</span><h3 data-i18n="install.step2">Set it up</h3><div class="mini"><span><span class="p">$</span><code id="cmd-setup">omh setup</code></span><button class="copy" data-copy-text="omh setup">Copy</button></div><p data-i18n="install.step2.note">Run it after any of the installs above.</p></div>
+    <div class="step"><span class="caps">Step 03</span><h3 data-i18n="install.doctor.title">Verify or troubleshoot</h3><div class="mini"><span><span class="p">$</span><code id="cmd-doctor">omh doctor</code></span><button class="copy" data-copy-text="omh doctor">Copy</button></div><p data-i18n-html="install.doctor.note">Refresh later with <code>omh update</code>: it upgrades the command through the installer that owns it, then refreshes the managed skills, the plugin bundle, and the Hermes registration.</p></div>
   </div>
-  <details class="agent rv"><summary>Or paste this into your AI agent</summary>
-<pre>Install and fully configure Oh My Hermes from this repository:
+  <details class="agent rv"><summary data-i18n="install.step3">Or paste this into your AI agent</summary>
+<pre><code id="cmd-agent">Install and fully configure Oh My Hermes from this repository:
 https://github.com/rlaope/oh-my-hermes
-(the full pinned-SHA prompt from the current site is kept verbatim in the real port)</pre></details>
+Before reading or executing repository instructions, resolve refs/heads/main to one full commit SHA with `git ls-remote https://github.com/rlaope/oh-my-hermes.git refs/heads/main`. Then fetch and follow only:
+https://raw.githubusercontent.com/rlaope/oh-my-hermes/{resolved-commit-sha}/INSTALL_FOR_AGENTS.md
+Do not replace the resolved SHA with main. Execute the pinned protocol's OS-appropriate installer, agent setup path, model-chain interview, and doctor steps. Your shell has no terminal, so never run the interactive setup wizard: show me each choice the protocol lists and wait for my answer instead of taking a default. Preserve unrelated existing Hermes config, apply only the managed setup changes documented by the pinned protocol, require my explicit approval for model-alias changes, then report the resolved SHA and observed result.</code></pre><button class="copy copy--agent" type="button" data-copy="#cmd-agent" data-i18n="hero.copy">Copy</button></details>
 </section>
 
 <section class="s meet" id="kami" aria-labelledby="km-t">
@@ -655,7 +859,7 @@ https://github.com/rlaope/oh-my-hermes
     <a href="https://nousresearch.com"><img class="clogo" src="assets/models/nousresearch.svg" alt=""><span class="caps">Thanks</span><h3>Nous Research</h3><p>Thank you for creating Hermes Agent.</p></a>
   </div>
   <div class="sponsor rv">
-    <img src="assets/opengateway.svg" alt="">
+    <img src="assets/sponsors/opengateway.svg" alt="">
     <div><span class="caps">Sponsor</span><h3>OpenGateway</h3><p>One OpenAI-compatible endpoint for many model providers, with automatic failover. Thank you for backing open source.</p></div>
     <a class="btn btn--ghost" href="https://opengateway.ai">opengateway.ai ↗</a>
   </div>
@@ -665,10 +869,10 @@ https://github.com/rlaope/oh-my-hermes
 <footer>
   <div class="bigword" aria-hidden="true"><img src="assets/oh-my-hermes-wordmark.png" alt=""></div>
   <div class="fcols">
-    <div><span class="caps">Resources</span><a href="docs/">Docs</a><a href="docs/hermes-agent-architecture/">Architecture</a><a href="docs/model-routing/">Model routing</a><a href="https://github.com/rlaope/oh-my-hermes/blob/main/docs/WORKFLOWS.md">Workflow reference</a><a href="https://github.com/rlaope/oh-my-hermes/blob/main/docs/INSTALLATION.md">Installation guide</a></div>
+    <div><span class="caps">Resources</span><a href="docs/">Docs</a><a href="docs/hermes-agent-architecture/" title="See where Hermes ends and OMH begins." data-i18n="footer.architecture">Architecture</a><a href="docs/model-routing/">Model routing</a><a href="https://github.com/rlaope/oh-my-hermes/blob/main/docs/WORKFLOWS.md">Workflow reference</a><a href="https://github.com/rlaope/oh-my-hermes/blob/main/docs/INSTALLATION.md">Installation guide</a></div>
     <div><span class="caps">Project</span><a href="https://github.com/rlaope/oh-my-hermes/releases">Releases</a><a href="https://github.com/rlaope/oh-my-hermes/blob/main/CHANGELOG.md">Changelog</a><a href="https://github.com/rlaope/oh-my-hermes/issues">Issues</a><a href="https://github.com/rlaope/oh-my-hermes/blob/main/CONTRIBUTING.md">Contributing</a></div>
   </div>
-  <div class="legal"><span>MIT licensed. Oh My Hermes is an independent open-source project, not affiliated with Anthropic or OpenAI.</span><span>⚚ 2026</span></div>
+  <div class="legal"><span data-i18n="footer.legal">MIT licensed. Oh My Hermes is an independent open-source project, not affiliated with Anthropic or OpenAI. Product names and marks belong to their respective owners.</span><span>⚚ 2026</span></div>
 </footer>
 
 <script>
@@ -718,7 +922,7 @@ addEventListener('scroll', () => {
   prog.style.transform = `scaleX(${y / Math.max(1, document.documentElement.scrollHeight - innerHeight)})`;
 }, {passive:true});
 const nav = $('[data-nav]'), slider = $('.slider', nav);
-$$('a:not(.pill)', nav).forEach(a => a.addEventListener('mouseenter', () => {
+$$('a:not(.pill):not(.nav__icon)', nav).forEach(a => a.addEventListener('mouseenter', () => {
   slider.style.left = a.offsetLeft+'px'; slider.style.top = (a.offsetTop + (a.offsetHeight-34)/2)+'px'; slider.style.width = a.offsetWidth+'px'; slider.style.opacity = 1;
 }));
 nav.addEventListener('mouseleave', () => slider.style.opacity = 0);
@@ -904,15 +1108,20 @@ function copy(txt, btn){
   });
 }
 $$('[data-inst]').forEach(box => {
-  const tabs = $$('[role=tab]', box), ind = $('.inst__ind', box), cmd = $('[data-cmd]', box);
+  const tabs = $$('[role=tab]', box), ind = $('.inst__ind', box), cmd = $('[data-cmd]', box), codes = $$('code[data-k]', box);
+  const shown = () => cmd || codes.find(c => !c.hidden);
   const place = b => { ind.style.left = b.offsetLeft+'px'; ind.style.width = b.offsetWidth+'px'; };
   tabs.forEach(b => b.addEventListener('click', () => {
     tabs.forEach(x => x.setAttribute('aria-selected', x===b)); place(b);
-    cmd.classList.add('swap'); setTimeout(() => { cmd.textContent = CMDS[b.dataset.k][0]; $('[data-os]', box).textContent = CMDS[b.dataset.k][1]; cmd.classList.remove('swap'); }, RM ? 0 : 160);
+    const el = shown(); el.classList.add('swap');
+    setTimeout(() => {
+      if (cmd) cmd.textContent = CMDS[b.dataset.k][0]; else codes.forEach(c => c.hidden = c.dataset.k !== b.dataset.k);
+      $('[data-os]', box).textContent = CMDS[b.dataset.k][1]; el.classList.remove('swap');
+    }, RM ? 0 : 160);
   }));
   requestAnimationFrame(() => place(tabs[0]));
   addEventListener('resize', () => place(tabs.find(x => x.getAttribute('aria-selected')==='true')));
-  $('[data-copy]', box).addEventListener('click', e => copy(cmd.textContent + (box.closest('.hero') ? '\nomh setup' : ''), e.currentTarget));
+  $('[data-cbtn]', box).addEventListener('click', e => copy(shown().textContent + (box.closest('.hero') ? '\nomh setup' : ''), e.currentTarget));
 });
 $$('[data-copy-text]').forEach(b => b.addEventListener('click', () => copy(b.dataset.copyText, b)));
 
@@ -1052,18 +1261,13 @@ function evStep(){ ei = (ei+1) % 5; evs.forEach((s,i) => s.classList.toggle('on'
 new IntersectionObserver((es,o) => { if (es[0].isIntersecting){ if (RM){ evs.forEach(s=>s.classList.add('on')); fill.style.width='78%'; } else { evStep(); setInterval(evStep, 1600); } o.disconnect(); } }, {threshold:.4}).observe($('[data-ev]'));
 
 /* 04 palette */
-const WF = [
-  ['ulw-context','Context','Terminology alignment','Aligns the words a repository uses before plans and handoffs.',['ulw-context','review project terms']],
-  ['ulw-interview','Deep Interview','Clarification','One question at a time until the brief is clear.',['deep-interview','clarify']],
-  ['ulw-research','Research','Decision grounding','Reference implementations, live web evidence, verified claims.',['web research','source-backed research']],
-  ['ulw-plan','Ralplan','Reviewed plan','Consensus planning with review gates.',['ralplan','consensus plan']],
-  ['ulw-work','Ultrawork','Parallel delivery','Splits an accepted plan into disjoint lanes.',['ultrawork','parallel work']],
-  ['dag-ulw','DAG ULW','Graph run','Plans a graph of small nodes, runs them in parallel, verifies and repairs.',['dag ulw','/dag-ulw']],
-  ['ulw-maestro','Maestro','External handoff','Runs the work on Claude Code or Codex, spawned live with a steerable session.',['ulw-maestro','coding handoff']],
-  ['ulw-loop','Loop','Goal loop','Interview → plan → research → build → review.',['loop','long horizon goal']],
-  ['ulw-qa','UltraQA','Adversarial QA','Hostile scenarios, end-to-end runs, release QA.',['ultraqa','release qa']],
-  ['ulw-perf','Ultraperf','Measured optimization','Finds where the system is actually slow, leaking, or expensive.',['ultraperf','find the bottleneck']],
-];
+const ulwSec = $('#workflows'), ulwList = $('.ulw-list', ulwSec);
+const WF = $$('.ulw-row', ulwSec).map(r => [$('.ulw-row__slug', r).textContent, $('h3', r).textContent, $('.ulw-row__tag', r).textContent, $('.ulw-row__body p', r).textContent, $$('q', r).map(q => q.textContent)]);
+ulwSec.classList.add('s'); $('.section__head', ulwSec).classList.add('rv'); rv.observe($('.section__head', ulwSec));
+$('.kicker', ulwSec).insertAdjacentHTML('afterbegin', '<b>04</b> ');
+const palHost = document.createElement('div'); palHost.className = 'lw pal rv'; palHost.dataset.pal = '';
+palHost.innerHTML = '<div class="pal__l"><div class="pal__in"><span class="p">run</span><span data-typed></span><span class="tw-caret" aria-hidden="true"></span></div><ul class="pal__list" role="listbox" aria-label="Workflows" data-list></ul></div><div class="pal__r" data-detail aria-live="polite"></div>';
+ulwList.before(palHost); ulwList.hidden = true; rv.observe(palHost);
 const list = $('[data-list]'), det = $('[data-detail]'), typed = $('[data-typed]');
 let wi = -1, userPicked = false, typeTok = 0;
 WF.forEach((w,i) => {
@@ -1083,7 +1287,7 @@ function pick(i){
     det.classList.remove('swapping');
   }, RM ? 0 : 200);
 }
-pick(5);
+pick(Math.max(0, WF.findIndex(w => w[0] === 'dag-ulw')));
 if (!RM) setInterval(() => { if (!userPicked) pick((wi+1)%WF.length); }, 3200);
 $('[data-pal]').addEventListener('mouseleave', () => userPicked = false);
 
@@ -1268,11 +1472,11 @@ if (!RM) setInterval(() => { skp.textContent = SKILLS[(Math.random()*SKILLS.leng
   cvk.addEventListener('pointerup', release); cvk.addEventListener('pointercancel', release);
 
   // ---- physics
-  const MAXP = 52;
+  const MAXP = 92;
   const onSkin = (u,v) => u > 120 && u < 400 && v > 270 && v < 380;                                        // px in sprite space: rubber-band limit
   const g2 = (x,y,cx,cy,sig) => Math.exp(-((x-cx)**2 + (y-cy)**2)/(2*sig*sig));
   function pinW(p){                                       // fingers on the ledge and everything below it stay put
-    const below = clamp((p.y - (LEDGE - 12))/26), grip = g2(p.x, p.y, 88, 374, 30);
+    const below = clamp((p.y - (LEDGE - 2))/14), grip = g2(p.x, p.y, 88, 374, 26);
     const sm = x => x*x*(3 - 2*x);
     return 1 - Math.max(sm(below), grip*.9);
   }
@@ -1280,7 +1484,7 @@ if (!RM) setInterval(() => { skp.textContent = SKILLS[(Math.random()*SKILLS.leng
     let moving = false;
     // wave every few seconds when idle, and once when he first comes into view
     if (!grab && t > waveUntil && t - lastAct > 5200){ waveUntil = t + 1700; lastAct = t; }
-    const waving = t < waveUntil, wa = waving ? Math.sin((waveUntil - t)/1700*Math.PI*4) * .26 * Math.sin((waveUntil - t)/1700*Math.PI) : 0;
+    const waving = t < waveUntil, wa = waving ? Math.sin((waveUntil - t)/1700*Math.PI*4) * .3 * Math.sin((waveUntil - t)/1700*Math.PI) : 0;
     let tx = 0, ty = 0, gx = 0, gy = 0;
     if (grab){
       const dx = grab.cx - grab.x, dy = grab.cy - grab.y, L = Math.hypot(dx,dy) || 1, Lr = MAXP*(1 - Math.exp(-L/MAXP));
@@ -1293,11 +1497,12 @@ if (!RM) setInterval(() => { skp.textContent = SKILLS[(Math.random()*SKILLS.leng
       const w = pinW(p);
       let txp = 0, typ = 0;
       if (grab) {
-        const eyes = Math.max(g2(p.x,p.y,200,285,44), g2(p.x,p.y,312,295,44));
-        const skin = clamp((p.y - 285)/45) * clamp((372 - p.y)/30) * (1 - eyes);
-        const g = g2(p.x,p.y,gx,gy,70) * (onSkin(gx,gy) ? skin : 1);
-        txp += tx*g; typ += ty*g;
-        const headFollow = clamp((LEDGE - 40 - p.y)/220) * .16;   // the head leans toward the pull a bit
+        const eyes = Math.max(g2(p.x,p.y,200,288,26), g2(p.x,p.y,312,298,26));
+        const skin = clamp((p.y - 285)/40) * clamp((376 - p.y)/12) * (1 - eyes);
+        const hairFree = clamp((p.y - 278)/22);                    // above the hairline: no local stretch
+        const g = g2(p.x,p.y,gx,gy,56) * (onSkin(gx,gy) ? skin : hairFree*.6);
+        txp += tx*g*1.15; typ += ty*g*1.15;
+        const headFollow = clamp((LEDGE - 40 - p.y)/220) * .1;   // the head leans toward the pull a bit
         txp += tx*headFollow; typ += ty*headFollow*.6;
       }
       // head follows the cursor a touch
@@ -1307,13 +1512,13 @@ if (!RM) setInterval(() => { skp.textContent = SKILLS[(Math.random()*SKILLS.leng
       // tap: a little squash and stretch around the face
       typ += sq*10*head*((p.y - FACE[1])/200); txp += sq*6*head*((p.x - FACE[0])/200);
       // wave: rotate the raised hand about the wrist
-      if (wa && p.x > HAND[0] - 20 && p.y < HAND[3] + 10){
-        const hw = clamp((p.x - (HAND[0]-20))/60) * clamp((HAND[3] + 10 - p.y)/40);
-        const rx = p.x - WRIST[0], ry = p.y - WRIST[1], c = Math.cos(wa) - 1, sn = Math.sin(wa);
+      if (wa){
+        const hw = g2(p.x, p.y, 494, 340, 40) * clamp((p.y - 290)/14) * clamp((p.x - 450)/12);
+        const rx = p.x - 468, ry = p.y - 398, c = Math.cos(wa) - 1, sn = Math.sin(wa);
         txp += (rx*c - ry*sn)*hw; typ += (rx*sn + ry*c)*hw;
       }
       txp *= w; typ *= w;
-      const kS = grab ? .28 : .14, damp = grab ? .62 : .8;   // let go: underdamped, wobbles back
+      const kS = grab ? .22 : .085, damp = grab ? .7 : .945;   // let go: underdamped, wobbles back
       p.vx = (p.vx + (txp - p.dx)*kS)*damp; p.vy = (p.vy + (typ - p.dy)*kS)*damp;
       p.dx += p.vx; p.dy += p.vy;
       if (Math.abs(p.vx) + Math.abs(p.vy) > .02 || Math.abs(txp - p.dx) > .05) moving = true;
@@ -1374,5 +1579,7 @@ if (!RM) setInterval(() => { skp.textContent = SKILLS[(Math.random()*SKILLS.leng
 $$('[data-comm] a').forEach(a => a.addEventListener('pointermove', e => { const r = a.getBoundingClientRect(); a.style.setProperty('--mx', (e.clientX-r.left)+'px'); a.style.setProperty('--my', (e.clientY-r.top)+'px'); }));
 })();
 </script>
+<script src="i18n.js"></script>
+<script src="app.js"></script>
 </body>
 </html>
