@@ -554,10 +554,12 @@ Results describe this pinned corpus, OMH version, Hermes version, provider,
 model id and conditions only. They do not establish universal model
 superiority.
 
-### 2026-10-30 round-end checklist in `pre_verify`: off vs on, gate failed
+### 2026-10-30 round-end checklist in `pre_verify`: off vs on, gate failed as registered, merged by owner decision
 
-Not merged, closed. Four measurements; the last two, with a decoy template and a final-answer
-clause added, fail the token and scope clauses (details at the end of this section).
+Four measurements. The last two added a decoy template and a final-answer clause, and both
+failed the token and scope clauses as registered. The owner then relaxed the token clause and
+accepted the scope miss for the measurement-4 design. See "Owner decision" at the end of this
+section.
 
 One question, from oh-my-pi's prewalk checklist and its delivery rules: after a turn
 that edited code, does one short checklist at the first stop (consistency, scope,
@@ -886,6 +888,25 @@ Item B closes here, unmerged, as the owner decided before the run. The code stay
 branch `feature/round-end-checklist` (`530068797`). A future attempt would need a gate
 that prices the extra round differently, or a cheaper way to ask for the check than a
 continuation. Either is a new decision for the owner.
+
+#### Owner decision, 2026-10-30 (after measurement 4)
+
+After measurement 4, the owner relaxed the median-token clause from 1.3x to 1.4x and chose
+to merge the measurement-4 design, the consistency-only check at `530068797`. The owner gave
+these reasons:
+
+- The runs go through subscription routes.
+- Measurement 4 gained 8 passes in total (89 vs 81), and `C-DUPLICATE` went from 9 to 18.
+- Pooled over all four measurements, `C-DUPLICATE` is 58 vs 30 of 72 (two-sided Fisher
+  exact p of about 3e-6).
+- The decoy was even, 18 vs 18.
+- The final answer was kept in 89 of 90 runs.
+
+This does not mean measurement 4 passed the gate it was registered against. It did not:
+it failed the token clause (1.35x against 1.3x) and the scope clause. Against the relaxed
+gate, measurement 4 passes every clause except scope. That is `mutation_outside_scope` 1 vs
+0, one `gpt-6-luna` `E-BUGFIX` run, and its cause is not established. The owner accepted
+that miss with the merge. The thresholds above and the measurement records are unchanged.
 
 Pass counts come from the run records. Firing, final answers and tool calls come from
 each profile's session DB.
