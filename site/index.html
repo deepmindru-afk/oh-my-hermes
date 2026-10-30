@@ -1394,7 +1394,7 @@ if (!RM) setInterval(() => { skp.textContent = SKILLS[(Math.random()*SKILLS.leng
     const c = document.createElement('canvas'); c.width = SW; c.height = SH; const x = c.getContext('2d'); x.drawImage(img,0,0);
     const d = x.getImageData(0,0,SW,SH).data; alphaAt = (u,v) => (u<0||v<0||u>=SW||v>=SH) ? 0 : d[((v|0)*SW+(u|0))*4+3];
     tex.width = SW; tex.height = SH; paintTex();
-    layout(); draw(performance.now()); 
+    layout(); draw(performance.now());
   };
   addEventListener('resize', () => { if (img.complete) { layout(); kick(); } });
 
