@@ -480,6 +480,9 @@ QUESTION_VIEW_TITLE = "the open question (q goes back to it)"  # Ctrl+O's pager 
 COMPRESS_COMMANDS = frozenset({"compress", "compact"})
 COMPRESS_PREVIEW_FLAGS = frozenset({"--preview", "--dry-run"})
 COMPRESS_STARTED_NOTICE = "Compressing: Hermes summarizes the older turns with a model call, so this can take a while."
+# The working row's verb while a `/compress` is out and no turn runs (`App._compressing_since`). It offers no Esc:
+# with no turn running Esc arms the rewind and sends no interrupt, so it does not stop a compression.
+COMPRESSING_VERB = "Compressing"
 # How long a `/compress` is waited for: Hermes' own budget for it (`hermes_cli/gateway_client.py` COMPRESS_RPC_TIMEOUT,
 # the compression ceiling plus slack), in place of `CALL_ANSWER_SECONDS`.
 COMPRESS_ANSWER_SECONDS = 660.0
@@ -2310,7 +2313,8 @@ class App(ModesMixin, AgentViewMixin):
             due.append(now + READ_TIMEOUT_SECONDS)
         if self.redraw_at is not None:
             due.append(self.redraw_at)
-        elif self._busy() or self._panel_live() or self._aura_live() or self.held_submits:
+        elif self._busy() or self._compressing_since() is not None or self._panel_live() or self._aura_live() \
+                or self.held_submits:
             due.append(self.last_render + self._tick_seconds())
         if self.redraw_at is None and (background := self._background_due_at()) is not None:
             due.append(background)  # the background row's clock: once a second, on the second
@@ -5021,6 +5025,18 @@ class App(ModesMixin, AgentViewMixin):
         ends = [call.expires_at for call in self.pending.values() if call.compressing]
         return float(math.ceil(max(0.0, max(ends) - self.clock()))) if ends else None
 
+    def _compressing_since(self) -> float | None:
+        """When the earliest `/compress` this TUI still waits on was sent, while no turn runs; None otherwise.
+
+        The tail then draws a working row of its own for it (`_tail`), its
+        clock counting from this, until the report or the unanswered notice
+        lands. `_busy` stays False for it, so no glow starts and a prompt
+        still goes out as it did."""
+        if self._busy():
+            return None
+        sent = [call.expires_at - call.seconds for call in self.pending.values() if call.compressing]
+        return min(sent) if sent else None
+
     def _compress_unanswered(self, echo: CommandBlock | None, seconds: float) -> None:
         """A `/compress` unanswered in the `seconds` it was waited for (more than `COMPRESS_ANSWER_SECONDS` when it
         was sent behind another one): said under its echo, and nothing is sent again."""
@@ -6332,8 +6348,13 @@ class App(ModesMixin, AgentViewMixin):
 
     def _ground(self) -> str | None:
         """The background the living wallpaper gives the terminal now, the shown look's ground (the /theme picker's
-        highlight while it is open), or None where it does not show."""
-        return look_ground(self._shown_look(), self._ground_light()) if self._wallpaper_shown() else None
+        highlight while it is open), or None where it does not show. A look with no scene (the default look) takes
+        the terminal's own background as its ground (owner, 2026-10-30): Otty took another ground only on the cells
+        written after it, so the launch card showed holes of the terminal's own black."""
+        if not self._wallpaper_shown():
+            return None
+        look = self._shown_look()
+        return look_ground(look, self._ground_light()) if look in SCENES else self.background_answered
 
     def _sync_ground(self) -> None:
         """Set the terminal's background to the wallpaper's ground where that changed (OSC 11), or put the terminal's
@@ -6440,8 +6461,8 @@ class App(ModesMixin, AgentViewMixin):
         if self.redraw_at is not None:
             return  # the screen is mid-reflow; the settled redraw paints it
         now = self.clock()
-        due = (self._busy() or self._panel_live() or self._aura_live() or bool(self.held_submits)) \
-            and now - self.last_render >= self._tick_seconds()
+        due = (self._busy() or self._compressing_since() is not None or self._panel_live() or self._aura_live()
+               or bool(self.held_submits)) and now - self.last_render >= self._tick_seconds()
         if not (self.dirty or due or self._background_due()):
             if self._wallpaper_moves() and now - self.ambient_at >= WALLPAPER_TICK_SECONDS:
                 self.ambient_at = now  # only the wallpaper's cells that moved: no frame is built
@@ -6808,8 +6829,9 @@ class App(ModesMixin, AgentViewMixin):
                                            glint=self._aura_moves())
         if not lines and self.transcript.taken_any:
             lines = [()]  # the spacer a block opens with, here between the transcript and the region under it
+        compressing = self._compressing_since()
         # A blank row above the working row, as between two blocks; the frame drops it first when rows are short.
-        self.tail_spacer = self._busy() and bool(lines) and bool(lines[-1])
+        self.tail_spacer = (self._busy() or compressing is not None) and bool(lines) and bool(lines[-1])
         if self.tail_spacer:
             lines.append(())
         if self._busy() and self.waiting_since is not None:
@@ -6858,6 +6880,13 @@ class App(ModesMixin, AgentViewMixin):
             tip = self._tip_line(cols)
             if tip is not None:
                 lines.append(tip)
+        elif compressing is not None:
+            # A `/compress` out with no turn running: the spinner and its clock, so the wait reads as alive.
+            frame = self._spinner_frame()
+            row = (Span(WORKING_GLYPHS[frame % len(WORKING_GLYPHS)], self.theme.accent), Span(" "),
+                   *working_spans(f"{COMPRESSING_VERB}…", frame, self.theme),
+                   Span(f" ({elapsed_text(now - compressing)})", self.theme.muted))
+            lines.append(truncate_line(row, cols))
         return lines
 
     def _working_rows(self) -> int:
@@ -6865,7 +6894,7 @@ class App(ModesMixin, AgentViewMixin):
         interrupting) row, and the tip under the working row from TIP_MIN_ROWS rows. The agent view leaves the tail
         these (`layout.allocate`'s `tail_floor`), so a short terminal never loses the row saying a turn runs."""
         if not self._busy():
-            return 0
+            return int(self._compressing_since() is not None)  # the compression's row, with no tip
         return 1 + int(self.size[1] >= TIP_MIN_ROWS and self.waiting_since is None and not self.interrupting)
 
     def _tip_line(self, cols: int) -> Line | None:
