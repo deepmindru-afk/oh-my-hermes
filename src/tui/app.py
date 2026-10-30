@@ -584,6 +584,10 @@ BARE_HERMES_NOTE = "Bare `hermes` opens Hermes' own terminal."
 # The context figure turns warn, then bad, on the info line.
 CONTEXT_WARN_PERCENT = 80
 CONTEXT_BAD_PERCENT = 95
+# The info line's context gauge (owner, 2026-10-30): `ctx ━━━━──────── 37% 74k/200k`.
+CONTEXT_GAUGE_CELLS = 12
+CONTEXT_GAUGE_FILLED = "━"
+CONTEXT_GAUGE_EMPTY = "─"
 
 # What `/theme auto|light|dark` measures the roles against: the background the terminal reported (auto), or a
 # light or a dark one whatever it reported.
@@ -1682,6 +1686,8 @@ class App(ModesMixin, AgentViewMixin):
         self.opened_ids: list[str] = []  # the sessions this launch had open before `stored_id`, oldest first
         self.model = ""
         self.context_percent: float | None = None
+        self.context_used: float | None = None  # the tokens the context holds and the most it can, with the percent
+        self.context_max: float | None = None
         # What the info line shows (`mode`): accept while Hermes has approvals off, the TUI's own plan flag.
         self.approvals_off = False
         self.plan_mode = False
@@ -2080,7 +2086,8 @@ class App(ModesMixin, AgentViewMixin):
         self.shared_gateway = bool(as_text(result.get("subscription_id")))
         info = result.get("info")
         self.model = as_text(info.get("model")) if isinstance(info, dict) else ""
-        self.context_percent = None  # the next session.usage says how full this session is
+        # The next session.usage says how full this session is.
+        self.context_percent = self.context_used = self.context_max = None
         # The token counter is the session's own. An answer with none opened a session in which no API call has ended
         # on this gateway yet (Hermes sends its first usage block after one), so the counter stands at 0.
         usage = info.get("usage") if isinstance(info, dict) else None
@@ -3013,8 +3020,9 @@ class App(ModesMixin, AgentViewMixin):
         of what streamed before it.
         """
         percent = context_percent(usage)
-        if percent is not None:
+        if percent is not None and isinstance(usage, dict):
             self.context_percent = percent
+            self.context_used, self.context_max = usage["context_used"], usage["context_max"]
         output, calls = usage_count(usage, "output"), usage_count(usage, "calls")
         if output is None:
             return
@@ -7006,12 +7014,39 @@ class App(ModesMixin, AgentViewMixin):
             return self.theme.error
         return self.theme.warn if percent >= CONTEXT_WARN_PERCENT else self.theme.muted
 
+    def _context_forms(self) -> list[Line]:
+        """The context's forms, longest first: `ctx ━━━━──────── 37% 74k/200k`, then without the token counts (used
+        over the most the context holds), then `ctx 37%`; none before Hermes sent context figures.
+
+        The filled cells and the percent turn warn from `CONTEXT_WARN_PERCENT`
+        full and error from `CONTEXT_BAD_PERCENT`; under `NO_COLOR` the
+        filled and the empty cells still tell the part used.
+        """
+        percent = self.context_percent
+        if percent is None:
+            return []
+        style = self._context_style()
+        filled = min(CONTEXT_GAUGE_CELLS, max(0, int(percent * CONTEXT_GAUGE_CELLS / 100 + 0.5)))
+        spans = (
+            Span("ctx ", self.theme.muted),
+            Span(CONTEXT_GAUGE_FILLED * filled, style),
+            Span(CONTEXT_GAUGE_EMPTY * (CONTEXT_GAUGE_CELLS - filled), self.theme.dim),
+            Span(f" {percent:.0f}%", style),
+        )
+        gauge: Line = tuple(span for span in spans if span.text)
+        forms = [gauge, (Span(f"ctx {percent:.0f}%", style),)]
+        if self.context_used is not None and self.context_max is not None:
+            counts = f" {compact_count(self.context_used)}/{compact_count(self.context_max)}"
+            forms.insert(0, (*gauge, Span(counts, self.theme.muted)))
+        return forms
+
     def _info_right(self) -> tuple[Line, ...]:
         """The info line's right side, composed again only when something it shows changed (a spinner tick changes nothing).
 
         Its forms are the same at every width; `info_line` picks the one that fits.
         """
-        shown = (self.model, self.context_percent, self.effort, self._busy(), self.slot is not None, self.session_title)
+        shown = (self.model, self.context_percent, self.context_used, self.context_max, self.effort, self._busy(),
+                 self.slot is not None, self.session_title)
         held = self.info_held
         if held is not None and held[0] == shown and held[1] is self.theme and held[2] is self.hud:
             return held[3]
@@ -7025,18 +7060,17 @@ class App(ModesMixin, AgentViewMixin):
 
         The title (Hermes' `session.title`, cut to `INFO_TITLE_CELLS`) goes
         first; the model then shortens (`model_forms`), then goes, then the
-        effort, then the context; the HUD's chips (`hud_chips`: a repeating
-        call, the tool calls in flight) go last. The context turns warn from
-        `CONTEXT_WARN_PERCENT` full and error from `CONTEXT_BAD_PERCENT`.
+        effort, then the context shortens (`_context_forms`) and goes; the
+        HUD's chips (`hud_chips`: a repeating call, the tool calls in flight)
+        go last.
         """
         payload = self.hud.payload if self.hud is not None else None
         chips = list(hud_chips(payload, self.theme, turn_runs=self._busy(), question_waits=self.slot is not None))
-        percent = self.context_percent
-        context: Line = (Span(f"ctx {percent:.0f}%", self._context_style()),) if percent is not None else ()
+        contexts = self._context_forms() or [()]
         effort: Line = (Span(effort_words(self.effort), self.theme.muted),)
         models: list[Line] = [(Span(name, self.theme.muted),) for name in model_forms(self.model)]
-        fields = [[*chips, model, context, effort] for model in models]
-        fields += [[*chips, context, effort], [*chips, context], chips]
+        fields = [[*chips, model, contexts[0], effort] for model in models]
+        fields += [[*chips, contexts[0], effort], *([*chips, context] for context in contexts), chips]
         forms: list[Line] = []
         for parts in fields:
             joined: Line = ()
