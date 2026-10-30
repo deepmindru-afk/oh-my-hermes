@@ -290,6 +290,19 @@ loopback assets served from the project root, no external requests or range acce
 no resume/chunks/workers; `--sub N` averages N sub-frame captures per frame (shutter
 blur), `--scale` above 1 supersamples back to the page size, CRF defaults to 16.
 Without FFmpeg zscale pass `--color swscale` (upstream's matrix/range conversion).
+
+Declare hard cuts in the project root's `project.json`: `"cuts": [1.5, 3.0]`,
+for example, is valid only when both times fall strictly inside the duration.
+`cuts` must contain strictly increasing numbers in `(0, duration)`, at most 4096;
+invalid declarations refuse before capture. Keep scene boundaries and this array
+in sync. With `--sub N --shutter S`, samples belong to the shot containing output
+time `t`: `[last cut <= t, next cut > t)`. The cut-aware shutter slides its window
+inside that shot and shrinks it only when the shot is shorter than the window;
+no sample crosses a declared cut. Without cuts the existing centered shutter
+sampling is unchanged. A success receipt records the `cuts` count, not a visual
+review of the transitions. This replaces the old half-frame hard-cut workaround;
+the engine assets themselves are unchanged.
+
 Partial frames are never a final success. Tested capture execution is macOS with explicitly supplied
 Chrome headless-shell; Linux/Windows execution is HOLD, while installation of the
 text data stays portable. Full Chrome headless surface capture stalled on the
@@ -424,6 +437,45 @@ After edits re-render the affected segment plus both cut boundaries, then review
 the final encoded output. Stop at the time/iteration cap and report residual
 defects; approval of an older draft does not certify the new export.
 
+## Measure motion against the reference first
+
+When matching an approved reference, measure it before authoring and retain its
+hash, active range, intentional end-card duration and the decisions it informs.
+Use `motion_check.py REFERENCE --ffmpeg PATH --profile general|kinetic --endcard
+SECONDS`, then measure the candidate with `--reference REFERENCE`. Compare like
+ranges and disclose differing crops/fps/end cards; reference measurements are
+context and never change the candidate verdict. Only a selected kinetic-type
+launch/teaser uses `--profile kinetic`; explainers and evidence films use general.
+
+The checker decodes at native fps capped at 60, area-scales to 320x180 grayscale,
+and measures `change_area`: the fraction of pixels with a luma change > 24 from
+the previous frame. A still frame has `change_area < 0.015`; a cut has area > 0.45
+and either an absolute mean-luma change > 18 or area > 0.6. These are frame-change
+heuristics, not optical flow, camera speed or semantic edit detection. There is
+no median-flow gate. Report `fps`, `seconds`, `still_share`, `still_runs` (runs
+at least 0.3 s), `longest_unannotated_still_s`, `cuts_per_10s`,
+`max_flashes_per_s`, `mean_change_area` and `high_motion_share` (area > 0.12).
+
+- `general` revises an unannotated still run longer than 1.0 s; it has no
+  aggregate still-share ceiling.
+- `kinetic` revises when `still_share > 0.40` or an unannotated still run exceeds
+  0.6 s. Do not impose those targets on a film whose concept needs quiet evidence.
+- `--endcard SECONDS` excludes the tail from every metric. `--holds holds.json`
+  accepts `[{"start":0,"end":1,"reason":"approved reading interval"}]` and
+  exempts only the covered part of a still run. A reason is required; holds do
+  not remove frames from `still_share` or waive flash review.
+- A flash is an opposing pair of mean-luma jumps > 40 (up/down or down/up).
+  `max_flashes_per_s` counts such pairs within any one-second window. A single
+  ground flip with no return is not a flash. Both profiles return REVISE with
+  `flash_review_required` above 3 pairs/s. Never use this heuristic as a medical,
+  accessibility or photosensitivity safety certificate.
+
+Receipts retain `artifact_sha256`, `profile`, `metrics`, `policy`, `issues`,
+`limitations` and `artistic: "not_observed"`; an optional `reference` carries its
+path, hash and metrics, not an artistic endorsement. Resolve
+`unannotated_stillness` at its reported `at`/`duration`, `still_share_exceeded`
+and `flash_review_required` with moving evidence and a documented revision.
+
 ## Measured export: show_reel_export_manifest/v1
 
 List actual master/share/GIF/poster/subtitle variants requested, file hashes,
@@ -435,6 +487,24 @@ black levels and brand colors after decode, and record source/conversion intent.
 With audio measure integrated loudness, true peak and A/V sync; STT only when
 speech exists. No observed listening means listening not_observed even if metrics
 pass. No audio means checks not_applicable with reason, not fabricated zeros.
+
+Use `qa_check.py FINAL --policy policy.json` with the chosen delivery limits.
+`max_h264_level` compares ffprobe's stream `level` (42 means Level 4.2, 52 means
+Level 5.2; select for the intended 1080p/4K target). It fails on non-H.264 rather
+than pretending that codec has a comparable H.264 level. Measurements include
+`h264_level`; software decode success alone is not device playability evidence.
+With `hardware_decode: true`, macOS runs a full FFmpeg decode using
+`-hwaccel videotoolbox`; any error line is REVISE. On other operating systems
+that check is HOLD, "not observable on this host", and overall cannot be PASS.
+This is one host's decoder observation, not a guarantee for all phones, players
+or channels. Record actual target playback separately when required.
+
+Inspect the mix report's `buried_hits` before mastering: each row gives `at`,
+`file`, `sfx_db` and `bed_db` when the placed effect's first 100 ms RMS is below
+the music bed over the same window, after bed automation and ducking. No SFX or
+muted mode yields `[]`. The report never changes gains; adjust the authored mix
+only with a reason, rerun it, then remeasure final encoded audio. Neither an empty
+list nor a numerical level comparison proves audibility or replaces listening.
 
 ## QA record: show_reel_qa_report/v1
 
@@ -496,6 +566,116 @@ Record generated/attached/received/published separately in the delivery manifest
 If private inputs cannot be shared, state that reproduction is limited and supply
 an approved substitute fixture labeled concept, never a fabricated actual capture.
 The requested artifact and source package may have different delivery permissions.
+""",
+    "kinetic-type": """# Kinetic-type lane
+
+## Select the lane, do not default to it
+
+Use this opt-in page only after concept selection chooses kinetic typography for
+a hype launch or teaser. Never apply it to explainers or evidence films: those
+need the time and visual emphasis their evidence requires. Existing source,
+rights, locale, budget and delivery contracts still apply; speed cannot excuse an
+unsupported claim or an unreadable command. No new engine, provider or paid tool
+is required. Author with the existing companion or another observed renderer.
+
+## Write a beat sheet before scenes
+
+Start with approved phrases and the chosen, rights-cleared music. Fit the passage
+actually used with `music_tools.py analyze TRACK --bpm HINT --start SECONDS
+--window SECONDS`; inspect `grid_strength`, downbeats, `drops` and any `warning`.
+A requested BPM is a search hint, not proof of the recording's tempo. Read
+`references/audio-production.md` before converting its times into a timeline.
+
+Plan in beat units, then resolve to seconds through the measured tempo. Record
+start/end beat, phrase, focal object, ground, movement and sound cue for each shot.
+Use `REEL.bar`/`REEL.beat` with the compiled timeline, `barN` anchors and
+`music.dropN` cues rather than scattering independently rounded seconds in scenes.
+The visual turn belongs on a measured drop, not merely a loud-looking waveform.
+For a zero-based planned drop beat and source-track drop time, the trim is:
+
+`offset = drop_s - planned_drop_beat * 60 / bpm`
+
+Here `offset` is the source audio to trim before film time zero, not a timeline
+start delay. Apply that trim explicitly to the approved track and regenerate its
+analysis before compiling cues; `timeline.py` shifts analysis cues by the music
+start offset, it does not perform this source trim. A negative result needs an
+authored lead-in or a different drop/beat choice, not silent clamping. Check the
+first and last accents against decoded picture and audio before locking timing.
+
+Give each beat one new thing to notice: new copy, a different scale, a reveal or
+a change of viewpoint. A synchronized sound reinforces that event rather than
+adding another competing message. Split long phrases instead of compressing type
+or assuming Latin reading speed for every script. Build accelerating cut runs by
+shortening successive beat spans toward the turn; vary the next run so cadence
+has a shape, and do not insert rapid flashes as a substitute for that shape.
+
+## Choose a device from the meaning
+
+| Phrase job | An authored visual device |
+| --- | --- |
+| Denial | Remove or cross out the rejected object, then let the replacement occupy its space. Do not imply an actual product action unless captured. |
+| Number | Make a verified quantity change the composition: a counter resolves, an area grows, or a scale compresses. Cite its exact source. |
+| Input->output | Carry one visible token through a transformation into the result; captured input/output or a clearly labeled concept determines the claim. |
+| Recap | Revisit earlier focal objects in a shorter sequence with a changed relationship, not a page of tiny thumbnails. |
+| Picture push | Move into an approved picture's relevant detail, changing crop or parallax as the phrase develops; never leave a static image behind moving captions. |
+
+These are a vocabulary for fresh scenes, not shipped block names or an effect
+checklist. Preserve intact shaping runs for Arabic and other joining scripts;
+measure text in the actual renderer and test moving samples at delivery size.
+
+At phrase changes, use ground flips between approved brand-compatible light,
+dark or accent treatments to mark the argument's turn. Recheck contrast on each
+ground and keep the existing palette limits. Design transitions as camera moves:
+carry direction through a pan, pass through a letter aperture, or change focal
+scale around a shared object. Motion continues after an arrival for a reason;
+noise, grain or unrelated particles must not be added just to beat a stillness
+metric. Reserve rest for the end card and declare its actual duration separately.
+
+## Sound and shutter belong in the edit
+
+Make every cut audible with a deliberate music accent or a placed SFX; avoid a
+stack of interchangeable impacts. Add one custom gag sound tied to this film's
+own comic turn, using approved local synthesis/recording or rights-cleared audio.
+Record each cue in the timing/mix source and inspect `buried_hits` from `mix.py`;
+revise authored levels or bed automation deliberately and remeasure. That report
+does not adjust gain and is not evidence of listening. If the brief requires a
+muted delivery, do not invent an audio receipt: use the general workflow rather
+than claim this sound-led lane's full acceptance.
+
+Declare all hard-cut seconds in the project root's `project.json` as `cuts`, a
+strictly increasing array inside `(0, duration)` with at most 4096 entries. Keep
+those times equal to the scene boundaries. The companion's cut-aware shutter
+keeps sub-frame captures inside the shot containing the output frame; do not
+shift hard cuts by half a frame to hide cross-shot blur. See
+`references/renderer-adapter.md` for sampling and receipt limits.
+
+## Compare and gate the encoded film
+
+Measure an approved reference first, recording its hash, active range and limits;
+then run the same motion method on the candidate. Example operator invocation:
+
+```sh
+python toolkit/scripts/motion_check.py REFERENCE.mp4 --ffmpeg /approved/ffmpeg --profile kinetic --endcard REFERENCE_ENDCARD_SECONDS
+python toolkit/scripts/motion_check.py FINAL.mp4 --ffmpeg /approved/ffmpeg --profile kinetic --endcard ENDCARD_SECONDS --reference REFERENCE.mp4
+```
+
+Replace the end-card placeholders with measured seconds. Reference numbers are
+context, never permission to relax the gate; `--reference` cannot change the
+candidate verdict. The kinetic profile requires `still_share <= 0.40` and no
+unannotated still run longer than 0.6 s before the excluded end card. Declare
+intentional holds with a nonempty reason through `--holds`; exemptions apply to
+covered still-run time, not to the aggregate still-share ceiling. More than three
+opposing brightness-jump pairs in a one-second window requires flash review.
+
+Read `references/render-qa-delivery.md` for measurement definitions and separate
+H.264 level, hardware decode, filesize/color/audio, and artistic/playback/listening
+gates. A numerical PASS alone is not artistic approval, accessibility certification,
+or a completed film. Review moving cut strips and the final encoded artifact;
+revise the weakest scene without exceeding the agreed budget.
+
+Method notes informed by Scenario's Kinetic Film exploration (https://www.scenario.com/explorations/kinetic-film/,
+skill ZIP sha256 2217ab5dbd452185a5c3c1509994da46b1ac20d2ebeaa888536244372ce73ebf). OMH wording and code;
+nothing was copied.
 """,
     "game-capture": """# Game and simulation capture lane
 
@@ -560,8 +740,9 @@ copies upstream's engine unmodified: `reel/engine.js` (`REEL`), `reel/fx.js`
 - `REEL.config`, `REEL.scene({id,start,end,setup,render})`, `REEL.overlay`,
   `REEL.preload`/`REEL.img`, `REEL.cue`/`bar`/`beat`/`level`/`charTimes` read
   `reel/timeline.js`. Put times on cues, not literals, so re-timed audio carries
-  the picture with it. Put hard cuts at `cue - 0.5 / fps` so the `--sub` shutter
-  does not blend both states into the cue frame.
+  the picture with it. Declare hard-cut seconds in `project.json` `cuts` at the
+  actual scene boundaries; the cut-aware `--sub` shutter stays inside each shot,
+  so the old `cue - 0.5 / fps` placement workaround is not needed.
 - `window.__seek(t)`, `__ready` and `__meta` are the host capture contract, not a
   runtime RPC. The adapter refuses running animations, page errors, external
   requests, undeclared files and glyphs the declared fonts do not cover.
@@ -598,7 +779,29 @@ Audio comes before scenes: music beats and narration words set the picture's
 times. Craft depth (voices, music plans, SFX design, mix targets) is in
 `references/craft-audio.md`. `music_tools.py analyze` reads tempo, downbeats and
 hits from the chosen track; `timeline.py script.json --music-analysis` turns them
-into `barN`/`music.hitN` cues and `reel/timeline.js` for `REEL.cue`/`bar`/`level`.
+into `barN`/`music.hitN`/`music.dropN` cues and `reel/timeline.js` for
+`REEL.cue`/`bar`/`beat`/`level`.
+
+Fit the passage the film uses with `music_tools.py analyze FILE --bpm HINT
+--start SECONDS --window SECONDS [--out analysis.json]`. `--bpm` constrains the
+tempo/phase search to within ±8% of the hint, without folding it into a slower
+tempo band. `--start` and `--window` bound the fitted stretch; they are not a
+source-audio trim or a film start delay. Without `--bpm`, tempo selection retains
+its existing behavior and `alternatives` lists half/double-tempo candidates in
+60–200 BPM. Inspect those when a beat grid appears to follow every second accent.
+
+Read `grid_strength` (0..1) and review
+`warning: "tempo hint disagrees with the track"` if an unconstrained fit is
+clearly stronger. A forced hint must not hide
+a poor grid. `drops` contains up to three time-ordered `{t, rise, bar}` rows:
+`rise` compares loudness over two bars after a downbeat to one bar before it.
+Choose a useful musical turn with actual listening when available, not the ratio
+alone. `timeline.py` carries `drops` into its music timeline and produces
+`music.drop1..N`, shifted by the music start offset just like `barN`. Use these
+cue IDs for scene/SFX anchors; recompile after changing the track or its start.
+Read `references/kinetic-type.md` only for a selected kinetic launch/teaser's
+beat-sheet and source-trim formula.
+
 Read `toolkit/README.md` and `scripts/synth_music.py`, `mix.py`, `qa_check.py`
 relative to that toolkit. The local seeded score is a modest fallback: section
 notes/energy/BPM and tick/boom/whoosh events are parameters, not a musical-quality
