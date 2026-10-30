@@ -6,6 +6,22 @@ All notable changes will be documented here.
 
 ![Sprite Forge patch notes](https://raw.githubusercontent.com/rlaope/oh-my-hermes/main/assets/omh-sprite-forge-patch-notes.png)
 
+- **The background-process row moves onto the info line, and the working
+  row keeps its blank row on a tall terminal.** The row that names a
+  process Hermes runs in the background stood above the composer's top
+  rule; it is now on the info line under the composer, after the badge and
+  the branch (`[⚚ OMH Native]  ✳ background  terminal(<command>)  8s`), with
+  its colours, its ticking clock, who will be told when it ends, `+N more`
+  and the finished state whose Enter reports the result. The title, model,
+  context and effort stay on the right. As the line narrows the title goes
+  first, then the row shortens and goes, and only then do the model, the
+  context and the effort shorten. During a long turn on a tall terminal,
+  `✻ Working…` read glued to the last tool row, since a turn's rows cut
+  short gave up the blank row over the working row first. That blank row
+  now stays, and the oldest row goes instead, while six rows still show
+  above it; on a shorter terminal it still gives way first, so it never
+  costs one of the few rows.
+
 - **The info line shows the context as a gauge with its token counts.**
   The bare `ctx 37%` under the composer is now
   `ctx ━━━━──────── 37% 74k/200k`: twelve cells, the filled ones and the

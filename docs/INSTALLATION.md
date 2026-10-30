@@ -429,7 +429,9 @@ run and approval decision stays Hermes'; the screen is OMH's.
   under that, always expanded (below). A blank row stands between the reply and
   the working row, between the working row's tip and the plan, and between
   the plan and the composer's top rule, wherever the terminal has a row to
-  spare for it. Your sent prompt runs on a band to the right edge, a quiet
+  spare for it. The one over the working row stays when a long turn's rows
+  are cut short, and the oldest of them goes instead, as long as six of them
+  still show above it; on a shorter terminal it gives way first. Your sent prompt runs on a band to the right edge, a quiet
   tint of the launch look's card edge. On a terminal 6 rows tall the composer keeps its
   top rule and drops its bottom one, so the slot above it still gets its
   two rows; from 7 rows it has both, and under 6 rows (or 20
@@ -482,16 +484,25 @@ run and approval decision stays Hermes'; the screen is OMH's.
   only when not zero; a detached HEAD by its short sha; nothing outside a
   repository, or on a terminal too small for the rules), read by `git status`
   off the screen's thread after each tool, each turn and every 15 seconds,
-  then the input mode or the keys that matter right now; on the right it says
+  then, while the session owns a process Hermes runs in the background, its
+  row: `✳ background  terminal(<command>)  8s`, its clock ticking each second,
+  and after the turn who will be told when it ends (`🔔 will ping you when
+  done`, or `🔕 Hermes won't be pinged · OMH is watching it`); once one ends
+  unreported, `✓ background  terminal(<command>)  finished 0:12 ago  ↵ report
+  result`, and Enter on an empty composer asks the session for the results.
+  A question, a picker or the history search hides the row while it has the
+  keys. Then the input mode or the keys that matter right now; on the right it says
   the session's title once Hermes names it, the model, how full the context
   is and the reasoning effort, as `Fix the login bug ·
   deepseek/deepseek-v4.1-flash · ctx ━━━━──────── 37% 74k/200k · effort medium`
   (the context as a twelve-cell gauge, its percent, and the tokens it holds of
   the most it can; the filled cells and the percent in the warning colour from
   80 % full and the error colour from 95 %; `ctrl+t effort` while no level is
-  known). As the line narrows, the right side's fields shorten and then go
-  first, the context last: its token counts, then its gauge, leaving
-  `ctx 37%`; then the branch's name is cut to `…` (24, then 12 cells); then the
+  known). As the line narrows, the session's title goes first; then the
+  background row cuts its command to 8 cells, drops who will be told, drops
+  the command, and goes; then the right side's other fields shorten and then
+  go, the context last: its token counts, then its gauge, leaving `ctx 37%`;
+  then the branch's name is cut to `…` (24, then 12 cells); then the
   badge shortens to `[⚚ OMH]`, then `⚚`, then goes, and then the branch;
   the mode's label, the agent count and what the next key does (a question's
   or a picker's way out) keep their words until all of those are gone. Room
