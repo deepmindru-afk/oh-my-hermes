@@ -1036,7 +1036,8 @@ above, written for `b707b6281`, no longer matches the shipped code.
   `transform_llm_output` no longer clears it, because Hermes's background-review fork
   shares the session id and could otherwise take it.
 - A leftover stash is cleared at the session's next turn start (`pre_llm_call`).
-- The sentinel also matches when wrapped in `**` or `_`, or written without its period.
+- The sentinel also matches when wrapped in `**`, `*`, `_`, backticks or quotes, or
+  written without its period.
 - A delegated child that gets only the impact note is asked for its full answer, and
   nothing is stashed for it.
 - The OMH TUI dedupes only when Hermes marks the reply `response_transformed`.
