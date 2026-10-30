@@ -211,17 +211,17 @@ class LongBranchTests(unittest.TestCase):
         self.assertEqual(len(self.BRANCH), 63)
         expected = {
             ("idle", 40): "  [⚚ OMH]  branch:feature/rea… | !3 ?2",
-            ("idle", 80): "  [⚚ OMH Native]  branch:feature/really-long-bra… | !3 ?2                ctx 50%",
+            ("idle", 80): "  [⚚ OMH Native]  branch:feature/really-long-bra… | !3 ?2   ctx ━━━━━━────── 50%",
             ("idle", 120): "  [⚚ OMH Native]  branch:feature/really-long-branch-name-for-the-steer-key-hint-work-063 | !3 ?2"
-                           "   ctx 50% · effort high",
+                           "    ctx ━━━━━━────── 50%",
             ("plan", 40): "  ⏸ plan mode on (⇧⇥ to cycle)   ctx 50%",
             ("plan", 80): "  [⚚ OMH Native]  branch:feature/rea… | !3 ?2  ⏸ plan mode on (⇧⇥ to cycle)",
             ("plan", 120): "  [⚚ OMH Native]  branch:feature/really-long-bra… | !3 ?2  ⏸ plan mode on (⇧⇥ to cycle)"
-                           "            ctx 50% · effort high",
+                           "             ctx ━━━━━━────── 50%",
             ("busy-queue", 40): "  [⚚ OMH]  branch:feature/rea… | !3 ?2",
-            ("busy-queue", 80): "  [⚚ OMH Native]  branch:feature/really-long-bra… | !3 ?2                ctx 50%",
+            ("busy-queue", 80): "  [⚚ OMH Native]  branch:feature/really-long-bra… | !3 ?2   ctx ━━━━━━────── 50%",
             ("busy-queue", 120): "  [⚚ OMH Native]  branch:feature/really-long-branch-name-for-the-steer-key-hint-work-063"
-                                 " | !3 ?2   ctx 50% · effort high",
+                                 " | !3 ?2    ctx ━━━━━━────── 50%",
         }
         for (scene, cols), row in expected.items():
             with self.subTest(scene=scene, cols=cols):

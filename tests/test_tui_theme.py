@@ -309,7 +309,7 @@ class InfoLineContrastTests(unittest.TestCase):
             for background in (None, *LIGHT_BACKGROUNDS, *DARK_BACKGROUNDS):
                 for stage in ("watching", "blocking", "approval"):
                     spans, surface = self.line(background, skin, stage)
-                    self.assertTrue(any(span.text == "ctx 96%" for span in spans))
+                    self.assertTrue(any(span.text == " 96%" for span in spans))  # the context gauge's percent
                     for span in spans:
                         if not span.text.strip() or span.style.fg is None:
                             continue

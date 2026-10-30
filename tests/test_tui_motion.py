@@ -282,6 +282,8 @@ class SteadyRowsTests(unittest.TestCase):
                 lambda: setattr(app, "model", "another/model"),
                 lambda: setattr(app, "turn_pending", False),  # running -> idle: the tool chip goes
                 lambda: setattr(app, "context_percent", 91.0),
+                lambda: setattr(app, "context_used", 182_000),  # the token counts beside the gauge
+                lambda: setattr(app, "context_max", 200_000),
                 lambda: setattr(app, "effort", "max"),
                 lambda: setattr(app, "slot", open_request("srq-1", "approval", {"command": "ls"})),  # its clock goes
                 lambda: setattr(app, "theme", theme_named("amber")),

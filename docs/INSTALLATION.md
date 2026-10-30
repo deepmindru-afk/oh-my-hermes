@@ -485,10 +485,13 @@ run and approval decision stays Hermes'; the screen is OMH's.
   then the input mode or the keys that matter right now; on the right it says
   the session's title once Hermes names it, the model, how full the context
   is and the reasoning effort, as `Fix the login bug ·
-  deepseek/deepseek-v4.1-flash · ctx 5% · effort medium` (the context in the warning colour from 80 % full
-  and the error colour from 95 %; `ctrl+t effort` while no level is
+  deepseek/deepseek-v4.1-flash · ctx ━━━━──────── 37% 74k/200k · effort medium`
+  (the context as a twelve-cell gauge, its percent, and the tokens it holds of
+  the most it can; the filled cells and the percent in the warning colour from
+  80 % full and the error colour from 95 %; `ctrl+t effort` while no level is
   known). As the line narrows, the right side's fields shorten and then go
-  first; then the branch's name is cut to `…` (24, then 12 cells); then the
+  first, the context last: its token counts, then its gauge, leaving
+  `ctx 37%`; then the branch's name is cut to `…` (24, then 12 cells); then the
   badge shortens to `[⚚ OMH]`, then `⚚`, then goes, and then the branch;
   the mode's label, the agent count and what the next key does (a question's
   or a picker's way out) keep their words until all of those are gone. Room
