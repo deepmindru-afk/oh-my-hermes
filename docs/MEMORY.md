@@ -1800,25 +1800,39 @@ The pack is ranked against a query built from the person's turn, and that
 turn reaches the provider exactly as Hermes built it. Before ranking,
 `memory_query_sanitizer.sanitize_memory_query` reduces it in two steps.
 
-First it removes host framing, each rule anchored to the exact string Hermes
-writes at the start of a line: an out-of-band steer wrapper, a context
-summary handoff, a gateway origin preamble, a triggering-message note, a
-reply pointer (`[Replying to: "..."]`), Discord channel backfill (the
-`[Recent channel messages]`, `[Context around the replied-to message]` or
-unverified-sender header through the last `[New message]` line), and a
-single speaker's `[name] ` prefix. A turn that only mentions one of these
-phrases mid-sentence keeps it, backfill with no `[New message]` boundary is
-kept whole, and a relay with two or more distinct speakers keeps its
-prefixes. A host notice nobody said (a background-process or delegation
-completion notice) becomes an empty query.
+First it separates the person's own words from host framing, each rule
+anchored to the exact string Hermes writes at the start of a line: an
+out-of-band steer wrapper, a context summary handoff, a gateway origin
+preamble, a triggering-message note, a reply pointer (`[Replying to: "..."]`),
+Discord channel backfill (the `[Recent channel messages]`, `[Context around
+the replied-to message]` or unverified-sender header through the last
+`[New message]` line), and a single speaker's `[name] ` prefix. A slash-skill
+or auto-loaded skill turn gives only the instruction the person typed, by
+the same markers and first/last rule as Hermes' own
+`extract_user_instruction_from_skill_message`; a bare invocation gives an
+empty query. A host notice (a background-process, delegation-completion or
+gateway-provenance notice) ends the person's words at the line where it
+starts, and a turn that is only a notice gives an empty query. A turn that
+only mentions one of these phrases mid-sentence keeps it, backfill with no
+`[New message]` boundary is kept whole, and a relay with two or more
+distinct speakers keeps its prefixes.
 
-Then a turn of at most 200 characters is used as it is. A longer one, such
-as a question next to a pasted log or document, is cut to one segment,
+Then own words of at most 250 characters are used as they are. Longer ones,
+such as a question next to a pasted log or document, are cut to one segment,
 skipping log, timestamp and fenced code lines: the last question of the final
 paragraph, else the first question of the first paragraph (asked first, pasted
 after), else the last question; failing that the last plain sentence; failing
-that the tail cut at a word boundary. No query is longer than 250 characters
-(`QUERY_MAX_CHARS`), and sanitizing a sanitized query changes nothing.
+that the tail cut at a word boundary.
+
+Last, two kinds of context the person chose are appended after their own
+words. The first is the quoted message of a reply, because "answer this"
+means the quote is the topic. The second applies when the new message is
+shorter than 40 characters: the same speaker's earlier backfill lines, newest
+first. Another speaker's backfill line never enters the query, and a new
+message without a speaker prefix appends no backfill. No query is longer
+than 250 characters (`QUERY_MAX_CHARS`), cut at a word boundary with the
+person's own words kept first, and sanitizing a sanitized query changes
+nothing.
 
 This applies only to the chat-turn query the provider builds in
 `on_turn_start`, `prefetch` and `queue_prefetch`. CLI recall, `omh_memory

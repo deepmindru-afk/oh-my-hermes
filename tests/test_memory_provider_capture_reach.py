@@ -62,7 +62,7 @@ class SanitizedProviderQueryTests(CaptureReachHomes):
                 self.assertNotIn(LOG, json.dumps(receipt))
                 self.assertEqual(validate_prefetch_receipt(receipt), [])
 
-    def test_discord_backfill_prefetch_uses_only_the_new_message_question(self) -> None:
+    def test_discord_backfill_prefetch_keeps_the_question_and_the_chosen_reply(self) -> None:
         live = memory_provider.OmhMemoryProvider(self.home, hermes_home=self.hermes)
         live.initialize(
             "discord-backfill", cwd=str(self.root), platform="discord", chat_type="group",
@@ -78,8 +78,11 @@ class SanitizedProviderQueryTests(CaptureReachHomes):
         self.assertEqual(live._surface_class, "channel")
         with patch.object(memory_provider, "prepare_prefetch_records", wraps=prepare_prefetch_records) as prepare:
             hermes_turn(live, 1, message_text)
-        self.assertEqual(live._query, QUESTION)
-        self.assertEqual(prepare.call_args.args[1], QUESTION)
+        # Another speaker's backfill line never reaches the query; the message the
+        # person chose to reply to does, after their own words.
+        self.assertEqual(live._query, f"{QUESTION} {reply_text}")
+        self.assertEqual(prepare.call_args.args[1], f"{QUESTION} {reply_text}")
+        self.assertNotIn("telemetry archive", live._query)
         self.assertEqual(live.latest_prefetch_receipt()["lens"]["query_method"], "framing_only")
 
     def test_short_query_pack_matches_the_unchanged_raw_selector_byte_for_byte(self) -> None:

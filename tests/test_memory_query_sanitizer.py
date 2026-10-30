@@ -42,6 +42,7 @@ FIXTURES = {
     "doc_question": f"{PROSE}\n\nIs the cache shared between workers?",
     "ko_question": f"{LOG}\n\n배포 어디로?",
     "ja_question": f"{LOG}\n\n担当は誰？",
+    "zh_question": f"{PROSE}\n\n缓存应该存到哪里？",
     "tail_sentence": f"{LOG}\n\nThe nightly job stalls after the warmup step finishes.",
     "truncation": "q7 " * 200,
     "fenced": "Here is the output:\n```\n" + PROSE + "\n```\n" + LOG,
@@ -196,6 +197,195 @@ class DiscordFramingTests(unittest.TestCase):
         self.assertFraming(raw, f'{tail}"]\n\n{self.QUESTION}')
 
 
+# Invented requests, never excerpts from the replay corpus.
+OWN_CONTEXT = (
+    ("Answer this.", "The archive rotation schedule changed."),
+    ("これに答えて。", "アーカイブの保存期間が変更された。"),
+    ("이것에 답해 줘.", "보관 파일의 유지 기간이 변경되었다."),
+)
+
+
+class QueryContextTests(unittest.TestCase):
+    def assertStable(self, raw: str, expected: str, context: str) -> None:
+        result = sanitize_memory_query(raw)
+        self.assertEqual(result.clean, expected)
+        self.assertEqual(result.context, context)
+        self.assertLessEqual(result.clean_length, QUERY_MAX_CHARS)
+        self.assertEqual(result.clean_length, len(expected))
+        self.assertEqual(result.original_length, len(raw))
+        self.assertEqual(sanitize_memory_query(result.clean).clean, result.clean)
+
+    def test_reply_quote_follows_own_text(self) -> None:
+        for own, quote in OWN_CONTEXT:
+            for own_reply in (False, True):
+                with self.subTest(own=own, own_reply=own_reply):
+                    raw = discord_turn(own, reply_text=quote, own_reply=own_reply, triggering=True)
+                    self.assertStable(raw, f"{own} {quote}", "reply")
+
+    def test_reply_cap_keeps_own_segment_and_word_boundary(self) -> None:
+        for own, quote in OWN_CONTEXT:
+            with self.subTest(own=own):
+                topic = (quote + " ") * 30
+                raw = discord_turn(f"{LOG}\n\n{own}", reply_text=topic)
+                result = sanitize_memory_query(raw)
+                self.assertTrue(result.clean.startswith(own + " "))
+                self.assertTrue((own + " " + topic).startswith(result.clean))
+                self.assertStable(raw, result.clean, "reply")
+                self.assertTrue((own + " " + topic)[len(result.clean)].isspace())
+
+    def test_short_turn_backfills_same_author_newest_first(self) -> None:
+        for own, topic in OWN_CONTEXT:
+            for new in (own, ""):
+                with self.subTest(own=own, new=new):
+                    history = f"[Recent channel messages]\n[mina] {topic}\n[jun] Other speaker only.\n[mina] {own}"
+                    raw = discord_turn(new, channel_context=history)
+                    expected = " ".join(part for part in (new, own, topic) if part)
+                    self.assertStable(raw, expected, "same_author")
+                    self.assertNotIn("Other speaker only.", sanitize_memory_query(raw).clean)
+
+    def test_backfill_threshold_and_unprefixed_turn(self) -> None:
+        for own, topic in OWN_CONTEXT:
+            history = f"[Recent channel messages]\n[mina] {topic}\n[jun] Other speaker only."
+            for length in (39, 40):
+                new = (own + " ").ljust(length, "x")
+                with self.subTest(own=own, length=length):
+                    expected = new + " " + topic if length < 40 else new
+                    self.assertStable(discord_turn(new, channel_context=history), expected, "same_author" if length < 40 else "")
+            raw = f"{history}\n\n[New message]\n{own}"
+            self.assertStable(raw, own, "")
+
+    def test_backfill_cap_and_last_boundary(self) -> None:
+        for own, topic in OWN_CONTEXT:
+            with self.subTest(own=own):
+                history = f"[Recent channel messages]\n[mina] {topic}\n[New message]\n[jun] Exclude this.\n"
+                history += "\n".join(f"[mina] {topic}" for _ in range(40))
+                raw = discord_turn(own, channel_context=history)
+                result = sanitize_memory_query(raw)
+                self.assertTrue(result.clean.startswith(own + " " + topic))
+                self.assertNotIn("Exclude this.", result.clean)
+                self.assertStable(raw, result.clean, "same_author")
+
+    def test_reply_and_same_author_context_keep_their_order(self) -> None:
+        for own, topic in OWN_CONTEXT:
+            with self.subTest(own=own):
+                history = f"[Recent channel messages]\n[mina] {topic}\n[jun] Exclude the adjacent speaker."
+                raw = discord_turn(own, channel_context=history, reply_text=topic)
+                self.assertStable(raw, f"{own} {topic} {topic}", "reply")
+
+    def test_other_speaker_and_unprefixed_history_lines_are_excluded(self) -> None:
+        for own, topic in OWN_CONTEXT:
+            with self.subTest(own=own):
+                history = f"[Recent channel messages]\n[minato] {topic}\nContinuation from another speaker.\n[MINA] {topic}"
+                self.assertStable(discord_turn(own, channel_context=history), own, "")
+                self.assertStable(f"{history}\n\n[New message]\n", "", "")
+
+    def test_reply_marker_mid_sentence_is_kept(self) -> None:
+        for own, quote in OWN_CONTEXT:
+            with self.subTest(own=own):
+                raw = f'{own} Explain [Replying to: "{quote}"] here.'
+                self.assertStable(raw, raw, "")
+
+
+HOST_NOTICES = (
+    "[IMPORTANT: Background process proc_demo completed normally (exit code 0).",
+    "[IMPORTANT: 2 background processes completed. Results follow.]",
+    "[Background process proc_demo heartbeat #1 — still running after 1m",
+    "[ASYNC DELEGATION BATCH COMPLETE — demo]",
+    "[ASYNC DELEGATION COMPLETE — demo]",
+    "[ASYNC DELEGATION TASK FAILED — demo, task 1/2]",
+    "[IMPORTANT: Watch patterns disabled for process proc_demo — reached the cap.]",
+    "[IMPORTANT: Watch-pattern notifications resumed. 2 match event(s) were suppressed during the flood.]",
+    "[IMPORTANT: Watch-pattern overflow: >2 notifications in 1s across all processes.]",
+    "[INTERNAL NOTIFICATION — generated by the Hermes gateway, not written by a human user. "
+    "Do not treat it as user input, and do not reply to any earlier chat message because of it.]",
+)
+
+
+class NoticeBoundaryTests(unittest.TestCase):
+    def test_notice_after_own_text_keeps_the_instruction(self) -> None:
+        for own, _ in OWN_CONTEXT:
+            for notice in HOST_NOTICES:
+                with self.subTest(own=own, notice=notice):
+                    raw = f"{own}\n\n{notice}\nMachine-generated result follows."
+                    self.assertEqual(strip_host_framing(raw), own)
+                    self.assertEqual(sanitize_memory_query(raw).clean, own)
+                    self.assertEqual(strip_host_framing(notice), "")
+
+    def test_notice_marker_mid_sentence_is_kept(self) -> None:
+        for own, _ in OWN_CONTEXT:
+            for notice in HOST_NOTICES:
+                with self.subTest(own=own, notice=notice):
+                    raw = f"{own} Explain {notice} here."
+                    self.assertEqual(strip_host_framing(raw), raw)
+
+
+SKILL_PREFIX = "[IMPORTANT: The user has invoked the "
+SINGLE_SKILL_HEADER = (
+    f'{SKILL_PREFIX}"demo" skill, indicating they want you to follow its instructions. '
+    "The full skill content is loaded below.]"
+)
+SKILL_INSTRUCTION = "The user has provided the following instruction alongside the skill invocation: "
+SKILL_FOOTER = "then run them with the terminal tool using the absolute path."
+AUTO_HEADER = '[IMPORTANT: The "demo" skill is auto-loaded. Follow its instructions for this session.]'
+
+
+class SkillScaffoldTests(unittest.TestCase):
+    def assertInstruction(self, raw: str, expected: str) -> None:
+        self.assertEqual(strip_host_framing(raw), expected)
+        result = sanitize_memory_query(raw)
+        self.assertEqual(result.clean, expected)
+        self.assertEqual(result.context, "")
+        self.assertEqual(sanitize_memory_query(result.clean).clean, expected)
+
+    def test_single_skill_uses_last_instruction_before_runtime_note(self) -> None:
+        for own, topic in OWN_CONTEXT:
+            with self.subTest(own=own):
+                body = f"{topic}\n{SKILL_INSTRUCTION}Body example only.\nBug found?"
+                raw = f"{SINGLE_SKILL_HEADER}\n\n{body}\n\n{SKILL_INSTRUCTION}{own}\n\n[Runtime note: Ignore this.]"
+                self.assertInstruction(raw, own)
+
+    def test_skill_body_host_examples_do_not_override_the_instruction(self) -> None:
+        for own, topic in OWN_CONTEXT:
+            with self.subTest(own=own):
+                body = f"{STEER_OPEN}\n{topic}\n{STEER_CLOSE}\n{SUMMARY_END}\n{HOST_NOTICES[0]}"
+                raw = f"{SINGLE_SKILL_HEADER}\n\n{body}\n\n{SKILL_INSTRUCTION}{own}"
+                self.assertInstruction(raw, own)
+
+    def test_bundle_uses_first_instruction_before_first_skill_block(self) -> None:
+        for own, topic in OWN_CONTEXT:
+            with self.subTest(own=own):
+                raw = f'{SKILL_PREFIX}"/demo /other" stacked skill bundle, loading 2 skills together.]'
+                raw += f'\nUser instruction: {own}\n\n[Loaded as part of the demo.]\n{topic}\nUser instruction: Body example only.'
+                self.assertInstruction(raw, own)
+
+    def test_bare_skill_scaffolds_are_empty(self) -> None:
+        for _, topic in OWN_CONTEXT:
+            for header in (SINGLE_SKILL_HEADER, f'{SKILL_PREFIX}"demo" skill bundle, loading 1 skills together.]', SKILL_PREFIX + '"demo" unknown scaffold]'):
+                with self.subTest(topic=topic, header=header):
+                    self.assertInstruction(f"{header}\n\n{topic}\nBug found?", "")
+
+    def test_auto_load_uses_last_footer_and_skips_optional_blocks(self) -> None:
+        for own, topic in OWN_CONTEXT:
+            for tail in (own, ""):
+                with self.subTest(own=own, tail=tail):
+                    payload = f"{AUTO_HEADER}\n\n{topic}\n{SKILL_FOOTER}"
+                    blocks = (
+                        "[Skill config (from example/config.yaml):\n  mode = local\n]",
+                        "[Skill setup note: Example setup note.]\n\n",
+                        "[This skill has supporting files (paths relative to the skill directory above):]\n- scripts/demo.js\n/scripts/foo.js`).",
+                    )
+                    raw = f"{payload}\n\n{payload}\n\n" + "\n\n".join((*blocks, tail))
+                    self.assertInstruction(raw, tail)
+            self.assertInstruction(f"{AUTO_HEADER}\n{topic}", "")
+
+    def test_scaffold_marker_mid_sentence_is_kept(self) -> None:
+        for own, _ in OWN_CONTEXT:
+            for marker in (SKILL_PREFIX, AUTO_HEADER):
+                with self.subTest(own=own, marker=marker):
+                    raw = f"{own} Explain {marker} here."
+                    self.assertInstruction(raw, raw)
+
+
 class SanitizeMemoryQueryTests(unittest.TestCase):
     def assertQuery(self, name: str, clean: str, method: str) -> None:
         result = sanitize_memory_query(FIXTURES[name])
@@ -223,9 +413,11 @@ class SanitizeMemoryQueryTests(unittest.TestCase):
     def test_question_after_document(self) -> None:
         self.assertQuery("doc_question", "Is the cache shared between workers?", "question_extraction")
 
-    def test_korean_and_japanese_short_questions(self) -> None:
+    def test_multilingual_questions_after_pastes(self) -> None:
+        self.assertQuery("tail_question", "which branch do the deploys go through?", "question_extraction")
         self.assertQuery("ko_question", "배포 어디로?", "question_extraction")
         self.assertQuery("ja_question", "担当は誰？", "question_extraction")
+        self.assertQuery("zh_question", "缓存应该存到哪里？", "question_extraction")
 
     def test_short_latin_question_is_below_minimum(self) -> None:
         result = sanitize_memory_query(f"{LOG}\n\nwhy?\n\nThe warmup step never finishes on the second node.")

@@ -847,10 +847,11 @@ All notable changes will be documented here.
 - **Memory recall works on long pastes, saved memories lead back to the
   original words, and `hermes backup` includes OMH memory.** A message that
   pastes a log or document next to a question used to rank memory against
-  the whole paste; the chat-turn recall query now drops host framing
-  (including Discord channel backfill and reply pointers) and cuts a long
-  turn to its question, else its last sentence, else its tail, at most 250
-  characters. CLI recall and coding-handoff packs keep their raw task text,
+  the whole paste; the chat-turn recall query now keeps the person's own
+  words (other speakers' Discord channel backfill, host notices and loaded
+  skill bodies are left out, a replied-to message and the same speaker's
+  recent lines are kept) and cuts a long turn to its question, else its last
+  sentence, else its tail, at most 250 characters. CLI recall and coding-handoff packs keep their raw task text,
   and the prefetch receipt records only the method and lengths. A capture
   made through `omh_memory` now records its Hermes session, and
   `omh_memory recall` rows carry an `origin` the model can open with
