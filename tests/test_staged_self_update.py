@@ -1,4 +1,5 @@
 import contextlib
+from datetime import UTC, datetime
 import io
 import json
 import os
@@ -7,6 +8,7 @@ from pathlib import Path, PureWindowsPath
 import subprocess
 import sys
 from tempfile import TemporaryDirectory
+import time
 from typing import Callable, Literal, Protocol, TypeAlias, TypedDict
 import unittest
 from unittest.mock import patch
@@ -866,6 +868,60 @@ class StagedSelfUpdateTests(unittest.TestCase):
             self.assertTrue(previous.exists())
             self.assertTrue(running.exists())
             self.assertFalse(stale.exists())
+
+    def _gateway_gc(self, root: Path, gateway_starts: list[float]) -> dict[str, Path]:
+        _legacy, _args, _plan = self._fixture(root, pointer=True)
+        generations = {name: root / "generations" / name for name in ("g0", "g1", "g2", "g3")}
+        for generation in generations.values():
+            generation.mkdir(parents=True, exist_ok=True)
+        activated = {"g0": "2026-10-29T12:00:00Z", "g1": "2026-10-30T13:06:00Z", "g2": "2026-10-30T13:13:00Z", "g3": "2026-10-30T14:00:00Z"}
+        state: dict[str, JsonValue] = {
+            "active": self._entry(generations["g3"]),
+            "previous_known_good": self._entry(generations["g2"]),
+            "activations": [{"id": name, "activated_at": stamp} for name, stamp in activated.items()],
+        }
+        result: GarbageCollectionResult = {"cleanup": {"collected": []}}
+        collect_garbage(root, state, result, running_generation=None, gateway_starts=gateway_starts)
+        return generations
+
+    def test_gc_keeps_the_generation_current_at_a_recorded_gateway_start(self):
+        # The gateway started between g0 and g1, so it still serves g0; g1 was
+        # superseded after that start and nothing holds it.
+        start = datetime.fromisoformat("2026-10-29T17:00:52+00:00").timestamp()
+        with TemporaryDirectory() as temporary:
+            generations = self._gateway_gc(Path(temporary), [start])
+            self.assertTrue(generations["g0"].exists(), "GC deleted the generation a running gateway serves")
+            self.assertFalse(generations["g1"].exists())
+            self.assertTrue(generations["g2"].exists())
+            self.assertTrue(generations["g3"].exists())
+
+    def test_gc_without_a_recorded_gateway_start_keeps_only_active_and_previous(self):
+        with TemporaryDirectory() as temporary:
+            generations = self._gateway_gc(Path(temporary), [])
+            self.assertFalse(generations["g0"].exists())
+            self.assertFalse(generations["g1"].exists())
+            self.assertTrue(generations["g2"].exists())
+            self.assertTrue(generations["g3"].exists())
+
+    def test_update_keeps_the_generation_a_gateway_started_on_until_it_restarts(self):
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            _legacy, args, plan = self._fixture(root, pointer=True)
+            self.assertTrue(self._run(root, args, plan, self._runner())["ok"])
+            state = _read_json_object(root / "self-update.json")
+            held = root / "generations" / _text(_object(state["active"], "active")["id"], "active id")
+            hermes_home = root / "hermes"
+            _ = (hermes_home / "gateway.pid").write_text(json.dumps({"pid": 1, "hermes_home": str(hermes_home)}))
+            _ = (hermes_home / "gateway-starts.log").write_text(f"{time.time()!r}\n")
+            with patch.object(self_update_state, "now", return_value="2099-01-01T00:00:00Z"):
+                for _ in range(2):
+                    self.assertTrue(self._run(root, args, plan, self._runner())["ok"])
+            self.assertTrue(held.exists(), "update deleted the generation the gateway started on")
+            self.assertNotEqual((root / "current").resolve(), held.resolve())
+            # A start recorded after the later activations releases it.
+            _ = (hermes_home / "gateway-starts.log").write_text(f"{datetime(2099, 1, 2, tzinfo=UTC).timestamp()!r}\n")
+            self.assertTrue(self._run(root, args, plan, self._runner())["ok"])
+            self.assertFalse(held.exists())
 
     def test_no_launcher_and_platform_link_failure_are_fail_closed(self):
         with TemporaryDirectory() as temporary:
