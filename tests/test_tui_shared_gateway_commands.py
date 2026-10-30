@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import unittest
 
+from _tui_lines import lines_text
 from test_tui_command_output import last, send
 from test_tui_modes import SID, answer, make_app, notices, type_text
 from omh.tui.app import (
@@ -18,6 +19,7 @@ from omh.tui.app import (
     COMPRESS_ANSWER_SECONDS,
     COMPRESS_STARTED_NOTICE,
     COMPRESS_UNANSWERED_NOTICE,
+    COMPRESSING_VERB,
     COMPRESSION_BUSY_NOTICE,
     COMPRESSION_HELD_NOTICE,
     HELD_ANSWER_SECONDS,
@@ -45,6 +47,33 @@ class CompressTests(unittest.TestCase):
         report = "✓ Compressed: 24 → 12 messages\n  Approx request size: ~816 → ~1,040 tokens"
         answer(app, client, {"type": "exec", "output": report})
         self.assertEqual((block.parts[-1], block.done), ((report, NOTICE_INFO), True))
+
+    def test_a_compress_out_shows_a_working_row_whose_clock_counts_until_it_settles(self) -> None:
+        # Owner report 2026-10-30: `/compact` showed the started notice and nothing moved for the ~88 s Hermes took.
+        for settle in ("answered", "unanswered"):
+            with self.subTest(settle=settle):
+                now = [100.0]
+                app, client = make_app(clock=lambda: now[0])
+                send(app, "/compact")
+                now[0] += 42.0
+                self.assertTrue(lines_text(app._tail(80))[-1].endswith(f"{COMPRESSING_VERB}… (42s)"))
+                now[0] += 46.0
+                self.assertTrue(lines_text(app._tail(80))[-1].endswith(f"{COMPRESSING_VERB}… (1m 28s)"))
+                self.assertFalse(app._busy())  # no glow, and a prompt still goes out as it did
+                self.assertEqual(app._working_rows(), 1)
+                self.assertLessEqual(app._read_timeout(), 1.0)  # the loop wakes to move the clock
+                if settle == "answered":
+                    answer(app, client, {"type": "exec", "output": "✓ Compressed: 24 → 12 messages"})
+                else:
+                    now[0] += COMPRESS_ANSWER_SECONDS
+                    app._expire_calls()
+                self.assertFalse([line for line in lines_text(app._tail(80)) if f"{COMPRESSING_VERB}…" in line])
+                self.assertEqual(app._working_rows(), 0)
+
+    def test_a_compress_sent_during_a_turn_leaves_the_turn_its_own_working_row(self) -> None:
+        app, _client = make_app(busy=True)
+        send(app, "/compress")
+        self.assertFalse([line for line in lines_text(app._tail(80)) if f"{COMPRESSING_VERB}…" in line])
 
     def test_a_preview_or_a_running_turn_says_nothing_is_under_way(self) -> None:
         for line, busy in (("/compress --preview", False), ("/compact --dry-run", False), ("/compress", True)):

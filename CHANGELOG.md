@@ -21,6 +21,27 @@ All notable changes will be documented here.
   the check. `agent.max_verify_nudges: 0` turns it off, together with OMH's
   other end-of-turn nudges.
 
+- **The info line shows the context as a gauge with its token counts.**
+  The bare `ctx 37%` under the composer is now
+  `ctx ━━━━──────── 37% 74k/200k`: twelve cells, the filled ones and the
+  percent in the context's colour (warning from 80 % full, error from
+  95 %), the rest dim, then the tokens the context holds of the most it
+  can, in `k` and `M`. On a narrow
+  line the token counts go first, then the gauge, leaving `ctx 37%`, before
+  the context goes. Under `NO_COLOR` the filled and the empty cells still
+  tell how full it is.
+
+- **A `/compact` that is still running shows it is.** Hermes can take a
+  minute or more to summarize the older turns, and until its report came
+  the screen showed only the started notice and nothing moved, so a
+  compression that was working read as a stuck one. While a `/compress` (or
+  `/compact`) is out and no turn runs, the working row now shows a spinner
+  and `Compressing…` with the time it has taken so far, and it goes away
+  when the report or the unanswered notice lands. It offers no Esc, since
+  Esc between turns sends no interrupt and so does not stop a compression.
+  The working glow does not start for it, and a prompt typed meanwhile
+  still goes out as before.
+
 - **The default look keeps the terminal's own background.** Spectrum set
   its navy ground with OSC 11, and Otty took a set background only on the
   cells written after it, so the launch card showed holes of the terminal's

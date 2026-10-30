@@ -480,6 +480,9 @@ QUESTION_VIEW_TITLE = "the open question (q goes back to it)"  # Ctrl+O's pager 
 COMPRESS_COMMANDS = frozenset({"compress", "compact"})
 COMPRESS_PREVIEW_FLAGS = frozenset({"--preview", "--dry-run"})
 COMPRESS_STARTED_NOTICE = "Compressing: Hermes summarizes the older turns with a model call, so this can take a while."
+# The working row's verb while a `/compress` is out and no turn runs (`App._compressing_since`). It offers no Esc:
+# with no turn running Esc arms the rewind and sends no interrupt, so it does not stop a compression.
+COMPRESSING_VERB = "Compressing"
 # How long a `/compress` is waited for: Hermes' own budget for it (`hermes_cli/gateway_client.py` COMPRESS_RPC_TIMEOUT,
 # the compression ceiling plus slack), in place of `CALL_ANSWER_SECONDS`.
 COMPRESS_ANSWER_SECONDS = 660.0
@@ -581,6 +584,10 @@ BARE_HERMES_NOTE = "Bare `hermes` opens Hermes' own terminal."
 # The context figure turns warn, then bad, on the info line.
 CONTEXT_WARN_PERCENT = 80
 CONTEXT_BAD_PERCENT = 95
+# The info line's context gauge (owner, 2026-10-30): `ctx ━━━━──────── 37% 74k/200k`.
+CONTEXT_GAUGE_CELLS = 12
+CONTEXT_GAUGE_FILLED = "━"
+CONTEXT_GAUGE_EMPTY = "─"
 
 # What `/theme auto|light|dark` measures the roles against: the background the terminal reported (auto), or a
 # light or a dark one whatever it reported.
@@ -1679,6 +1686,8 @@ class App(ModesMixin, AgentViewMixin):
         self.opened_ids: list[str] = []  # the sessions this launch had open before `stored_id`, oldest first
         self.model = ""
         self.context_percent: float | None = None
+        self.context_used: float | None = None  # the tokens the context holds and the most it can, with the percent
+        self.context_max: float | None = None
         # What the info line shows (`mode`): accept while Hermes has approvals off, the TUI's own plan flag.
         self.approvals_off = False
         self.plan_mode = False
@@ -2077,7 +2086,8 @@ class App(ModesMixin, AgentViewMixin):
         self.shared_gateway = bool(as_text(result.get("subscription_id")))
         info = result.get("info")
         self.model = as_text(info.get("model")) if isinstance(info, dict) else ""
-        self.context_percent = None  # the next session.usage says how full this session is
+        # The next session.usage says how full this session is.
+        self.context_percent = self.context_used = self.context_max = None
         # The token counter is the session's own. An answer with none opened a session in which no API call has ended
         # on this gateway yet (Hermes sends its first usage block after one), so the counter stands at 0.
         usage = info.get("usage") if isinstance(info, dict) else None
@@ -2310,7 +2320,8 @@ class App(ModesMixin, AgentViewMixin):
             due.append(now + READ_TIMEOUT_SECONDS)
         if self.redraw_at is not None:
             due.append(self.redraw_at)
-        elif self._busy() or self._panel_live() or self._aura_live() or self.held_submits:
+        elif self._busy() or self._compressing_since() is not None or self._panel_live() or self._aura_live() \
+                or self.held_submits:
             due.append(self.last_render + self._tick_seconds())
         if self.redraw_at is None and (background := self._background_due_at()) is not None:
             due.append(background)  # the background row's clock: once a second, on the second
@@ -3009,8 +3020,9 @@ class App(ModesMixin, AgentViewMixin):
         of what streamed before it.
         """
         percent = context_percent(usage)
-        if percent is not None:
+        if percent is not None and isinstance(usage, dict):
             self.context_percent = percent
+            self.context_used, self.context_max = usage["context_used"], usage["context_max"]
         output, calls = usage_count(usage, "output"), usage_count(usage, "calls")
         if output is None:
             return
@@ -5021,6 +5033,18 @@ class App(ModesMixin, AgentViewMixin):
         ends = [call.expires_at for call in self.pending.values() if call.compressing]
         return float(math.ceil(max(0.0, max(ends) - self.clock()))) if ends else None
 
+    def _compressing_since(self) -> float | None:
+        """When the earliest `/compress` this TUI still waits on was sent, while no turn runs; None otherwise.
+
+        The tail then draws a working row of its own for it (`_tail`), its
+        clock counting from this, until the report or the unanswered notice
+        lands. `_busy` stays False for it, so no glow starts and a prompt
+        still goes out as it did."""
+        if self._busy():
+            return None
+        sent = [call.expires_at - call.seconds for call in self.pending.values() if call.compressing]
+        return min(sent) if sent else None
+
     def _compress_unanswered(self, echo: CommandBlock | None, seconds: float) -> None:
         """A `/compress` unanswered in the `seconds` it was waited for (more than `COMPRESS_ANSWER_SECONDS` when it
         was sent behind another one): said under its echo, and nothing is sent again."""
@@ -6445,8 +6469,8 @@ class App(ModesMixin, AgentViewMixin):
         if self.redraw_at is not None:
             return  # the screen is mid-reflow; the settled redraw paints it
         now = self.clock()
-        due = (self._busy() or self._panel_live() or self._aura_live() or bool(self.held_submits)) \
-            and now - self.last_render >= self._tick_seconds()
+        due = (self._busy() or self._compressing_since() is not None or self._panel_live() or self._aura_live()
+               or bool(self.held_submits)) and now - self.last_render >= self._tick_seconds()
         if not (self.dirty or due or self._background_due()):
             if self._wallpaper_moves() and now - self.ambient_at >= WALLPAPER_TICK_SECONDS:
                 self.ambient_at = now  # only the wallpaper's cells that moved: no frame is built
@@ -6813,8 +6837,9 @@ class App(ModesMixin, AgentViewMixin):
                                            glint=self._aura_moves())
         if not lines and self.transcript.taken_any:
             lines = [()]  # the spacer a block opens with, here between the transcript and the region under it
+        compressing = self._compressing_since()
         # A blank row above the working row, as between two blocks; the frame drops it first when rows are short.
-        self.tail_spacer = self._busy() and bool(lines) and bool(lines[-1])
+        self.tail_spacer = (self._busy() or compressing is not None) and bool(lines) and bool(lines[-1])
         if self.tail_spacer:
             lines.append(())
         if self._busy() and self.waiting_since is not None:
@@ -6863,6 +6888,13 @@ class App(ModesMixin, AgentViewMixin):
             tip = self._tip_line(cols)
             if tip is not None:
                 lines.append(tip)
+        elif compressing is not None:
+            # A `/compress` out with no turn running: the spinner and its clock, so the wait reads as alive.
+            frame = self._spinner_frame()
+            row = (Span(WORKING_GLYPHS[frame % len(WORKING_GLYPHS)], self.theme.accent), Span(" "),
+                   *working_spans(f"{COMPRESSING_VERB}…", frame, self.theme),
+                   Span(f" ({elapsed_text(now - compressing)})", self.theme.muted))
+            lines.append(truncate_line(row, cols))
         return lines
 
     def _working_rows(self) -> int:
@@ -6870,7 +6902,7 @@ class App(ModesMixin, AgentViewMixin):
         interrupting) row, and the tip under the working row from TIP_MIN_ROWS rows. The agent view leaves the tail
         these (`layout.allocate`'s `tail_floor`), so a short terminal never loses the row saying a turn runs."""
         if not self._busy():
-            return 0
+            return int(self._compressing_since() is not None)  # the compression's row, with no tip
         return 1 + int(self.size[1] >= TIP_MIN_ROWS and self.waiting_since is None and not self.interrupting)
 
     def _tip_line(self, cols: int) -> Line | None:
@@ -6973,12 +7005,39 @@ class App(ModesMixin, AgentViewMixin):
             return self.theme.error
         return self.theme.warn if percent >= CONTEXT_WARN_PERCENT else self.theme.muted
 
+    def _context_forms(self) -> list[Line]:
+        """The context's forms, longest first: `ctx ━━━━──────── 37% 74k/200k`, then without the token counts (used
+        over the most the context holds), then `ctx 37%`; none before Hermes sent context figures.
+
+        The filled cells and the percent turn warn from `CONTEXT_WARN_PERCENT`
+        full and error from `CONTEXT_BAD_PERCENT`; under `NO_COLOR` the
+        filled and the empty cells still tell the part used.
+        """
+        percent = self.context_percent
+        if percent is None:
+            return []
+        style = self._context_style()
+        filled = min(CONTEXT_GAUGE_CELLS, max(0, int(percent * CONTEXT_GAUGE_CELLS / 100 + 0.5)))
+        spans = (
+            Span("ctx ", self.theme.muted),
+            Span(CONTEXT_GAUGE_FILLED * filled, style),
+            Span(CONTEXT_GAUGE_EMPTY * (CONTEXT_GAUGE_CELLS - filled), self.theme.dim),
+            Span(f" {percent:.0f}%", style),
+        )
+        gauge: Line = tuple(span for span in spans if span.text)
+        forms = [gauge, (Span(f"ctx {percent:.0f}%", style),)]
+        if self.context_used is not None and self.context_max is not None:
+            counts = f" {compact_count(self.context_used)}/{compact_count(self.context_max)}"
+            forms.insert(0, (*gauge, Span(counts, self.theme.muted)))
+        return forms
+
     def _info_right(self) -> tuple[Line, ...]:
         """The info line's right side, composed again only when something it shows changed (a spinner tick changes nothing).
 
         Its forms are the same at every width; `info_line` picks the one that fits.
         """
-        shown = (self.model, self.context_percent, self.effort, self._busy(), self.slot is not None, self.session_title)
+        shown = (self.model, self.context_percent, self.context_used, self.context_max, self.effort, self._busy(),
+                 self.slot is not None, self.session_title)
         held = self.info_held
         if held is not None and held[0] == shown and held[1] is self.theme and held[2] is self.hud:
             return held[3]
@@ -6992,18 +7051,17 @@ class App(ModesMixin, AgentViewMixin):
 
         The title (Hermes' `session.title`, cut to `INFO_TITLE_CELLS`) goes
         first; the model then shortens (`model_forms`), then goes, then the
-        effort, then the context; the HUD's chips (`hud_chips`: a repeating
-        call, the tool calls in flight) go last. The context turns warn from
-        `CONTEXT_WARN_PERCENT` full and error from `CONTEXT_BAD_PERCENT`.
+        effort, then the context shortens (`_context_forms`) and goes; the
+        HUD's chips (`hud_chips`: a repeating call, the tool calls in flight)
+        go last.
         """
         payload = self.hud.payload if self.hud is not None else None
         chips = list(hud_chips(payload, self.theme, turn_runs=self._busy(), question_waits=self.slot is not None))
-        percent = self.context_percent
-        context: Line = (Span(f"ctx {percent:.0f}%", self._context_style()),) if percent is not None else ()
+        contexts = self._context_forms() or [()]
         effort: Line = (Span(effort_words(self.effort), self.theme.muted),)
         models: list[Line] = [(Span(name, self.theme.muted),) for name in model_forms(self.model)]
-        fields = [[*chips, model, context, effort] for model in models]
-        fields += [[*chips, context, effort], [*chips, context], chips]
+        fields = [[*chips, model, contexts[0], effort] for model in models]
+        fields += [[*chips, contexts[0], effort], *([*chips, context] for context in contexts), chips]
         forms: list[Line] = []
         for parts in fields:
             joined: Line = ()
