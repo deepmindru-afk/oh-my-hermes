@@ -141,7 +141,14 @@ omh_spec = importlib.util.find_spec("omh") is not None
 """
 
 
-def run_in_no_package_host(code: str, *, cwd: Path, extra_paths: Iterable[Path] = ()) -> dict:
+def run_in_no_package_host(
+    code: str,
+    *,
+    cwd: Path,
+    extra_paths: Iterable[Path] = (),
+    python: Path | None = None,
+    run_site: bool = False,
+) -> dict:
     """Run `code` in a real interpreter with no `omh` package; return its JSON.
 
     `-S` keeps the editable install's `.pth` out and `-P` keeps the cwd out,
@@ -151,6 +158,10 @@ def run_in_no_package_host(code: str, *, cwd: Path, extra_paths: Iterable[Path] 
     the bundle is importable as `hermes_plugin_omh`, sees `omh_spec`, and must
     print one JSON document. `extra_paths` go first on the child's path, which
     is how a test puts a stray or skewed `omh` in front of it.
+
+    `python` runs another interpreter (a test-made venv) in place of this
+    one, and `run_site` lets `site` run in it, which a host whose own
+    site directory holds a package it later takes off the path needs (#2415).
     """
     env = {
         key: value
@@ -159,8 +170,8 @@ def run_in_no_package_host(code: str, *, cwd: Path, extra_paths: Iterable[Path] 
     }
     result = subprocess.run(
         [
-            sys.executable,
-            "-S",
+            str(python or sys.executable),
+            *([] if run_site else ["-S"]),
             "-P",
             "-c",
             _NO_PACKAGE_HOST_PRELUDE + code,

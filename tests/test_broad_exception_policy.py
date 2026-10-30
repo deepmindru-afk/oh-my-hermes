@@ -571,6 +571,16 @@ CLASSIFIED_SITES: tuple[ClassifiedSite, ...] = (
         "`absent`, never a working backend, and never a raise (#2166 follow-up).",
     ),
     ClassifiedSite(
+        "src/plugin_bundle/omh/package_backend.py",
+        "_off_path_install",
+        INTENTIONAL,
+        "The look for an oh-my-hermes install in the interpreter's own site directory that its "
+        "import path skips also runs inside `load_backend`'s handler. A failure there (an "
+        "unreadable directory, an unknown install scheme, a broken `site`) is no evidence of an "
+        "install, so `off_path_install` stays empty and the block a plain `absent`: never a "
+        "raise out of a tool and never a directory named without metadata in it (#2415).",
+    ),
+    ClassifiedSite(
         "src/tui/bot_board.py",
         "poll_once",
         INTENTIONAL,
@@ -848,8 +858,11 @@ CLASSIFIED_SITES: tuple[ClassifiedSite, ...] = (
 # read that fails closed, two hook bodies that log a named warning and say
 # nothing, a bridge failure named `server_unavailable`, and a handler that
 # answers `unexpected_error`.
-EXPECTED_HANDLER_COUNT = 88
-EXPECTED_ANCHOR_COUNT = 80
+# 88 -> 89 / 80 -> 81: `package_backend._off_path_install`, the look for an
+# install the import path skips, inside `load_backend`'s handler (a failure
+# leaves `off_path_install` empty, never a raise out of a tool; #2415).
+EXPECTED_HANDLER_COUNT = 89
+EXPECTED_ANCHOR_COUNT = 81
 
 
 class DerivedSite(NamedTuple):

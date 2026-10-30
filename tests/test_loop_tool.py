@@ -28,6 +28,7 @@ import importlib.util
 import json
 import os
 import re
+import subprocess
 import sys
 import types
 import unittest
@@ -1644,6 +1645,160 @@ class RaisingImportHookTests(unittest.TestCase):
         self.assertEqual(observed["probe"]["source"], "standalone_plugin_bundle_fallback")
         self.assertEqual(rows["package_backend"]["status"], "broken")
         self.assertEqual(rows["package_probe"]["status"], "broken")
+
+
+_HERMES_PM_ACTIVATION_CALLS = """
+import sysconfig
+from pathlib import Path
+
+# Hermes' package-manager activation (`pm.environments.activate_dependencies`)
+# drops every `site-packages` entry from the interpreter's path and imports
+# from the dependency environment it prepared instead; @PREPARED@ stands in
+# for that environment, which has no `oh-my-hermes` in it.
+own_site = sysconfig.get_paths()["purelib"]
+before = importlib.util.find_spec("omh") is not None
+sys.path[:] = [entry for entry in sys.path if Path(entry).name not in ("site-packages", "dist-packages")]
+sys.path.insert(0, @PREPARED@)
+importlib.invalidate_caches()
+for name in [name for name in sys.modules if name == "omh" or name.startswith("omh.")]:
+    del sys.modules[name]
+
+from hermes_plugin_omh.tools.chat_tool import omh_interact_handler
+from hermes_plugin_omh.tools.decision_gate_tool import omh_decision_gate_handler
+from hermes_plugin_omh.tools.loop_tool import omh_loop_handler
+from hermes_plugin_omh.tools.probe_tool import omh_probe_handler
+
+gate_args = {
+    "gate_id": "gate-1", "expected_resume_digest": "a" * 64, "choice": "approve",
+    "actor": "actor-1", "connector": "discord", "channel_ref": "channel-1",
+    "thread_ref": "thread-1", "interaction_ref": "interaction-1",
+    "authentication_method": "host_authenticated", "observed_at": "2026-09-07T10:00:00Z",
+    "event_id": "event-1", "wrapper_session_ref": "ws-1", "wrapper_expected_revision": 1,
+}
+print(json.dumps({
+    "interact": json.loads(omh_interact_handler({"message": "fix the login bug"})),
+    "own_site": own_site,
+    "importable_alone": before,
+    "omh_spec": importlib.util.find_spec("omh") is not None,
+    "loop": json.loads(omh_loop_handler({"action": "status"}, session_id="s")),
+    "gate": json.loads(omh_decision_gate_handler(gate_args)),
+    "probe": json.loads(omh_probe_handler({})),
+}))
+"""
+
+
+def _stub_oh_my_hermes(site_dir: Path) -> None:
+    """An `omh` package plus the distribution metadata an install leaves beside it."""
+    (site_dir / "omh").mkdir(parents=True)
+    (site_dir / "omh" / "__init__.py").write_text("", encoding="utf-8")
+    info = site_dir / "oh_my_hermes-4.0.3.dist-info"
+    info.mkdir()
+    (info / "METADATA").write_text(
+        "Metadata-Version: 2.1\nName: oh-my-hermes\nVersion: 4.0.3\n", encoding="utf-8"
+    )
+
+
+@unittest.skipIf(os.name == "nt", "the venv layout and Hermes' package-manager runtime under test are POSIX")
+class InterpreterSiteOffPathTests(unittest.TestCase):
+    """oh-my-hermes in the interpreter's own site directory, which Hermes' PM takes off the path (#2415)."""
+
+    def _host(self, root: Path, *, installed: bool) -> dict:
+        venv = root / "venv"
+        subprocess.run(
+            [sys.executable, "-m", "venv", "--without-pip", str(venv)],
+            check=True, capture_output=True, timeout=120,
+        )
+        python = venv / "bin" / "python"
+        purelib = subprocess.run(
+            [str(python), "-E", "-P", "-c", "import sysconfig; print(sysconfig.get_paths()['purelib'])"],
+            check=True, capture_output=True, text=True, timeout=30,
+        ).stdout.strip()
+        if installed:
+            _stub_oh_my_hermes(Path(purelib))
+        prepared = root / "pm-environment" / "lib" / "site-packages"
+        prepared.mkdir(parents=True)
+        env = {"OMH_HOME": str(root / ".omh"), "HERMES_HOME": str(root / ".hermes")}
+        code = _HERMES_PM_ACTIVATION_CALLS.replace("@PREPARED@", repr(str(prepared)))
+        with mock.patch.dict(os.environ, env, clear=False):
+            return run_in_no_package_host(code, cwd=root, python=python, run_site=True)
+
+    def test_an_install_the_pm_path_skips_is_named_in_every_refusal(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            observed = self._host(root, installed=True)
+            self.assertEqual(list((root / ".omh").rglob("cycle.json")), [])
+        # The reporter's own check: the interpreter alone imports it.
+        self.assertTrue(observed["importable_alone"])
+        self.assertFalse(observed["omh_spec"])
+        own_site = observed["own_site"]
+        loop = observed["loop"]
+        self.assertEqual(loop["error"], "service_unavailable")
+        backend = loop["package_backend"]
+        self.assertEqual(backend["status"], "absent")
+        self.assertTrue(backend.get("off_path_install"), backend)
+        self.assertEqual(os.path.realpath(backend["off_path_install"]), os.path.realpath(own_site))
+        detail = loop["error_detail"]
+        self.assertIn("own site directory, which is not on its import path", detail)
+        self.assertIn("Hermes' package manager takes it off when Hermes starts", detail)
+        self.assertIn("there is no supported way to add the package to it yet", detail)
+        self.assertIn("omh --omh-home <that home> loop status", detail)
+        # The remedy the reporter already took, and those a PM environment forbids.
+        for forbidden in ("install oh-my-hermes", "manage yourself", "pip", "uv "):
+            self.assertNotIn(forbidden, detail)
+        gate = observed["gate"]
+        self.assertEqual(gate["status"], "unavailable")
+        self.assertEqual(gate["reason_code"], "package_backend_absent")
+        self.assertEqual(gate["package_backend"].get("off_path_install"), backend.get("off_path_install"))
+        self.assertIn("own site directory, which is not on its import path", gate["detail"])
+        rows = {item["name"]: item for item in observed["probe"]["capabilities"]}
+        self.assertEqual(observed["probe"]["source"], "standalone_plugin_bundle_fallback")
+        for name in ("package_backend", "package_probe"):
+            with self.subTest(row=name):
+                self.assertEqual(rows[name]["status"], "absent")
+                self.assertIn(own_site, rows[name]["message"])
+        # The reporter's first symptom: chat recording said only
+        # `package_backend_unavailable`, with no reason given.
+        interact = observed["interact"]
+        self.assertEqual(interact["wrapper_session"]["reason"], "package_backend_unavailable")
+        self.assertFalse(interact["wrapper_session"]["recorded"])
+        self.assertEqual(interact.get("package_backend", {}).get("status"), "absent")
+        self.assertEqual(interact["package_backend"].get("off_path_install"), backend["off_path_install"])
+        self.assertIn("chat/session recording has no backend here", interact["package_backend_detail"])
+        self.assertIn("own site directory, which is not on its import path", interact["package_backend_detail"])
+
+    def test_the_same_host_with_nothing_installed_keeps_the_plain_absent(self) -> None:
+        # Negative control: the same interpreter and path surgery, no install.
+        with TemporaryDirectory() as tmp:
+            observed = self._host(Path(tmp).resolve(), installed=False)
+        self.assertFalse(observed["importable_alone"])
+        backend = observed["loop"]["package_backend"]
+        self.assertEqual(backend["status"], "absent")
+        self.assertEqual(backend.get("off_path_install", ""), "")
+        self.assertIn("on a Hermes environment you manage yourself", observed["loop"]["error_detail"])
+        self.assertNotIn("own site directory", observed["loop"]["error_detail"])
+        self.assertEqual(observed["interact"].get("package_backend", {}).get("off_path_install"), "")
+        self.assertNotIn("own site directory", observed["interact"].get("package_backend_detail", ""))
+
+    def test_a_host_without_site_never_reports_an_off_path_install(self) -> None:
+        # `-S`: no site directory was ever on the path, so none was taken off.
+        with TemporaryDirectory() as tmp:
+            observed = run_in_no_package_host(_NO_PACKAGE_CALLS, cwd=Path(tmp))
+        self.assertEqual(observed["status"]["package_backend"].get("off_path_install", ""), "")
+
+    def test_a_failing_look_leaves_the_block_a_plain_absent(self) -> None:
+        missing = ModuleNotFoundError("No module named 'omh'", name="omh")
+        with (
+            mock.patch.object(package_backend, "_found_omh", return_value=package_backend.FOUND_NONE),
+            mock.patch("sysconfig.get_paths", side_effect=RuntimeError("scheme broke")),
+        ):
+            backend = package_backend.classify_backend_failure(missing)
+        self.assertEqual(backend["status"], "absent")
+        self.assertEqual(backend.get("off_path_install", ""), "")
+
+    def test_only_an_absent_block_carries_a_directory(self) -> None:
+        self.assertEqual(package_backend.available_backend()["off_path_install"], "")
+        with patch_modules({"omh.workflows.loop_operations": None}):
+            self.assertEqual(loop_bridge.loop_backend_status()["off_path_install"], "")
 
 
 class BackendModuleScopeTests(unittest.TestCase):
