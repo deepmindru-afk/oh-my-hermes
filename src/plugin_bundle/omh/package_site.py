@@ -90,9 +90,11 @@ def _omh_importable() -> bool:
 
     try:
         return importlib.util.find_spec("omh") is not None
-    except (ImportError, ValueError):
-        # Something answers for the name, so it is not absent; the backend
-        # classifier reports what it is.
+    except Exception:  # noqa: BLE001 - see the classified-site verdict
+        # Something answers for the name (an import hook that raises, a
+        # module with no spec), so it is not absent: the recorded directory
+        # is left alone, and the backend import that follows meets the same
+        # failure and is classified `broken` or `incompatible`.
         return True
 
 
@@ -203,16 +205,11 @@ class _OmhSiteFinder:
         if fullname != "omh" and not all(_under(entry, self.site) for entry in search):
             return None
         spec = importlib.machinery.PathFinder.find_spec(fullname, search)
-        if spec is None or spec.origin is None or not isinstance(spec.loader, importlib.machinery.SourceFileLoader):
-            return spec
-        import importlib.util
-
-        return importlib.util.spec_from_file_location(
-            fullname,
-            spec.origin,
-            loader=_ReadOnlySourceLoader(fullname, spec.origin),
-            submodule_search_locations=spec.submodule_search_locations,
-        )
+        if spec is not None and spec.origin is not None and type(spec.loader) is importlib.machinery.SourceFileLoader:
+            # Same file, same spec; only the loader differs, so nothing is
+            # loaded from a path the path finder did not already resolve.
+            spec.loader = _ReadOnlySourceLoader(fullname, spec.origin)
+        return spec
 
     def invalidate_caches(self) -> None:
         return None

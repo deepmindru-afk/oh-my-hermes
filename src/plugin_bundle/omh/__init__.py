@@ -170,9 +170,9 @@ def register(ctx: _PluginContext) -> None:
     # package manager prepares, the package OMH's installer recorded beside
     # this bundle is the only `omh` this interpreter can reach (#2166). A
     # metadata read, no package import, so the plugin-load deadline barely moves.
-    from .package_site import ensure_recorded_package_site
+    from . import package_site
 
-    ensure_recorded_package_site()
+    package_site.ensure_recorded_package_site()
     from . import runtime_paths
     runtime_paths.note_host_registration(ctx)
     from .memory_provider import OmhMemoryProvider

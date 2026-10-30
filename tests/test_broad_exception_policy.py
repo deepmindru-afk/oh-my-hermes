@@ -591,6 +591,15 @@ CLASSIFIED_SITES: tuple[ClassifiedSite, ...] = (
         "ordinary way and is classified: never a raise out of register() or a tool (#2166).",
     ),
     ClassifiedSite(
+        "src/plugin_bundle/omh/package_site.py",
+        "_omh_importable",
+        INTENTIONAL,
+        "`importlib.util.find_spec('omh')` runs every finder on sys.meta_path, and a host's import "
+        "hook can raise anything for that name. A raise means something answers for `omh`, so it is "
+        "not absent: the recorded directory is left alone, and the backend import that follows meets "
+        "the same failure and `load_backend` classifies it `broken`, as it did before (#2166).",
+    ),
+    ClassifiedSite(
         "src/tui/bot_board.py",
         "poll_once",
         INTENTIONAL,
@@ -871,11 +880,12 @@ CLASSIFIED_SITES: tuple[ClassifiedSite, ...] = (
 # 88 -> 89 / 80 -> 81: `package_backend._off_path_install`, the look for an
 # install the import path skips, inside `load_backend`'s handler (a failure
 # leaves `off_path_install` empty, never a raise out of a tool; #2415).
-# 89 -> 91 / 81 -> 82: `package_site.ensure_recorded_package_site`, the manifest
+# 89 -> 92 / 81 -> 83: `package_site.ensure_recorded_package_site`, the manifest
 # and metadata reads that decide whether OMH's recorded package joins the import
-# system (two handlers; a failure adds nothing and is reported, never raised; #2166).
-EXPECTED_HANDLER_COUNT = 91
-EXPECTED_ANCHOR_COUNT = 82
+# system (two handlers; a failure adds nothing and is reported, never raised), and
+# `package_site._omh_importable`, a host import hook raising for `omh` (#2166).
+EXPECTED_HANDLER_COUNT = 92
+EXPECTED_ANCHOR_COUNT = 83
 
 
 class DerivedSite(NamedTuple):

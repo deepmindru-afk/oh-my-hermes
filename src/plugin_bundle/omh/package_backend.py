@@ -31,6 +31,7 @@ from pathlib import Path
 import sys
 from typing import Any, Callable, TypeVar
 
+from . import package_site as _package_site
 from . import runtime_reader as _runtime_reader
 
 # `absent` is the supported metadata-only install, and only one failure is it:
@@ -155,8 +156,6 @@ def classify_backend_failure(error: BaseException) -> dict[str, Any]:
         status = PACKAGE_BACKEND_INCOMPATIBLE
     else:
         status = PACKAGE_BACKEND_BROKEN
-    from .package_site import package_site_state
-
     return {
         "status": status,
         "failed_import": failed,
@@ -166,14 +165,12 @@ def classify_backend_failure(error: BaseException) -> dict[str, Any]:
         "bundle_version": _bundle_version(),
         "install_route": PACKAGE_BACKEND_ROUTE,
         "off_path_install": _off_path_install() if status == PACKAGE_BACKEND_ABSENT else "",
-        "package_site": package_site_state(),
+        "package_site": _package_site.package_site_state(),
     }
 
 
 def available_backend() -> dict[str, Any]:
     """The `package_backend` block for a backend import that succeeded."""
-    from .package_site import package_site_state
-
     package_version = _distribution_version()
     return {
         "status": PACKAGE_BACKEND_AVAILABLE,
@@ -184,7 +181,7 @@ def available_backend() -> dict[str, Any]:
         "bundle_version": _bundle_version(),
         "install_route": PACKAGE_BACKEND_ROUTE,
         "off_path_install": "",
-        "package_site": package_site_state(),
+        "package_site": _package_site.package_site_state(),
     }
 
 
@@ -201,9 +198,7 @@ def load_backend(importer: Callable[[], _T]) -> tuple[_T | None, dict[str, Any] 
     #2166): on a Hermes install its package manager prepares, that is the only
     way the package can be imported at all.
     """
-    from .package_site import ensure_recorded_package_site
-
-    ensure_recorded_package_site()
+    _package_site.ensure_recorded_package_site()
     try:
         return importer(), None
     except Exception as error:
