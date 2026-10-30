@@ -1105,8 +1105,9 @@ run and approval decision stays Hermes'; the screen is OMH's.
   (`⎿  [Image #1]`). A `!` line or a command that sends no prompt gives its
   tokens back to the composer. Enter right after a paste or a drop waits for
   Hermes to answer it, under `waiting for the image…`, and the prompt goes
-  with that image (a one-line text paste joins it the same way); Esc or
-  Ctrl+C meanwhile gives the prompt back. Typing `[Image #1]`
+  with that image (a one-line paste shaped like a path joins it the same
+  way; any other text paste is typed at once, in order with the keys around
+  it); Esc or Ctrl+C meanwhile gives the prompt back. Typing `[Image #1]`
   yourself attaches nothing, and a prompt recalled from history is plain
   text. Dropping a file
   that is not an image types Hermes' reference to it instead.
