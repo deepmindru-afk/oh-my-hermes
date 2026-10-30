@@ -6,6 +6,11 @@ All notable changes will be documented here.
 
 ![Sprite Forge patch notes](https://raw.githubusercontent.com/rlaope/oh-my-hermes/main/assets/omh-sprite-forge-patch-notes.png)
 
+- **`OMH` in the info line's badge is a pale silver blue.** It was the
+  faint grey of the brackets around it; it now reads in `#C3D2E3` beside the
+  launch look's `Native`, moved toward black on a light background as far as
+  body-text contrast takes.
+
 - **A coding turn ends with one consistency check.** When a turn in the
   coding posture edited source code, OMH continues it once at its first stop.
   It asks the model to look for other copies or call sites of the logic it
