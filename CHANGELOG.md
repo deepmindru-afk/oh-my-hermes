@@ -6,6 +6,11 @@ All notable changes will be documented here.
 
 ![Sprite Forge patch notes](https://raw.githubusercontent.com/rlaope/oh-my-hermes/main/assets/omh-sprite-forge-patch-notes.png)
 
+- **The default look, spectrum, keeps its background colour and draws no
+  picture.** Its pixel aura is gone: the wallpaper still sets spectrum's
+  ground, and the other seven looks keep their scenes. An idle screen on
+  spectrum no longer wakes four times a second to paint nothing.
+
 - **The living wallpaper is pixel art, in the brand's pixel-aura style.**
   The scenes drew their motifs in characters (`%t;:`, rings of `O`), which
   read as broken text. Every scene is now drawn in half blocks, two square
@@ -28,6 +33,16 @@ All notable changes will be documented here.
   against the ground; colours keep their hue under that cap (mixed from a
   dark shade rather than into the ground) and a motif's shades are spread
   within it instead of collapsing onto it.
+
+- **`omh coding run --owner codex` finishes when an agent shell starts it
+  (#2402, reported by @vince2930).** Every unit inherited the dispatcher's
+  stdin. An agent shell such as Hermes' terminal tool keeps an open pipe on
+  that stdin and never closes it, and `codex exec "<prompt>"` reads a piped
+  stdin to EOF even with the prompt in argv, so the unit waited until its
+  deadline and failed as `timeout` (exit 124) whatever `--timeout` said. A
+  unit, a declared verification command and the dispatcher's git calls now
+  get the null device as stdin; the workspace preflight's git blob, the one
+  call that passes input, still goes through its own pipe.
 
 - **A game now passes visual QA only when it boots, answers input and keeps
   running, and a scene is looked at after every change that affects what

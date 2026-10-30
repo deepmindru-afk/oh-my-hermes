@@ -877,8 +877,9 @@ run and approval decision stays Hermes'; the screen is OMH's.
   brand's pixel-aura style: half blocks, two square pixels to a cell (`▀`
   over a background, `▄`, and a space on a background where both pixels
   match; nothing else is drawn), solid square tiles that scatter out to
-  single ones, and four-point `+` sparkles that grow and fade. spectrum is
-  the pixel aura itself; moonlit is deep navy with a crescent moon in a
+  single ones, and four-point `+` sparkles that grow and fade. spectrum,
+  the default look, keeps only its background colour and draws no scene,
+  so an idle screen on it writes nothing; moonlit is deep navy with a crescent moon in a
   pixel halo, soft tile clouds and sparkle stars; sakura a dusky plum with
   blossom clusters and falling petals; aurora deep teal with ribbons of
   scattered tiles; ember a dark warm brown with a flame flickering in a

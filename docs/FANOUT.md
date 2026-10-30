@@ -308,9 +308,12 @@ Rules, all applied at freeze time:
   lanes through the real engine and holds the scheduler invariants.
 - **Units are process groups; interrupts are honest.** The default runner
   spawns each unit as its own session/process group and records the leader
-  pid in the unit's inflight marker. A timeout kills the whole group (no
-  surviving grandchildren against the worktree). Ctrl-C stops admitting
-  work, terminates every live group, marks never-started units
+  pid in the unit's inflight marker. A unit's stdin is the null device, never
+  the dispatcher's: `codex exec` reads a piped stdin to EOF even with the
+  prompt in argv, so a unit started from an agent shell that holds an open
+  pipe would otherwise wait out its deadline (#2402). A timeout kills the
+  whole group (no surviving grandchildren against the worktree). Ctrl-C stops
+  admitting work, terminates every live group, marks never-started units
   `interrupted`, prints the summary with `"interrupted": true`, and exits
   130. SIGTERM writes the same summary FILE but prints nothing: the
   original termination is re-raised after the write so a supervisor
