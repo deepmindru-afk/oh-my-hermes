@@ -1146,6 +1146,7 @@ print(json.dumps(observed, ensure_ascii=False))
                 plugin["registered_tools"],
                 [
                     "lsp_definition",
+                    "lsp_diagnostics",
                     "lsp_references",
                     "lsp_rename",
                     "omh_agent_board",

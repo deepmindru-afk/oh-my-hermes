@@ -7,6 +7,7 @@ from typing import Final, TypeGuard
 from .. import runtime_paths
 from ..catch_log import PLAN_CONTINUED, record_catch
 from ..host_observation import observe_plugin_hook_call
+from ..impact_check import round_end_note
 from ..todo_reconciliation import plan_continuation_parts
 from .nudge_budget import plan_nudge_allowed
 
@@ -57,8 +58,15 @@ def pre_verify(
         }
     )
     _ = observe_plugin_hook_call("pre_verify", observation)
-    if not valid_coding or attempt_value is None or not paths:
+    if attempt_value is None or not paths:
         return None
+    # The opt-in cross-file impact check (`impact_check`) answers once per
+    # turn, at the first stop, and does not depend on the coding posture: it
+    # has a baseline only when this turn edited a Python file, which is the
+    # posture's own evidence. Empty unless an importer gained an error.
+    impact_message = round_end_note(session_id, changed_paths) if attempt_value == 0 else ""
+    if not valid_coding:
+        return {"action": "continue", "message": impact_message} if impact_message else None
     plan_message, stamp, open_items = _session_plan_reading(_kwargs, session_id)
     # The host offers `agent.max_verify_nudges` nudges per turn and enforces
     # that bound itself, so the plan line may spend more than the first -- but
@@ -72,11 +80,12 @@ def pre_verify(
     # edit just earned, and the edits are the same on a later attempt of the
     # same turn, so repeating it would restate a request the turn already has.
     surface_message = _served_surface_message(paths) if attempt_value == 0 else ""
-    # Two obligations, one directive. The served-surface gate asks for the
-    # check the edit just earned; the plan directive says the run is not
-    # finished. Both can be true of the same turn, and dropping either one
-    # because the other fired would lose exactly the case each was written for.
-    messages = [text for text in (surface_message, plan_message) if text]
+    # Up to three obligations, one directive. The served-surface gate asks for
+    # the check the edit just earned; the plan directive says the run is not
+    # finished; the impact note names callers the edit broke. Each can be true
+    # of the same turn, and dropping one because another fired would lose
+    # exactly the case it was written for.
+    messages = [text for text in (surface_message, plan_message, impact_message) if text]
     if not messages:
         return None
     # Recorded for the person once per turn. `attempt` is the only turn

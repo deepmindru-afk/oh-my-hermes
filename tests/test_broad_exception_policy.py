@@ -706,6 +706,39 @@ CLASSIFIED_SITES: tuple[ClassifiedSite, ...] = (
         "turns a failed write into success or lets a stale copy reach disk (`stale_file`).",
     ),
     ClassifiedSite(
+        "src/plugin_bundle/omh/lsp_bridge.py",
+        "diagnostics",
+        INTENTIONAL,
+        "Any failure driving Hermes' private LSP loop or client while collecting diagnostics becomes BridgeError "
+        "`server_unavailable` naming the exception class. `lsp_diagnostics` answers it as `ok: false` with that "
+        "code and the impact check stays silent; neither reads it as a clean file, which only a fresh server "
+        "verdict can produce (a file without one maps to None, `no_verdict`).",
+    ),
+    ClassifiedSite(
+        "src/plugin_bundle/omh/impact_check.py",
+        "enabled",
+        INTENTIONAL,
+        "The opt-in setting read fails closed: an unreadable profile config leaves the impact check off, so a "
+        "host reader failure can only remove the note, never add one.",
+    ),
+    ClassifiedSite(
+        "src/plugin_bundle/omh/impact_check.py",
+        "baseline_before_edit",
+        INTENTIONAL,
+        "Runs in pre_tool_call before an edit and must never fail or alter that edit. An unexpected failure is "
+        "logged as a warning naming the exception class (`impact_check baseline ... failed=`) and records no "
+        "baseline, so the round-end check has nothing to compare and says nothing; it is never recorded as a "
+        "clean baseline.",
+    ),
+    ClassifiedSite(
+        "src/plugin_bundle/omh/impact_check.py",
+        "round_end_note",
+        INTENTIONAL,
+        "An unexpected failure re-checking the importers is logged as a warning naming the exception class "
+        "(`impact_check round_end ... failed=`) and yields no note; the turn ends as it would with the check "
+        "off. A note is only ever built from fresh server diagnostics, so a failure never claims callers broke.",
+    ),
+    ClassifiedSite(
         "src/plugin_bundle/omh/lsp_nav.py",
         "_write_atomic",
         INTENTIONAL,
@@ -742,6 +775,13 @@ CLASSIFIED_SITES: tuple[ClassifiedSite, ...] = (
         "Handlers must not raise into the host: an unexpected failure is `ok: false`, error "
         "`unexpected_error` with the exception class, never `applied: true`; every new text is planned and "
         "checked against the synced bytes before the first write.",
+    ),
+    ClassifiedSite(
+        "src/plugin_bundle/omh/tools/lsp_nav_tool.py",
+        "lsp_diagnostics_handler",
+        INTENTIONAL,
+        "Handlers must not raise into the host: an unexpected failure is `ok: false`, error "
+        "`unexpected_error` with the exception class, never a diagnostics list or a file reported checked.",
     ),
 )
 
@@ -802,8 +842,14 @@ CLASSIFIED_SITES: tuple[ClassifiedSite, ...] = (
 # 82 -> 83 / 74 -> 75: `tui/panels.HudPoller._run`, the HUD poll loop (a read
 # that raises is a visible notice with the last processes kept, never a dead
 # thread and never the processes' end; #2388 review).
-EXPECTED_HANDLER_COUNT = 83
-EXPECTED_ANCHOR_COUNT = 75
+# 83 -> 88 / 75 -> 80: the opt-in impact check and `lsp_diagnostics`
+# (`impact_check.enabled`, `baseline_before_edit`, `round_end_note`,
+# `lsp_bridge.diagnostics`, `lsp_nav_tool.lsp_diagnostics_handler`): a setting
+# read that fails closed, two hook bodies that log a named warning and say
+# nothing, a bridge failure named `server_unavailable`, and a handler that
+# answers `unexpected_error`.
+EXPECTED_HANDLER_COUNT = 88
+EXPECTED_ANCHOR_COUNT = 80
 
 
 class DerivedSite(NamedTuple):

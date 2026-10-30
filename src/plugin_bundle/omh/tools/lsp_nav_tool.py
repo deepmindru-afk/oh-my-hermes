@@ -1,4 +1,4 @@
-"""`lsp_definition` / `lsp_references` / `lsp_rename`: opt-in semantic navigation tools.
+"""`lsp_definition` / `lsp_references` / `lsp_rename` / `lsp_diagnostics`: opt-in language-server tools.
 
 They drive Hermes' own LSP service (pyright for Python) through `omh.lsp_bridge`.
 Registered under the dedicated toolset `omh-lsp` and hidden behind a `check_fn`
@@ -9,8 +9,11 @@ Position, symbol and edit rules live in the pure module `omh.lsp_nav`.
 
 from __future__ import annotations
 
+import fnmatch
 import json
 import os
+import re
+from pathlib import PurePath
 from typing import Any
 
 from .. import lsp_bridge, lsp_nav, runtime_paths
@@ -60,6 +63,20 @@ OMH_LSP_RENAME_SCHEMA = {
             **_COMMON,
             "new_name": {"type": "string", "description": "New identifier"},
             "apply": {"type": "boolean", "default": True, "description": "false = preview only"},
+        },
+    },
+}
+
+OMH_LSP_DIAGNOSTICS_SCHEMA = {
+    "name": "lsp_diagnostics",
+    "description": (
+        "Language-server errors and warnings for a file or a glob (e.g. src/**/*.py), re-read from "
+        "disk now. Use it to re-check the callers of code you changed."
+    ),
+    "parameters": {
+        "type": "object", "additionalProperties": False, "required": ["path"],
+        "properties": {
+            "path": {"type": "string", "description": "File path or glob, relative to the workspace root"},
         },
     },
 }
@@ -388,7 +405,134 @@ def lsp_rename_handler(args: dict[str, Any], **kwargs: object) -> str:
         return _fail("unexpected_error", type(exc).__name__)
 
 
+_DIAG_FILE_CAP = 30
+_DIAG_ROW_CAP = 60
+_SEVERITY = {1: "error", 2: "warning", 3: "info", 4: "hint"}
+_GLOB_CHARS = ("*", "?", "[")
+_GLOB_SKIP = frozenset({"venv", "node_modules", "__pycache__"})  # plus every dot-directory
+
+
+def workspace_relative(path: str, root: str) -> str:
+    """``path`` relative to ``root`` with `/` separators on every platform, for text a model reads
+    and for glob matching; file I/O keeps the OS path."""
+    return PurePath(os.path.relpath(path, root)).as_posix()
+
+
+def _glob_regex(pattern: str) -> "re.Pattern[str]":
+    """glob semantics over a `/`-separated relative path: `*` and `?` stay inside one directory,
+    `**/` spans any number of directories (including none), `[...]` is a character class."""
+    out, index = [], 0
+    while index < len(pattern):
+        if pattern.startswith("**/", index):
+            out.append("(?:.*/)?")
+            index += 3
+        elif pattern.startswith("**", index):
+            out.append(".*")
+            index += 2
+        elif pattern[index] == "*":
+            out.append("[^/]*")
+            index += 1
+        elif pattern[index] == "?":
+            out.append("[^/]")
+            index += 1
+        elif pattern[index] == "[" and "]" in pattern[index + 1:]:
+            end = pattern.index("]", index + 1)
+            out.append(fnmatch.translate(pattern[index:end + 1])[4:-3])
+            index = end + 1
+        else:
+            out.append(re.escape(pattern[index]))
+            index += 1
+    return re.compile("".join(out))
+
+
+def _diagnostic_files(requested: str, root: str) -> tuple[list[str], int]:
+    """The files ``requested`` names (one path, or a glob under ``root``) and how many a glob left out."""
+    if not any(char in requested for char in _GLOB_CHARS):
+        try:
+            path = lsp_nav.resolve_path(requested, root)
+        except LspNavError as exc:
+            raise _Fail("scope_mismatch", str(exc)) from None
+        if not os.path.isfile(path):
+            raise _Fail("not_found", f"{requested} does not exist; paths are relative to the workspace root {root}",
+                        similar_files=lsp_nav.similar_files(root, requested))
+        return [path], 0
+    # Walked with dot-directories, venvs and node_modules pruned before descending, never globbed:
+    # a recursive glob would walk them first.
+    matcher = _glob_regex(requested.replace(os.sep, "/").removeprefix("./"))
+    matches = []
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = sorted(d for d in dirnames if not d.startswith(".") and d not in _GLOB_SKIP)
+        for filename in sorted(filenames):
+            path = os.path.realpath(os.path.join(dirpath, filename))
+            relative = workspace_relative(path, root)
+            if lsp_nav.inside(path, root) and matcher.fullmatch(relative):
+                matches.append(path)
+    if not matches:
+        raise _Fail("not_found", f"no file under {root} matches {requested!r}")
+    return matches[:_DIAG_FILE_CAP], max(0, len(matches) - _DIAG_FILE_CAP)
+
+
+def _diag_line(item: dict[str, Any]) -> int:
+    value = ((item.get("range") or {}).get("start") or {}).get("line", 0)
+    return value + 1 if isinstance(value, int) and not isinstance(value, bool) else 0
+
+
+def lsp_diagnostics_handler(args: dict[str, Any], **kwargs: object) -> str:
+    try:
+        root = _root_for(kwargs)
+        requested = args.get("path")
+        if not isinstance(requested, str) or not requested.strip():
+            return _fail("invalid_argument", "path must be a non-empty file path or glob")
+        files, left_out = _diagnostic_files(requested.strip(), root)
+        _ready(files[0])
+        try:
+            found = lsp_bridge.diagnostics(files)
+        except BridgeError as exc:
+            return _fail(exc.code, exc.hint)
+        rows: list[dict[str, Any]] = []
+        summary: list[dict[str, Any]] = []
+        totals = {"error": 0, "warning": 0}
+        for path in files:
+            relative = workspace_relative(path, root)
+            if path not in found:
+                summary.append({"path": relative, "status": "unsupported"})
+                continue
+            items = found[path]
+            if items is None:
+                summary.append({"path": relative, "status": "no_verdict"})
+                continue
+            counts = {"error": 0, "warning": 0}
+            for item in sorted((d for d in items if isinstance(d, dict)), key=_diag_line):
+                severity = _SEVERITY.get(item.get("severity") or 1, "error")
+                if severity in counts:
+                    counts[severity] += 1
+                rows.append({
+                    "path": relative,
+                    "line": _diag_line(item),
+                    "severity": severity,
+                    "message": (str(item.get("message") or "").strip().splitlines() or [""])[0][:300],
+                    **({"code": str(item["code"])} if item.get("code") is not None else {}),
+                })
+            totals["error"] += counts["error"]
+            totals["warning"] += counts["warning"]
+            summary.append({"path": relative, "status": "checked", **counts})
+        payload: dict[str, Any] = {
+            "ok": True, "errors": totals["error"], "warnings": totals["warning"], "files": summary,
+            "diagnostics": rows[:_DIAG_ROW_CAP],
+        }
+        if len(rows) > _DIAG_ROW_CAP:
+            payload["diagnostics_left_out"] = len(rows) - _DIAG_ROW_CAP
+        if left_out:
+            payload["files_left_out"] = left_out
+        return json.dumps(payload, ensure_ascii=False)
+    except _Fail as exc:
+        return _fail(exc.code, exc.hint, **exc.extra)
+    except Exception as exc:  # noqa: BLE001 - never raise to the host
+        return _fail("unexpected_error", type(exc).__name__)
+
+
 __all__ = [
+    "OMH_LSP_DIAGNOSTICS_SCHEMA",
     "OMH_LSP_DEFINITION_SCHEMA",
     "OMH_LSP_REFERENCES_SCHEMA",
     "OMH_LSP_RENAME_SCHEMA",
@@ -396,6 +540,7 @@ __all__ = [
     "_lsp_tools_enabled",
     "_workspace_root",
     "lsp_definition_handler",
+    "lsp_diagnostics_handler",
     "lsp_references_handler",
     "lsp_rename_handler",
 ]

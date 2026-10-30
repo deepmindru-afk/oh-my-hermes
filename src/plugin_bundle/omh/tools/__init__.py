@@ -8,6 +8,7 @@ from typing import Any
 # `register()` body is a test, not a convention.
 BUILTIN_TOOL_NAMES: tuple[str, ...] = (
     "lsp_definition",
+    "lsp_diagnostics",
     "lsp_references",
     "lsp_rename",
     "omh_agent_board",
@@ -56,7 +57,12 @@ def builtin_tool_schemas() -> tuple[dict[str, Any], ...]:
     from .hud_tool import OMH_HUD_SCHEMA
     from .jev_ask_tool import OMH_JEV_ASK_SCHEMA
     from .loop_tool import OMH_LOOP_SCHEMA
-    from .lsp_nav_tool import OMH_LSP_DEFINITION_SCHEMA, OMH_LSP_REFERENCES_SCHEMA, OMH_LSP_RENAME_SCHEMA
+    from .lsp_nav_tool import (
+        OMH_LSP_DEFINITION_SCHEMA,
+        OMH_LSP_DIAGNOSTICS_SCHEMA,
+        OMH_LSP_REFERENCES_SCHEMA,
+        OMH_LSP_RENAME_SCHEMA,
+    )
     from .memory_tool import OMH_MEMORY_SCHEMA
     from .probe_tool import OMH_PROBE_SCHEMA
     from .recommend_tool import OMH_RECOMMEND_SCHEMA
@@ -84,6 +90,7 @@ def builtin_tool_schemas() -> tuple[dict[str, Any], ...]:
         OMH_JEV_ASK_SCHEMA,
         OMH_LOOP_SCHEMA,
         OMH_LSP_DEFINITION_SCHEMA,
+        OMH_LSP_DIAGNOSTICS_SCHEMA,
         OMH_LSP_REFERENCES_SCHEMA,
         OMH_LSP_RENAME_SCHEMA,
         OMH_MEMORY_SCHEMA,
