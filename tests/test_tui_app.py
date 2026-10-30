@@ -1338,28 +1338,114 @@ class InfoLineRightTests(unittest.TestCase):
     def test_the_right_side_is_model_context_and_effort_with_no_brand_and_no_state(self) -> None:
         app = self.app()
         row = without_badge(line_text(app._info_line(100)))  # the badge is the left side's, at its end
-        self.assertTrue(row.endswith(f"{self.MODEL} · ctx 5% · effort high"), row)
+        self.assertTrue(row.endswith(f"{self.MODEL} · ctx ━─────────── 5% · effort high"), row)
         self.assertEqual(line_width(app._info_line(100)), 100)  # the right side ends on the last cell
         for gone in ("⚚", "OMH", "idle", "running", "│"):
             self.assertNotIn(gone, row)
 
     def test_the_model_shortens_first_then_goes_then_the_effort_then_the_context(self) -> None:
         # The inset, the badge and the 3-cell gap take 19 cells; the right side takes the longest form that fits
-        # beside, and goes whole before the badge shortens.
+        # beside, and goes whole before the badge shortens. No token counts here: the gauge is the longest context.
         app = self.app()
         expected = {
-            80: f"{self.MODEL} · ctx 5% · effort high",
-            79: "deepseek-v4.1-flash-ultrafast · ctx 5% · effort high",
-            71: "deepseek-v4.1-flash-ultrafast · ctx 5% · effort high",
-            70: "v4.1-flash-ultrafast · ctx 5% · effort high",
-            62: "v4.1-flash-ultrafast · ctx 5% · effort high",
-            61: "ctx 5% · effort high",
-            39: "ctx 5% · effort high",
-            38: "ctx 5%",
+            93: f"{self.MODEL} · ctx ━─────────── 5% · effort high",
+            92: "deepseek-v4.1-flash-ultrafast · ctx ━─────────── 5% · effort high",
+            84: "deepseek-v4.1-flash-ultrafast · ctx ━─────────── 5% · effort high",
+            83: "v4.1-flash-ultrafast · ctx ━─────────── 5% · effort high",
+            75: "v4.1-flash-ultrafast · ctx ━─────────── 5% · effort high",
+            74: "ctx ━─────────── 5% · effort high",
+            52: "ctx ━─────────── 5% · effort high",
+            51: "ctx ━─────────── 5%",
+            38: "ctx ━─────────── 5%",
+            37: "ctx 5%",
             25: "ctx 5%",
             24: "",
         }
         self.assertEqual({width: self.right(app, width) for width in expected}, expected)
+
+    def test_the_context_is_a_gauge_its_percent_and_the_tokens_used_of_the_most(self) -> None:
+        # Owner, 2026-10-30: twelve cells, the filled ones in the context's colour, the rest dim; the percent in the
+        # context's colour; used/max muted.
+        app = self.app()
+        theme = app.theme
+        for used, percent, gauge, style in ((74_000, 37, "━━━━────────", theme.muted),
+                                            (144_000, 72, "━━━━━━━━━───", theme.muted),
+                                            (182_000, 91, "━━━━━━━━━━━─", theme.warn)):
+            with self.subTest(percent=percent):
+                app._take_usage({"context_used": used, "context_max": 200_000, "context_percent": percent})
+                row = without_badge(line_text(app._info_line(120)))
+                counts = f"{used // 1000}k/200k"
+                self.assertTrue(row.endswith(f"{self.MODEL} · ctx {gauge} {percent}% {counts} · effort high"), row)
+                filled, empty = gauge.rstrip("─"), "─" * gauge.count("─")
+                self.assertEqual(
+                    [(span.text, span.style) for span in app._context_forms()[0]],
+                    [("ctx ", theme.muted), (filled, style), (empty, theme.dim), (f" {percent}%", style),
+                     (f" {counts}", theme.muted)],
+                )
+
+    def test_the_token_counts_are_compact(self) -> None:
+        app = self.app()
+        for used, maximum, percent, said in ((13_541, 1_000_000, 1, "ctx ──────────── 1% 13.5k/1M"),
+                                             (950, 200_000, 0, "ctx ──────────── 0% 950/200k"),
+                                             (1_200_000, 2_000_000, 60, "ctx ━━━━━━━───── 60% 1.2M/2M"),
+                                             (400_000, 400_000, 100, "ctx ━━━━━━━━━━━━ 100% 400k/400k")):
+            with self.subTest(used=used):
+                app._take_usage({"context_used": used, "context_max": maximum, "context_percent": percent})
+                self.assertEqual(line_text(app._context_forms()[0]), said)
+
+    def test_a_narrow_line_drops_the_token_counts_then_the_gauge_then_the_context(self) -> None:
+        app = self.app()
+        app._take_usage({"context_used": 74_000, "context_max": 200_000, "context_percent": 37})
+        full, gauge = "ctx ━━━━──────── 37% 74k/200k", "ctx ━━━━──────── 37%"
+        expected = {
+            102: f"deepseek-v4.1-flash-ultrafast · {full} · effort high",
+            93: f"v4.1-flash-ultrafast · {full} · effort high",
+            84: f"{full} · effort high",
+            62: f"{full} · effort high",
+            61: full,
+            48: full,
+            47: gauge,
+            39: gauge,
+            38: "ctx 37%",
+            26: "ctx 37%",
+            25: "",
+        }
+        self.assertEqual({width: self.right(app, width) for width in expected}, expected)
+
+    def test_under_no_color_the_gauge_still_reads(self) -> None:
+        app = App(ScriptedTerminal(rows=24, cols=120), None, {"NO_COLOR": "1"}, poller=FakePoller())  # type: ignore[arg-type]
+        app.model, app.effort = self.MODEL, "high"
+        app._take_usage({"context_used": 182_000, "context_max": 200_000, "context_percent": 91})
+        spans = app._context_forms()[0]
+        self.assertEqual(line_text(spans), "ctx ━━━━━━━━━━━─ 91% 182k/200k")  # the glyphs carry the part used
+        from omh.tui.style import NO_COLOR
+
+        self.assertTrue(all(span.style.depth == NO_COLOR for span in spans))  # painted with no colour at all
+
+    def test_a_shared_gateway_usage_frame_fills_the_gauge(self) -> None:
+        # `gateway/session_usage.py::usage_frame` (Hermes bf0203a794): `{"usage": tui_usage(stats), **stats}`, the
+        # status-bar view nested and the session counters beside it; `message.complete` carries the nested view.
+        from omh.tui.gateway import Event
+
+        stats = {"input_tokens": 70_000, "output_tokens": 900, "prompt_tokens": 74_000, "api_calls": 3,
+                  "last_prompt_tokens": 74_000, "context_tokens": 74_000, "context_length": 200_000,
+                  "context_source": "provider_usage", "compression_count": 0, "model": "claude-opus-5-5"}
+        nested = {"model": "claude-opus-5-5", "input": 70_000, "output": 900, "prompt": 74_000, "calls": 3,
+                   "context_used": 74_000, "context_max": 200_000, "context_percent": 37,
+                   "context_source": "provider_usage", "context_estimated": False, "compressions": 0}
+        app = self.app(cols=120)
+        app.sid = "s"
+        app._on_event(Event("session.usage", "s", {"usage": nested, **stats}))
+        self.assertTrue(line_text(app._info_line(120)).endswith("ctx ━━━━──────── 37% 74k/200k · effort high"))
+        app._on_event(Event("message.complete", "s", {"text": "done", "status": "complete",
+                                                      "usage": {**nested, "context_used": 150_000,
+                                                                "context_percent": 75}}))
+        self.assertTrue(line_text(app._info_line(120)).endswith("ctx ━━━━━━━━━─── 75% 150k/200k · effort high"))
+        # After a compaction Hermes leaves the context figures out of the nested view until a reply re-measures it
+        # (`last_prompt_tokens` -1, read as 0): the gauge holds what it last showed.
+        app._on_event(Event("session.usage", "s", {"usage": {"output": 950, "calls": 4},
+                                                    **stats, "last_prompt_tokens": 0}))
+        self.assertEqual((app.context_percent, app.context_used, app.context_max), (75, 150_000, 200_000))
 
     def test_a_model_has_up_to_three_names_longest_first(self) -> None:
         from omh.tui.modes import model_forms
@@ -1391,7 +1477,7 @@ class InfoLineRightTests(unittest.TestCase):
         for effort, said in (("", "ctrl+t effort"), ("default", "effort default"), ("xhigh", "effort xhigh")):
             with self.subTest(effort=effort):
                 app.effort = effort
-                self.assertTrue(line_text(app._info_line(100)).endswith(f"ctx 5% · {said}"))
+                self.assertTrue(line_text(app._info_line(100)).endswith(f"ctx ━─────────── 5% · {said}"))
 
     def test_the_context_turns_warn_then_error_as_it_fills(self) -> None:
         app = self.app()
@@ -1401,7 +1487,7 @@ class InfoLineRightTests(unittest.TestCase):
             with self.subTest(percent=percent):
                 app._take_usage({"context_used": 1, "context_max": 2, "context_percent": percent}
                                 if percent is not None else {"context_used": 1, "context_max": 1_000_000})
-                span = next(span for span in app._info_line(100) if span.text.startswith("ctx"))
+                span = next(span for span in app._info_line(100) if span.text.endswith("%"))
                 self.assertEqual(span.style, style)
 
     def test_a_usage_block_without_context_figures_leaves_the_shown_context(self) -> None:
@@ -1411,7 +1497,7 @@ class InfoLineRightTests(unittest.TestCase):
         for usage in ({"output": 12}, {"context_used": 1, "context_max": 0}, {"context_max": 10}, None):
             with self.subTest(usage=usage):
                 app._take_usage(usage)
-                self.assertEqual(app.context_percent, 25.0)
+                self.assertEqual((app.context_percent, app.context_used, app.context_max), (25.0, 50_000, 200_000))
 
     def test_the_huds_chips_stand_first_on_the_right_and_go_last(self) -> None:
         from test_tui_panels import hud_payload
@@ -1424,11 +1510,11 @@ class InfoLineRightTests(unittest.TestCase):
         payload["activity"].update(live=True, post_tool_call_observed=True, open_call_count=2, oldest_open_elapsed_seconds=12)
         app.hud = HudSnapshot(app.stored_id, payload, 0.0)
         idle = line_text(app._info_line(160))
-        self.assertTrue(idle.endswith(f"repeat x4 cycle-of-2 approval · {self.MODEL} · ctx 5% · effort high"), idle)
+        self.assertTrue(idle.endswith(f"repeat x4 cycle-of-2 approval · {self.MODEL} · ctx ━─────────── 5% · effort high"), idle)
         self.assertNotIn("tool", idle)  # the calls in flight only while a turn runs
         app.turn_pending = True
         running = line_text(app._info_line(160))
-        self.assertTrue(running.endswith(f"repeat x4 cycle-of-2 approval · 2 tools · 12s · {self.MODEL} · ctx 5% · effort high"),
+        self.assertTrue(running.endswith(f"repeat x4 cycle-of-2 approval · 2 tools · 12s · {self.MODEL} · ctx ━─────────── 5% · effort high"),
                         running)
         app.turn_pending = False
         self.assertEqual(self.right(app, 55), "repeat x4 cycle-of-2 approval")

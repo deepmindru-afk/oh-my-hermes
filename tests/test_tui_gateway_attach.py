@@ -280,6 +280,17 @@ class SessionTranslationTests(AdapterCase):
         self.assertEqual(adapter.from_owner(delta), [(TO_CLIENT, delta)])  # only the lifecycle events are fenced
         self.assertEqual(adapter.sessions[SID].generation, 4)  # an older event never moves it back
 
+    def test_a_usage_frame_is_never_fenced(self) -> None:
+        # The info line's context gauge reads `session.usage` (`gateway/session_usage.py::usage_frame`: the nested
+        # status-bar view beside the session counters). It is no lifecycle event, so even one stamped with an older
+        # generation reaches the TUI whole.
+        adapter = self.adapter()
+        self.opened(adapter, generation=4, authority_epoch=2)
+        nested = {"output": 900, "calls": 3, "context_used": 74_000, "context_max": 200_000, "context_percent": 37}
+        usage = _event("session.usage", {"usage": nested, "last_prompt_tokens": 74_000, "context_length": 200_000},
+                       execution_generation=3, authority_epoch=2)
+        self.assertEqual(adapter.from_owner(usage), [(TO_CLIENT, usage)])
+
     def test_a_prompt_gets_an_input_id(self) -> None:
         adapter = self.adapter()
         self.opened(adapter)

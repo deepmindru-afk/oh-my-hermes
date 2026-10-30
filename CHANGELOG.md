@@ -6,6 +6,16 @@ All notable changes will be documented here.
 
 ![Sprite Forge patch notes](https://raw.githubusercontent.com/rlaope/oh-my-hermes/main/assets/omh-sprite-forge-patch-notes.png)
 
+- **The info line shows the context as a gauge with its token counts.**
+  The bare `ctx 37%` under the composer is now
+  `ctx ━━━━──────── 37% 74k/200k`: twelve cells, the filled ones and the
+  percent in the context's colour (warning from 80 % full, error from
+  95 %), the rest dim, then the tokens the context holds of the most it
+  can, in `k` and `M`. On a narrow
+  line the token counts go first, then the gauge, leaving `ctx 37%`, before
+  the context goes. Under `NO_COLOR` the filled and the empty cells still
+  tell how full it is.
+
 - **The working glow is smaller.** The light that goes round the screen
   while a turn runs read too big and hid most of the top row's text as it
   passed. Its trail is half as long (a seventh of the way round, from a
