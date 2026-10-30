@@ -34,6 +34,17 @@ All notable changes will be documented here.
   dark shade rather than into the ground) and a motif's shades are spread
   within it instead of collapsing onto it.
 
+- **Korean typed from Termius keeps its spaces where they were typed.**
+  Termius sends every syllable a Korean (or other) input method commits as
+  its own bracketed paste, and on a slow link the space typed after a
+  syllable arrives in the same read. The OMH TUI asked Hermes whether each
+  one-line paste was a dropped file and typed it only once Hermes answered,
+  while the space went in at once, so `안녕 하세요` came out as `안 녕 하세요`
+  and the last syllable of each word slid past its space. Only a paste
+  shaped like a path (`/`, `~`, `./`, `../`, a drive, `file://`, the same
+  first test Hermes' drop detection makes) still waits for that answer; any
+  other text paste is typed at once, in order with the keys around it.
+
 - **`omh coding run --owner codex` finishes when an agent shell starts it
   (#2402, reported by @vince2930).** Every unit inherited the dispatcher's
   stdin. An agent shell such as Hermes' terminal tool keeps an open pipe on

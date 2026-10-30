@@ -2357,22 +2357,43 @@ class AttachmentTests(AppTestCase):
             Step(bracketed("/fixture/project/drop.png"), when=terminal.idle, label="idle"),
             Step(bracketed("/fixture/project/notes.txt"), when=terminal.shows("❯ [Image #1]"), capture="image",
                  label="the image token"),
-            Step(bracketed(" and hello"), when=terminal.shows(f"{file_ref}"), label="the file reference"),
-            Step(bracketed("line one\nline two"), when=terminal.shows("and hello"), capture="typed",
-                 label="the unmatched paste"),
+            Step(bracketed(" and"), when=terminal.shows(f"{file_ref}"), label="the file reference"),
+            Step(bracketed(" ~/x"), when=terminal.shows("and"), label="the text paste"),
+            Step(bracketed("line one\nline two"), when=terminal.shows("and ~/x"), capture="typed",
+                 label="the unmatched path"),
             Step(b"\x03\x04", when=terminal.shows("line two"), label="the multi-line paste"),
         )
         self.run_main(run)
         self.assert_clean_run(run)
         sent = [frame["params"] for frame in run.calls("input.detect_drop")]
+        # A paste no path could start (" and") is typed at once and never asked about; a path Hermes finds no file
+        # for (" ~/x") is typed as pasted.
         self.assertEqual(sent, [
             {"session_id": LIVE_ID, "text": "/fixture/project/drop.png"},
             {"session_id": LIVE_ID, "text": "/fixture/project/notes.txt"},
-            {"session_id": LIVE_ID, "text": " and hello"},
+            {"session_id": LIVE_ID, "text": " ~/x"},
         ])
         # An image drop is queued by the gateway: a token, never the path typed.
         self.assertEqual(composer_row(terminal.captures["image"]), "❯ [Image #1]")
-        self.assertEqual(composer_row(terminal.captures["typed"]), f"❯ [Image #1] {file_ref} and hello")
+        self.assertEqual(composer_row(terminal.captures["typed"]), f"❯ [Image #1] {file_ref} and ~/x")
+
+    def test_ime_syllables_pasted_one_by_one_keep_their_order_with_the_space_after_them(self) -> None:
+        # Termius sends each syllable a Korean input method commits as its own bracketed paste, and on a slow link
+        # the space typed after one comes in the same read. Bytes from the reporter's client (Termius 7.8.2).
+        run = self.prepare(Scenario("session", spans("session", "startup", "create"), answers=startup_answers()))
+        terminal = run.terminal
+        terminal.script(
+            Step(bracketed("안"), when=terminal.idle, label="idle"),
+            Step(bracketed("녕") + b" " + bracketed("하") + bracketed("세") + bracketed("요") + b" ",
+                 when=terminal.shows("❯ 안"), label="the first syllable"),
+            Step(bracketed("반"), when=terminal.shows("하세요"), label="the second word"),
+            Step(b"", when=terminal.shows("하세요 반"), capture="typed", label="the third word"),
+            Step(b"\x03\x04", when=terminal.shows("하세요 반"), label="the typed line"),
+        )
+        self.run_main(run)
+        self.assert_clean_run(run)
+        self.assertEqual(composer_row(terminal.captures["typed"]), "❯ 안녕 하세요 반")
+        self.assertEqual(run.calls("input.detect_drop"), [])
 
     def test_cmd_backspace_takes_the_text_and_the_image_and_nothing_stages_it_again(self) -> None:
         answers = (*startup_answers(), ("image.attach", {"result": SHOT}), DETACHED)

@@ -1397,6 +1397,20 @@ def read_image(path: str) -> bytes | None:
     return data if 0 < len(data) <= IMAGE_KEEP_BYTES else None
 
 
+def could_be_drop(text: str) -> bool:
+    """Whether Hermes' drop detection (`cli._detect_file_drop`) could take `text` for a dropped file: stripped,
+    optionally quoted, it starts with `/`, `~`, `./`, `../`, a drive (`C:\\` or `C:/`), or, unquoted, `file://`.
+    Anything else is typed text, which Hermes always answers is no drop."""
+    stripped = text.strip()
+    quoted = stripped[:1] in ("'", '"')
+    unquoted = stripped[1:] if quoted else stripped
+    return (
+        unquoted.startswith(("/", "~", "./", "../"))
+        or (not quoted and unquoted.startswith("file://"))
+        or (len(unquoted) >= 3 and unquoted[0].isalpha() and unquoted[1] == ":" and unquoted[2] in ("\\", "/"))
+    )
+
+
 def with_label(text: str, label: str) -> str:
     """`text` with an image's `label` after it, a space between them unless it ends in one."""
     return f"{text}{'' if not text or text[-1].isspace() else ' '}{label}"
@@ -3450,9 +3464,16 @@ class App(ModesMixin, AgentViewMixin):
             self.held_input.extend(self.decoder.feed(typed))
 
     def _attachment_input(self, event: Key | Paste) -> bool:
-        """Ctrl+V and a one-line paste (a drop); True when handled."""
+        """Ctrl+V and a one-line paste shaped like a path (a drop); True when handled.
+
+        Only a paste Hermes could take for a drop (`could_be_drop`) waits on
+        its answer. Any other paste is typed at once, in order with the keys
+        around it: Termius sends every syllable a Korean (or other) input
+        method commits as its own bracketed paste, and the space typed after
+        one must not land before it.
+        """
         if isinstance(event, Paste):
-            if "\n" in event.text or not event.text.strip() or not self.sid:
+            if "\n" in event.text or not could_be_drop(event.text) or not self.sid:
                 return False
             sid, text = self.sid, event.text
             self._intake(  # an image drop stages: as `/image` waits, so does this
