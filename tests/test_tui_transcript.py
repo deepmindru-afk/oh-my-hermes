@@ -27,6 +27,7 @@ from omh.tui.theme import DEFAULT_THEME as THEME
 from omh.tui.theme import with_launch_look
 from omh.tui.transcript import (
     STEER_QUEUED,
+    STEER_TAKEN,
     GUTTER,
     OUTPUT_PREVIEW_ROWS,
     AssistantBlock,
@@ -963,6 +964,8 @@ class SteeredReplyTests(unittest.TestCase):
         steer = self.transcript.add_steer("s1", agent=agent)
         self.transcript.steer_answered(steer, STEER_QUEUED)
         self.transcript.apply(ev("message.delta", text=last))
+        if not agent:  # unread by a tool, the App settles it as the turn ends, before the reply closes
+            self.transcript.steer_answered(steer, STEER_TAKEN)
         self.transcript.apply(ev("message.complete", text=final, status="complete"))
         self.transcript.add_turn_summary(1.0, None)
         return self.replies()

@@ -52,7 +52,7 @@ class MidTurnMessageTests(unittest.TestCase):
     def test_a_steer_runs_on_the_band(self) -> None:
         (row,) = block_rows(SteerBlock("look at the docs too"), 60, BANDED)
         self.assertEqual({span.style.bg for span in row}, {BANDED.prompt_band.bg})
-        self.assertTrue(line_text(row).startswith("↪ steer · look at the docs too"))
+        self.assertTrue(line_text(row).startswith("┃ ❯ look at the docs too"))
 
 
 class PlanBlockTests(unittest.TestCase):

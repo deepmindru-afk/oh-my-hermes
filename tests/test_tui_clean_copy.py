@@ -61,7 +61,8 @@ from omh.skin_pack import SKIN_THEMES
 
 # Every glyph a terminal could draw as a bar beside the text: the rail's `┃`, its light `│` and their kin.
 BAR_GLYPHS = set("┃│▎▍▌▋▏▕▐┆┊╎║█")
-RAILED = (UserBlock, CommandBlock, AssistantBlock, ToolGroup)  # the blocks that hang on a rail
+# The blocks that hang on a rail; a steer reads as the prompt it is (a refused one, an amber row, does not).
+RAILED = (UserBlock, CommandBlock, AssistantBlock, ToolGroup, SteerBlock)
 REPLY = "first line of the reply\nsecond line"
 KITTY = {"TERM": "xterm-kitty"}
 
@@ -104,7 +105,7 @@ class BarOnTheMainScreenTests(unittest.TestCase):
                         if not isinstance(block, RAILED):
                             self.assertEqual(bars, set(), screen.lines())
                             continue
-                        light = name == "NO_COLOR" and isinstance(block, (UserBlock, CommandBlock))
+                        light = name == "NO_COLOR" and isinstance(block, (UserBlock, CommandBlock, SteerBlock))
                         railed = [at for at, row in enumerate(rows) if row]  # the blank row between two calls has none
                         self.assertEqual(bars, {(at, 0) for at in railed}, screen.lines())
                         for at in railed:

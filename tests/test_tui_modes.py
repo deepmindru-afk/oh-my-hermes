@@ -49,11 +49,12 @@ from omh.tui.modes import EFFORT_CYCLE
 from omh.tui.pager import Pager
 from omh.tui.session_picker import SessionPicker, SessionRow
 from omh.tui.slash import parse_slash, plan_invocation
+from omh.tui.style import Style
 from omh.tui.theme import DEFAULT_THEME
 from omh.tui.transcript import (
     NOTICE_ERROR,
     NOTICE_WARN,
-    STEER_QUEUED,
+    STEER_SENT,
     AssistantBlock,
     CommandBlock,
     NoticeBlock,
@@ -160,8 +161,10 @@ def steers_of(blocks: list) -> list[str]:
 
 
 def steers(app: App) -> list[str]:
-    """The steer rows the transcript has written (one Hermes has not answered yet is still held under the tail)."""
-    return steers_of(app.transcript.blocks)
+    """The rows of the steers Hermes answered, written or still held under the tail until the turn reads them (one
+    Hermes has not answered yet is held too, and left out)."""
+    blocks = [*app.transcript.blocks, *app.transcript._held]
+    return steers_of([block for block in blocks if not (isinstance(block, SteerBlock) and block.state == STEER_SENT)])
 
 
 class SteerTests(unittest.TestCase):
@@ -172,13 +175,13 @@ class SteerTests(unittest.TestCase):
         self.assertEqual(client.calls, [("session.steer", {"session_id": SID, "text": "use the other file"})])
         self.assertEqual(app.composer.text, "")
         self.assertEqual(steers(app), [])  # nothing is claimed before Hermes answers
-        self.assertIn("↪ steer · use the other file", lines_text(app.transcript.live_lines(80, DEFAULT_THEME)))
+        self.assertIn("┃ ❯ use the other file", lines_text(app.transcript.live_lines(80, DEFAULT_THEME)))
         answer(app, client, {"status": "queued", "text": "use the other file"})
-        self.assertEqual(steers(app), ["↪ steer queued by Hermes · use the other file"])
+        self.assertEqual(steers(app), ["┃ ❯ use the other file"])
         self.assertEqual(client.named("prompt.submit"), [])
         self.assertFalse(app.queued)
 
-    def test_the_steered_notice_names_only_the_first_line(self) -> None:
+    def test_a_steer_of_two_lines_shows_both(self) -> None:
         app, client = make_app(busy=True)
         type_text(app, "first line")
         app._on_input(Key(ENTER, shift=True))
@@ -186,7 +189,7 @@ class SteerTests(unittest.TestCase):
         app._on_input(CTRL_ENTER)
         self.assertEqual(client.named("session.steer"), [{"session_id": SID, "text": "first line\nsecond line"}])
         answer(app, client, {"status": "queued", "text": "first line\nsecond line"})
-        self.assertEqual(steers(app), ["↪ steer queued by Hermes · first line"])
+        self.assertEqual(steers(app), ["┃ ❯ first line", "┃   second line"])  # every line, as the prompt it is
 
     def test_ctrl_enter_while_idle_is_enter(self) -> None:
         sent = []
@@ -277,7 +280,7 @@ class SteerTests(unittest.TestCase):
         app._on_input(CTRL_ENTER)
         answer(app, client, {"status": "queued", "text": "check the tests too"})
         (row,) = steers(app)
-        self.assertEqual(row, "↪ steer queued by Hermes · check the tests too")
+        self.assertEqual(row, "┃ ❯ check the tests too")
         self.assertNotIn("applied", row)
 
     def test_ctrl_enter_with_nothing_typed_sends_nothing(self) -> None:
@@ -310,7 +313,7 @@ class SteerTests(unittest.TestCase):
         app._on_input(Key(ENTER))
         self.assertEqual(client.calls, [("session.steer", {"session_id": SID, "text": "check the tests too"})])
         answer(app, client, {"status": "queued", "text": "check the tests too"})
-        self.assertEqual(steers(app), ["↪ steer queued by Hermes · check the tests too"])
+        self.assertEqual(steers(app), ["┃ ❯ check the tests too"])
 
         app, client = make_app()
         type_text(app, "/steer check the tests too")
@@ -442,9 +445,9 @@ class SteerTests(unittest.TestCase):
                 app._take_input(data)
                 self.assertEqual(client.calls, [("session.steer", {"session_id": SID, "text": "first queued"})])
                 self.assertEqual([line.text for line in app.queued], ["second queued"])
-                self.assertIn("↪ steer · first queued", lines_text(app.transcript.live_lines(80, DEFAULT_THEME)))
+                self.assertIn("┃ ❯ first queued", lines_text(app.transcript.live_lines(80, DEFAULT_THEME)))
                 answer(app, client, {"status": "queued", "text": "first queued"})
-                self.assertEqual(steers(app), ["↪ steer queued by Hermes · first queued"])
+                self.assertEqual(steers(app), ["┃ ❯ first queued"])
 
     def test_a_refused_send_now_goes_back_to_the_head_of_the_queue_as_it_was(self) -> None:
         for refusal in ({"error": {"code": 4010, "message": "agent does not support steer"}},
@@ -525,6 +528,59 @@ class SteerTests(unittest.TestCase):
         app, warned = self.sent_now_then_stopped("tool.complete")
         self.assertEqual(app.composer.text, "second queued")
         self.assertNotIn(app_module.SENT_NOW_DROPPED_NOTICE.format(count=1, s=""), warned)
+
+    def typed_steer(self, *events: str) -> tuple[App, SteerBlock]:
+        """A turn running, a steer typed and taken by Hermes, then `events`: the App and the steer's block."""
+        app, client = make_app(busy=True)
+        app._on_event(Event("message.start", SID, {}))
+        type_text(app, "use the other file")
+        app._on_input(CTRL_ENTER)
+        answer(app, client, {"status": "queued", "text": "use the other file"})
+        for kind in events:
+            app._on_event(Event(kind, SID, {"tool_id": "t1", "name": "terminal", "text": "x"}))
+        (block,) = [block for block in [*app.transcript.blocks, *app.transcript._held] if isinstance(block, SteerBlock)]
+        return app, block
+
+    def test_a_taken_steer_waits_dim_above_the_working_row_until_a_tool_carries_it_then_reads_as_a_prompt(self) -> None:
+        # Owner, 2026-10-30: a steer must be easy to see, and read naturally, as Claude Code shows one.
+        app, block = self.typed_steer("tool.start")
+        self.assertIn(block, app.transcript._held)  # under the live blocks, not written into the transcript yet
+        self.assertEqual(lines_text(app.transcript.live_lines(80, DEFAULT_THEME))[-1],
+                         "┃ ❯ use the other file")
+        def words(block: SteerBlock) -> Style:
+            (style,) = {span.style for span in block_rows(block, 100, DEFAULT_THEME)[0] if "other" in span.text}
+            return style
+
+        self.assertEqual(words(block), DEFAULT_THEME.dim)  # a prompt not taken in yet: dim, as Claude Code shows one
+        app._on_event(Event("tool.complete", SID, {"tool_id": "t1", "name": "terminal", "result": {"output": ""}}))
+        self.assertEqual(steers(app), ["┃ ❯ use the other file"])
+        self.assertEqual(words(block), DEFAULT_THEME.muted)  # then as any prompt you sent
+        self.assertEqual(block_rows(block, 100, DEFAULT_THEME), block_rows(UserBlock("use the other file"), 100, DEFAULT_THEME))
+        self.assertEqual(app.unread_steers, [])
+
+    def test_a_steer_no_tool_carried_is_written_above_the_turn_s_summary(self) -> None:
+        app, block = self.typed_steer("message.delta")  # streams "x"
+        app._on_event(Event("message.complete", SID, {"text": "x", "status": "complete"}))
+        self.assertEqual(steers(app), ["┃ ❯ use the other file"])
+        kinds = [type(item).__name__ for item in app.transcript.blocks]
+        self.assertEqual(kinds[-3:], ["AssistantBlock", "SteerBlock", "TurnSummaryBlock"])
+        self.assertEqual(app.transcript._held, [])
+
+    def test_a_steer_answered_after_its_turn_ended_never_waits_on_an_idle_screen(self) -> None:
+        app, client = make_app(busy=True)
+        type_text(app, "use the other file")
+        app._on_input(CTRL_ENTER)
+        app._on_event(Event("message.complete", SID, {"text": "done", "status": "complete"}))
+        answer(app, client, {"status": "queued", "text": "use the other file"})
+        self.assertEqual(steers(app), ["┃ ❯ use the other file"])
+        self.assertEqual(app.transcript._held, [])
+
+    def test_a_steer_the_turn_was_stopped_before_reading_says_so(self) -> None:
+        app, block = self.typed_steer("tool.start")
+        app.interrupting = True
+        app._on_event(Event("message.complete", SID, {"text": "stopped"}))
+        self.assertEqual(steers(app), ["⧗ not read — the turn stopped first · use the other file"])
+        self.assertEqual(app.transcript._held, [])
 
     def test_a_steer_handed_on_or_left_behind_is_never_queued_again(self) -> None:
         def ended_on_its_own(app: App) -> None:  # Hermes passes a held steer on as the next turn, which starts now
@@ -662,8 +718,7 @@ class DocumentedSteerTests(unittest.TestCase):
 
     def test_the_label_and_the_fallback_are_the_ones_the_code_uses(self) -> None:
         installation = self.prose("docs/INSTALLATION.md")
-        label = steers_of([SteerBlock("x", STEER_QUEUED)])[0].removesuffix(" · x")
-        self.assertIn(f"`{label}`", installation)
+        self.assertIn("a dim prompt row (`❯ <text>`)", installation)
         self.assertIn("joins the OMH TUI's own queue (`⧗`) and goes when the turn ends, whatever "
                       "`display.busy_input_mode` says, so it never interrupts the turn", installation)
         self.assertNotIn("`↪ steered:`", installation)
@@ -716,7 +771,7 @@ class SteerReplayTests(AppTestCase):
         terminal.script(
             # One read: Ctrl+Enter lands while the first prompt's turn is pending.
             Step(b"first prompt\rsecond prompt" + CTRL_ENTER_BYTES, when=terminal.idle, label="idle"),
-            Step(b"\x04", when=lambda: "↪ steer queued by Hermes · second prompt" in terminal.history() and terminal.idle(), label="steered"),
+            Step(b"\x04", when=lambda: "┃ ❯ second prompt" in terminal.history() and terminal.idle(), label="steered"),
         )
         self.run_main(run)
         self.assert_clean_run(run)
@@ -731,7 +786,7 @@ class SteerReplayTests(AppTestCase):
             # One read: a second prompt queued while the first prompt's turn is pending, then Ctrl+J, a bare line
             # feed in raw mode, on the empty composer: it sends the queued prompt now.
             Step(b"first prompt\rsecond prompt\r\n", when=terminal.idle, label="idle"),
-            Step(b"\x04", when=lambda: "↪ steer queued by Hermes · second prompt" in terminal.history() and terminal.idle(), label="steered"),
+            Step(b"\x04", when=lambda: "┃ ❯ second prompt" in terminal.history() and terminal.idle(), label="steered"),
         )
         self.run_main(run)
         self.assert_clean_run(run)

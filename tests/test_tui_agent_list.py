@@ -702,7 +702,7 @@ class AgentActionTests(unittest.TestCase):
             [("subagent.steer", {"session_id": SID, "subagent_id": FIRST, "text": "skip the tests folder"})],
         )
         answer(app, client, {"status": "queued", "subagent_id": FIRST, "text": "skip the tests folder"})
-        self.assertEqual(steers(app)[-1], "↪ steer queued by Hermes · find usages of: skip the tests folder")
+        self.assertEqual(steers(app)[-1], "┃ ❯ find usages of: skip the tests folder")
         self.assertIsNone(app.agent_steer)
 
     def test_a_steer_hermes_rejects_comes_back_to_the_composer(self) -> None:
@@ -843,13 +843,13 @@ class AgentRowsDuringATurnTests(unittest.TestCase):
         type_text(app, "skip the tests folder")
         app._on_input(Key(ENTER))
         self.assertEqual(lines_text(app.transcript.live_lines(100, DEFAULT_THEME))[-1],
-                         "↪ steer · find usages of: skip the tests folder")  # the main steer's format, while it waits
+                         "┃ ❯ find usages of: skip the tests folder")  # the main steer's format, while it waits
         answer(app, client, {"status": "queued", "subagent_id": FIRST, "text": "skip the tests folder"})
         self.assert_running(app)
         self.assertEqual(self.finish(app), [("delegate_task", TOOL_OK)])
         kinds = [type(block).__name__ for block in app.transcript.blocks]
         self.assertEqual(kinds[:3], ["ToolGroup", "SteerBlock", "AssistantBlock"])
-        self.assertEqual(steers(app), ["↪ steer queued by Hermes · find usages of: skip the tests folder"])
+        self.assertEqual(steers(app), ["┃ ❯ find usages of: skip the tests folder"])
 
     def test_an_interrupt_and_its_refusal_leave_the_delegate_call_running(self) -> None:
         for reply, said in (

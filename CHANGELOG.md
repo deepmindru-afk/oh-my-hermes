@@ -6,6 +6,15 @@ All notable changes will be documented here.
 
 ![Sprite Forge patch notes](https://raw.githubusercontent.com/rlaope/oh-my-hermes/main/assets/omh-sprite-forge-patch-notes.png)
 
+- **A steer reads as the prompt it is.** A steer you send during a turn
+  shows as a prompt row (`❯ <text>`), as Claude Code shows one, in place of
+  the dim `↪ steer queued by Hermes · <text>`. It stays dim right above the
+  working row until the turn takes it in, at the first tool that finishes or
+  when the turn ends, then reads as any prompt you sent where the model got
+  it. Hermes reads a steer only between steps, so one sent during a long tool
+  call waits there until that call ends. A turn you stop before taking it in
+  says `not read — the turn stopped first`.
+
 - **`OMH` in the info line's badge is a pale silver blue.** It was the
   faint grey of the brackets around it; it now reads in `#C3D2E3` beside the
   launch look's `Native`, moved toward black on a light background as far as

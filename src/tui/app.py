@@ -305,6 +305,7 @@ from .transcript import (
     OUTPUT_MARKED,
     STEER_QUEUED,
     STEER_REFUSED,
+    STEER_TAKEN,
     AssistantBlock,
     CommandBlock,
     NoticeBlock,
@@ -659,7 +660,8 @@ INTERRUPTING = "interrupting…"
 
 # Hermes answers `queued` both when the running turn takes the steer (at its next tool call) and when it
 # queues the text as the next prompt because it is compressing the context; the transcript's
-# `↪ steer queued by Hermes` is true of both. A steer it refuses says what became of the text instead.
+# steer's dim prompt row above the working row is true of both, until a tool finishes or the turn ends and it reads
+# as any prompt you sent. A steer it refuses says what became of the text instead.
 STEER_REFUSED_OUTCOME = "{fallback} — Hermes refused the steer ({reason})"
 STEER_FALLBACK_QUEUED = "queued"  # a turn still runs: the text waits in the TUI's queue for it to end
 STEER_FALLBACK_SENT = "sent as a prompt"
@@ -667,6 +669,8 @@ STEER_FALLBACK_HEAD = "back at the head of the queue"  # a sent-now steer: the l
 # A sent-now steer Hermes took but had not read when the turn stopped: Hermes dropped it, so its line is queued again.
 SENT_NOW_DROPPED_OUTCOME = "back in the queue — the turn stopped before Hermes read it"
 SENT_NOW_DROPPED_NOTICE = "The turn stopped before Hermes read {count} prompt{s} you sent now; back in the queue."
+# A typed steer Hermes took but had not read when the turn stopped: dropped with the turn.
+STEER_DROPPED_OUTCOME = "not read — the turn stopped first"
 # A sent-now steer Hermes refused after the turn it was meant for ended and the next one started: queued again, it
 # would run after a prompt sent later, so it goes back to the person instead.
 STEER_FALLBACK_COMPOSER = "back in the composer"
@@ -1726,6 +1730,7 @@ class App(ModesMixin, AgentViewMixin):
         self.waiting_requests: deque[ServerRequest] = deque()
         self.queued: deque[QueuedLine] = deque()
         self.sent_now: list[SentNow] = []  # sent-now steers Hermes took and the turn has not read yet
+        self.unread_steers: list[SteerBlock] = []  # every steer into the main turn Hermes took and it has not read
         self.turns_ended = 0  # turns of this TUI that ended: a steer remembers which turn it was meant for
         self.queue_held = False  # the queue waits for the person after an interrupt (`_hold_queue`)
         self.interrupting = False  # the person interrupted the running turn and Hermes has not ended it yet
@@ -2105,6 +2110,7 @@ class App(ModesMixin, AgentViewMixin):
         self.turn_pending = bool(result.get("running"))
         self.interrupting = self.queue_held = False  # both were about the session being left
         self.sent_now = []  # steers into the session being left: theirs to settle
+        self._settle_unread_steers(STEER_TAKEN)
         self.turn_unknown = None  # the drift watch was for a turn of the session being left
         self.busy_since = self.clock()
         self.turn_waited = 0.0
@@ -2829,6 +2835,8 @@ class App(ModesMixin, AgentViewMixin):
             if isinstance(payload, Mapping):  # a new frame for an agent: its tail is asked for again
                 self.tail_misses.pop(as_text(payload.get("subagent_id")), None)
         else:
+            if event.type == "message.complete":  # before the reply closes: a steer row goes where it went before
+                self._settle_steers_at_turn_end()
             self.transcript.apply(event)
             self._track_sent_now(event.type)
             self._count_streamed(event.type, payload)
@@ -2958,6 +2966,7 @@ class App(ModesMixin, AgentViewMixin):
         if not self._busy():
             self.transcript.add_notice(message, NOTICE_ERROR)
             return
+        self._settle_steers_at_turn_end()
         self.transcript.fail_turn(message)
         self.turn_pending = False
         self._turn_ended()
@@ -4601,6 +4610,7 @@ class App(ModesMixin, AgentViewMixin):
             self._hold_queue(INTERRUPTED_WHY)
         else:
             self.sent_now = []  # the turn ended on its own: Hermes passes a steer it held on as the next turn
+            self._settle_unread_steers(STEER_TAKEN)
             self._drain_queue()
         self._check_default()
 
@@ -4836,7 +4846,10 @@ class App(ModesMixin, AgentViewMixin):
         elif as_text(result.get("status")) == contract.STEER_REJECTED:
             self._steer_refused(block, STEER_REJECTED_REASON, queued, turn)
         else:
-            self.transcript.steer_answered(block, STEER_QUEUED)
+            self.transcript.steer_answered(block, STEER_QUEUED)  # held under the live blocks until read
+            self.unread_steers.append(block)
+            if not self._busy():  # answered after its turn ended: Hermes sends it as the next prompt
+                self._settle_unread_steers(STEER_TAKEN)
             if queued is not None:  # Hermes holds it until a tool batch ends (`_track_sent_now`)
                 self.sent_now.append(SentNow(queued, block))
 
@@ -4862,14 +4875,32 @@ class App(ModesMixin, AgentViewMixin):
         """
         if event_type == "tool.complete":
             self.sent_now = []
+            self._settle_unread_steers(STEER_TAKEN)
+
+    def _settle_steers_at_turn_end(self) -> None:
+        """The turn ends: a steer it stopped before reading was dropped (`_requeue_unread_steers`); one still unread
+        when it ended on its own Hermes took, read before a later model call or sent as the next prompt."""
+        if self.interrupting:
+            self._requeue_unread_steers()
+        else:
+            self._settle_unread_steers(STEER_TAKEN)
+
+    def _settle_unread_steers(self, state: str, outcome: str = "") -> None:
+        """The steers the turn had not read say what came of them, and leave the live region at the next boundary."""
+        unread, self.unread_steers = self.unread_steers, []
+        for block in unread:
+            if block.state == STEER_QUEUED:  # a sent-now steer requeued is settled already
+                self.transcript.steer_answered(block, state, outcome)
 
     def _requeue_unread_steers(self) -> None:
         """The turn stopped: a sent-now steer Hermes took but had not read was dropped with it, so its line goes back
-        to the head of the queue, in order, its row says so, and a notice names how many."""
+        to the head of the queue, in order, its row says so, and a notice names how many. A typed one's row says the
+        turn stopped before reading it."""
         unread, self.sent_now = self.sent_now, []
         for sent in reversed(unread):
             self.queued.appendleft(sent.line)
             self.transcript.steer_answered(sent.block, STEER_REFUSED, SENT_NOW_DROPPED_OUTCOME)
+        self._settle_unread_steers(STEER_REFUSED, STEER_DROPPED_OUTCOME)
         if unread:
             count = len(unread)
             self.transcript.add_notice(SENT_NOW_DROPPED_NOTICE.format(count=count, s="" if count == 1 else "s"),
