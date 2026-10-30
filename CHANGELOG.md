@@ -21,6 +21,22 @@ All notable changes will be documented here.
   the check. `agent.max_verify_nudges: 0` turns it off, together with OMH's
   other end-of-turn nudges.
 
+- **The background-process row moves onto the info line, and the working
+  row keeps its blank row on a tall terminal.** The row that names a
+  process Hermes runs in the background stood above the composer's top
+  rule; it is now on the info line under the composer, after the badge and
+  the branch (`[⚚ OMH Native]  ✳ background  terminal(<command>)  8s`), with
+  its colours, its ticking clock, who will be told when it ends, `+N more`
+  and the finished state whose Enter reports the result. The title, model,
+  context and effort stay on the right. As the line narrows the title goes
+  first, then the row shortens and goes, and only then do the model, the
+  context and the effort shorten. During a long turn on a tall terminal,
+  `✻ Working…` read glued to the last tool row, since a turn's rows cut
+  short gave up the blank row over the working row first. That blank row
+  now stays, and the oldest row goes instead, while six rows still show
+  above it; on a shorter terminal it still gives way first, so it never
+  costs one of the few rows.
+
 - **The info line shows the context as a gauge with its token counts.**
   The bare `ctx 37%` under the composer is now
   `ctx ━━━━──────── 37% 74k/200k`: twelve cells, the filled ones and the
@@ -752,6 +768,19 @@ All notable changes will be documented here.
   kinetic gate, and stays out of explainer and evidence films. The method
   notes were informed by Scenario's Kinetic Film exploration; OMH wrote its
   own wording and code.
+
+- **A delegated child no longer dies on a model its inherited provider does
+  not have.** A route written with no provider runs on the session's own, and
+  `omh_delegate_route` checks that provider can serve the model first. Two
+  gaps let a known-bad route through: a session on `custom:<name>` was looked
+  up under that spelling while OMH records the bare `<name>`, and a relay
+  block counted as serving every model even when its `providers.<name>` block
+  in `config.yaml` lists the models it has. Both now resolve, so a session on
+  a Claude-only relay sending a `gpt-6.1-sol` category head is caught. When
+  exactly one provider you configured is known to serve the model, the route
+  pins it instead of refusing (`provider_pinned` in the result names the
+  inherited and the pinned provider), on `set` and `fallback`; otherwise it is
+  refused as before, naming only providers that could serve it.
 
 ## 4.0.3 - 2026-10-27
 

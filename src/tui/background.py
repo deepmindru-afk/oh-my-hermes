@@ -1,4 +1,6 @@
-"""The row above the composer for this session's background processes (the owner's design of 2026-10-28).
+"""The background-process row: this session's background processes (the owner's design of 2026-10-28), on the
+info line under the composer after the badge and the branch (the owner's pick of 2026-10-30; it stood above the
+composer's top rule before). "Row" names it still, though it is now that line's part.
 
 A Hermes turn can start a `terminal` command in the background and end. With
 the tool's default, `notify_on_complete: False`, Hermes queues no completion
@@ -72,7 +74,7 @@ from typing import Any
 from .markdown import clean_text
 from .style import Line, Span
 from .theme import Theme, kind_style
-from .width import cell_width, line_width, truncate, truncate_line
+from .width import truncate
 
 # As `bot_board.ON_POSIX`: signal 0 is a probe only on POSIX. Not imported from there, so a session without a
 # background process or the bot board never loads that module.
@@ -105,7 +107,7 @@ WATCHER_WORDS = " is watching it"
 # Where OMH cannot ask whether the process still runs (`askable`), it cannot watch for the end either.
 NO_PING_UNWATCHED = "won't ping you · "
 ASK_WORDS = "ask Hermes for the result"
-SIDE_GAP = 2  # the fewest cells between the row's left side and its right side
+SIDE_GAP = 2  # the cells between the row's left side and its right side (who will be told, or Enter's offer)
 REPORT_PROMPT = "The background process {calls} finished. Check its result and continue."
 REPORT_PROMPTS = "The background processes {calls} finished. Check their results and continue."
 
@@ -315,18 +317,18 @@ def _call(label: str, theme: Theme) -> tuple[Span, ...]:
     return (Span(TOOL_NAME, kind_style(TOOL_NAME, theme)), Span(f"({label})", theme.muted))
 
 
-def _sides(left: Callable[[str], Line], label: str, right: Line, width: int) -> Line:
-    """The left side drawn with `label`, then `right` flush to the edge. Where both do not fit the label is cut
-    first, down to `LABEL_MIN_CELLS`; then `right` goes and the label is cut again, down to its `…`, so the clock
-    stays; only then is the left side cut at the edge."""
-    for side, shortest in ((right, LABEL_MIN_CELLS), ((), 1)):
-        room = width - (SIDE_GAP + line_width(side) if side else 0)
-        over = line_width(left(label)) - room
-        if over > 0 and cell_width(label) - over < shortest:
-            continue
-        shown = left(truncate(label, cell_width(label) - over) if over > 0 else label)
-        return (*shown, Span(" " * (width - line_width(shown) - line_width(side))), *side) if side else shown
-    return truncate_line(left(label), width)
+def _forms(left: Callable[[str | None], Line], label: str, right: Line) -> tuple[Line, ...]:
+    """The row's forms on the info line, longest first (`modes.info_line` takes the first that fits): the left side
+    drawn with `label`, then with it cut to `LABEL_MIN_CELLS`, each with `right` `SIDE_GAP` cells after it; then the
+    same two without `right`; then the left side with no call at all, so the state and the clock stay longest. A form
+    the same as one before it is left out."""
+    short = truncate(label, LABEL_MIN_CELLS)
+    forms: list[Line] = []
+    for shown, side in ((label, right), (short, right), (label, ()), (short, ()), (None, ())):
+        form = (*left(shown), *((Span(" " * SIDE_GAP), *side) if side else ()))
+        if form not in forms:
+            forms.append(form)
+    return tuple(forms)
 
 
 def _watching(theme: Theme) -> tuple[Span, ...]:
@@ -337,18 +339,20 @@ def _watching(theme: Theme) -> tuple[Span, ...]:
     return (*mark, Span(WATCHER_WORDS, words))
 
 
-def running_line(
-    process: BackgroundProcess, *, more: int, now: float, glyph: str, turn_runs: bool, theme: Theme, width: int
-) -> Line:
+def running_forms(
+    process: BackgroundProcess, *, more: int, now: float, glyph: str, turn_runs: bool, theme: Theme
+) -> tuple[Line, ...]:
     """`<glyph> background  terminal(<label>)  1h 07m 13s`, then who will be told when it ends: nothing while a turn
     runs (the model may be waiting on it), `🔔 will ping you…` when Hermes will wake the session, else
     `🔕 Hermes won't be pinged · OMH is watching it`, or, where OMH cannot ask whether it still runs (`askable`),
-    `🔕 won't ping you · ask Hermes for the result`. `more` counts the session's other running processes."""
+    `🔕 won't ping you · ask Hermes for the result`. `more` counts the session's other running processes. Its forms,
+    longest first (`_forms`)."""
     word = theme.background_word
 
-    def left(label: str) -> Line:
+    def left(label: str | None) -> Line:
         return (
-            Span(glyph, word), Span(" "), Span(BACKGROUND_WORD, word), Span("  "), *_call(label, theme),
+            Span(glyph, word), Span(" "), Span(BACKGROUND_WORD, word),
+            *((Span("  "), *_call(label, theme)) if label is not None else ()),
             Span(f"  {running_text(now - process.started_at)}", theme.faint),
             *((Span(f"  +{more} more", theme.muted),) if more else ()),
         )
@@ -364,19 +368,21 @@ def running_line(
     else:
         words = theme.catch_words if theme.catch_mark else theme.muted
         right = (Span(NO_PING, theme.warn), Span(NO_PING_UNWATCHED, theme.warn), Span(ASK_WORDS, words))
-    return _sides(left, process_label(process.command), right, width)
+    return _forms(left, process_label(process.command), right)
 
 
-def finished_line(process: BackgroundProcess, *, ago: float, theme: Theme, width: int, more: int = 0) -> Line:
-    """`✓ background  terminal(<label>)  finished 0:12 ago`, the state in `ok`, and `↵ report result` at the edge.
-    `more` counts the other processes that ended unreported since, which the same Enter reports."""
+def finished_forms(process: BackgroundProcess, *, ago: float, theme: Theme, more: int = 0) -> tuple[Line, ...]:
+    """`✓ background  terminal(<label>)  finished 0:12 ago`, the state in `ok`, then `↵ report result`; its forms,
+    longest first (`_forms`). `more` counts the other processes that ended unreported since, which the same Enter
+    reports."""
 
-    def left(label: str) -> Line:
+    def left(label: str | None) -> Line:
         return (
-            Span(DONE_GLYPH, theme.ok), Span(" "), Span(BACKGROUND_WORD, replace(theme.ok, bold=True)), Span("  "),
-            *_call(label, theme), Span(f"  finished {ago_text(ago)} ago", theme.ok),
+            Span(DONE_GLYPH, theme.ok), Span(" "), Span(BACKGROUND_WORD, replace(theme.ok, bold=True)),
+            *((Span("  "), *_call(label, theme)) if label is not None else ()),
+            Span(f"  finished {ago_text(ago)} ago", theme.ok),
             *((Span(f"  +{more} more", theme.muted),) if more else ()),
         )
 
     right: Line = (Span(REPORT_KEY, replace(theme.text, bold=True)), Span(REPORT_WORDS, theme.hint))
-    return _sides(left, process_label(process.command), right, width)
+    return _forms(left, process_label(process.command), right)

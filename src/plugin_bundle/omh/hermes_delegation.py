@@ -938,10 +938,62 @@ def provider_family_for(provider_id: str, entitlements: Mapping[str, Any] | None
         return ""
     providers = (entitlements or {}).get("providers", {})
     if isinstance(providers, Mapping):
-        recorded = providers.get(key)
-        if isinstance(recorded, str) and recorded:
-            return recorded
+        # Hermes names a `providers.<name>` block `custom:<name>` at runtime
+        # (`model.provider: custom:cliproxy`), while detection and the setup
+        # interview record the bare block name. Both spellings are one
+        # provider, so each is looked up under the other too; without this a
+        # session on `custom:<name>` read as a provider nothing records.
+        for spelling in _provider_id_spellings(key):
+            recorded = providers.get(spelling)
+            if isinstance(recorded, str) and recorded:
+                return recorded
     return key if key in PROVIDER_FAMILY_VOCABULARY else ""
+
+
+def _provider_id_spellings(provider_id: str) -> tuple[str, ...]:
+    """``provider_id`` first, then its other `custom:` spelling, if it has one."""
+    if provider_id.startswith("custom:") and len(provider_id) > len("custom:"):
+        return (provider_id, provider_id[len("custom:"):])
+    if provider_id and ":" not in provider_id:
+        return (provider_id, f"custom:{provider_id}")
+    return (provider_id,)
+
+
+def provider_block_name(provider_id: str) -> str:
+    """The `providers.<name>` key a provider id runs from: `custom:<name>` -> `<name>`."""
+    key = str(provider_id or "").strip()
+    return key[len("custom:"):] if key.startswith("custom:") else key
+
+
+def providers_known_to_serve_alias(
+    alias: str,
+    entitlements: Mapping[str, Any] | None,
+) -> tuple[str, ...]:
+    """The operator's provider ids whose vendor family the catalog says serves ``alias``.
+
+    Narrower than `providers_serving_alias`: a multi-vendor relay is left
+    out, because "a relay serves everything" is a fail-open default, not
+    evidence. This is the set a route may pin on its own when the provider a
+    child would inherit cannot serve the model -- a known server, never a
+    guess.
+    """
+    providers = (entitlements or {}).get("providers", {})
+    if not isinstance(providers, Mapping):
+        return ()
+    projected_key, _tier = _projected_model_alias(alias)
+    families = HERMES_MIXTURE_ALIAS_PROVIDER_FAMILIES.get(projected_key)
+    if not families:
+        return ()
+    return tuple(
+        sorted(
+            provider_id
+            for provider_id, kind in providers.items()
+            if isinstance(provider_id, str)
+            and isinstance(kind, str)
+            and kind not in MULTI_VENDOR_PROVIDER_KINDS
+            and kind in families
+        )
+    )
 
 
 def provider_serves_alias(

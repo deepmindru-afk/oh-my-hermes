@@ -602,8 +602,6 @@ class RouteWithoutProviderTest(GuardTestCase):
     def test_an_endpoint_the_scan_cannot_read_keeps_the_inherited_provider_check(self) -> None:
         session = "model:\n  default: gpt-5.6-sol\n  provider: openai-codex\n"
         for delegation in (
-            None,
-            "  max_iterations: 5\n",
             "  base_url: ${DELEGATION_BASE_URL}\n",
             f"  base_url: >\n    {ENDPOINT}\n",
             "  base_url: *endpoint\n",
@@ -613,7 +611,25 @@ class RouteWithoutProviderTest(GuardTestCase):
                 result = self.call(action="set", model="claude-fable-5-1")
                 self.assertEqual(result["status"], "error", result)
                 self.assertEqual(result["inherited_provider"], "openai-codex")
+                # A base_url is set, so no provider is pinned in its place.
+                self.assertNotIn("provider_pinned", result)
                 self.assertEqual(self.config.read_bytes(), before)
+
+    def test_with_no_endpoint_the_one_known_server_is_pinned_instead(self) -> None:
+        # The same inherited provider that cannot serve Fable, with no
+        # delegation.base_url: the one recorded provider whose family serves
+        # it (anthropic; openrouter is a relay, never pinned on its own) is
+        # written instead of a refusal.
+        session = "model:\n  default: gpt-5.6-sol\n  provider: openai-codex\n"
+        for delegation in (None, "  max_iterations: 5\n"):
+            with self.subTest(delegation=delegation):
+                self.write_config(delegation, head=session)
+                result = self.call(action="set", model="claude-fable-5-1")
+                self.assertEqual(result["status"], "routed", result)
+                self.assertEqual(
+                    result["provider_pinned"], {"inherited_provider": "openai-codex", "pinned_provider": "anthropic"}
+                )
+                self.assertEqual(read_delegation_route(self.home), {"model": "claude-fable-5-1", "provider": "anthropic"})
 
 
 class LocalEndpointBypassTest(GuardTestCase):
