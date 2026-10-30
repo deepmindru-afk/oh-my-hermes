@@ -338,7 +338,7 @@ class PlanContinuedHookTests(HomeTestCase):
             session_id=SESSION,
             coding=True,
             attempt=attempt,
-            changed_paths=["src/example.py"] if paths is None else paths,
+            changed_paths=["docs/example.md"] if paths is None else paths,
             omh_home=str(self.home),
             hermes_home=str(self.hermes),
         )

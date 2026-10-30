@@ -83,6 +83,57 @@ check only for surfaces where ordinary code tests are insufficient:
 - dependency or build metadata changes require installation or import smoke
 - CI workflow changes require a syntax check or the workflow's local command
 
+A turn in the coding posture that edited a file with a source suffix also gets
+a round-end consistency check, once, at its first stop (`attempt == 0`). The
+coding posture means Hermes's `cli`, `tui`, `acp` or `desktop` surface in a
+code workspace, or `agent.coding_context: on`; the suffixes are listed in
+`_CODE_SUFFIXES` in `hooks/verify_hooks.py`.
+
+The check asks the model to look for other copies or call sites of the logic
+it changed that have to change with it, and to fix any it finds. It also tells
+the model not to re-run tests for this check, unless something beside it asks
+for a run or a re-check: the served-surface request above, or the opt-in impact
+check's note about importers the edit broke. The message keeps a fixed order:
+served-surface gate, impact note, consistency check, plan directive, and one
+closing sentence for the final answer.
+
+Hermes keeps the answer the model stopped with only as an interim message, and
+returns whatever follows the nudge as the turn's final response. So when no
+plan is open, the message ends with one closing sentence: if nothing more
+changed, the model replies with the single line `OMH: no further changes.`.
+
+- `pre_verify` stashes the answer the turn stopped with, in process and per
+  session.
+- `transform_llm_output` swaps that line back to the stashed answer before
+  Hermes persists it.
+- The stash is consumed only by that swap. A leftover is cleared at the
+  session's next turn start (`pre_llm_call`, which Hermes's detached review
+  forks do not reach), overwritten by the next stash, or dropped after an hour.
+- The stored transcript, `--oneshot`, API callers and parents of delegated runs
+  get the original answer byte for byte.
+- Each surface shows it differently:
+  - The OMH TUI keeps the streamed line, so the answer is not shown twice.
+  - Hermes's own CLI prints the restored answer a second time under
+    "[Response transformed after streaming]".
+  - Desktop and Hermes's Ink TUI replace the streamed line with the restored
+    answer.
+- The replay history holds the answer twice, the interim row and the final
+  row. Later turns pay for that in tokens.
+
+With an open plan the turn goes on, so there is no closing and nothing is
+stashed.
+
+Delegated children (`platform == "subagent"`) never get the check, and when
+only the impact note fires for one, its closing asks for the full answer and
+nothing is stashed. The child's reply is its parent's tool result. The skip
+only matters under `agent.coding_context: on`, because otherwise Hermes gives
+non-interactive platforms no coding posture.
+
+The cost is one extra round of the turn. Measured costs and gains are in the
+2026-10-30 section of `benchmarks/live-model-tools/v1/README.md`.
+`agent.max_verify_nudges: 0` turns this off together with every other
+`pre_verify` nudge.
+
 The same hook carries one further directive: when the session's own OMH plan
 still has open work, or a finished dispatch is unacknowledged, the message also
 names the plan position and the next item. This is the only moment a host lets

@@ -102,9 +102,9 @@ class _PlanHome(unittest.TestCase):
             "session_id": self.session,
             "coding": True,
             "attempt": 0,
-            # A plain source file: no served-surface category, so what comes
-            # back is the plan directive alone.
-            "changed_paths": ["src/example.py"],
+            # A doc edit: no served-surface category and no code for the
+            # round-end checklist, so what comes back is the plan directive alone.
+            "changed_paths": ["docs/example.md"],
             "omh_home": str(self.home),
             "hermes_home": str(self.hermes),
         }

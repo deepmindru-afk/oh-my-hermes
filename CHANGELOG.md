@@ -6,6 +6,21 @@ All notable changes will be documented here.
 
 ![Sprite Forge patch notes](https://raw.githubusercontent.com/rlaope/oh-my-hermes/main/assets/omh-sprite-forge-patch-notes.png)
 
+- **A coding turn ends with one consistency check.** When a turn in the
+  coding posture edited source code, OMH continues it once at its first stop.
+  It asks the model to look for other copies or call sites of the logic it
+  changed that have to change with it, and to fix them, without re-running
+  tests for the check. That is one extra round on those turns: about 1.37x
+  the median tokens on the bench corpus, in exchange for fixing a second copy
+  of the changed logic far more often (76 vs 38 of 90 runs, pooled over five
+  measurements). If nothing more changed, the model replies with the single
+  line `OMH: no further changes.`, and OMH puts the answer it had already
+  given back in that line's place, so `--oneshot`, API and delegating callers
+  get that answer unchanged. Hermes's own CLI shows the restored answer a
+  second time; the OMH TUI keeps the one line. Delegated children never get
+  the check. `agent.max_verify_nudges: 0` turns it off, together with OMH's
+  other end-of-turn nudges.
+
 - **`omh update` no longer deletes the skill pack a running Hermes gateway
   still uses.** A gateway follows `current/skills` to the generation behind
   it once and keeps that directory until it restarts. Update kept only the

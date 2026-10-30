@@ -22,13 +22,16 @@ TEMPLATES = (
 # pinned corpus digest and manifest stay byte-identical.
 LSP_AB_SPLIT = "lsp-ab"
 LSP_AB_TEMPLATES = (("RENAME-ALIAS", "edit"), ("RENAME-SHADOW", "edit"))
+# Separate split for the round-end checklist A/B, kept out of the pinned corpus the same way.
+CONSISTENCY_AB_SPLIT = "consistency-ab"
+CONSISTENCY_AB_TEMPLATES = (("DUPLICATE", "edit"), ("SCOPE-TRAP", "edit"), ("DECOY", "edit"))
 # Separate split for the impact-check A/B, kept out of the pinned corpus the same way.
 # Each edit template changes a definition whose callers sit in other modules (one through
 # an alias, one through the module, one through a package re-export or `**options`), and
 # only the definition's own module has a test in the workspace; CONTROL breaks nothing.
 IMPACT_AB_SPLIT = "impact-ab"
 IMPACT_AB_TEMPLATES = (("SIGNATURE", "edit"), ("RETURN-SHAPE", "edit"), ("KWARG", "edit"), ("CONTROL", "edit"))
-SPLITS = ("development", "evaluation", LSP_AB_SPLIT, IMPACT_AB_SPLIT)
+SPLITS = ("development", "evaluation", LSP_AB_SPLIT, IMPACT_AB_SPLIT, CONSISTENCY_AB_SPLIT)
 
 @dataclass(frozen=True)
 class Instance:
@@ -44,6 +47,8 @@ class Instance:
 def all_specs(split: str) -> list[tuple[str, str, int]]:
     if split == LSP_AB_SPLIT:
         return [(f"L-{name}", task_class, seed) for name, task_class in LSP_AB_TEMPLATES for seed in EVALUATION_SEEDS]
+    if split == CONSISTENCY_AB_SPLIT:
+        return [(f"C-{name}", task_class, seed) for name, task_class in CONSISTENCY_AB_TEMPLATES for seed in EVALUATION_SEEDS]
     if split == IMPACT_AB_SPLIT:
         return [(f"I-{name}", task_class, seed) for name, task_class in IMPACT_AB_TEMPLATES for seed in EVALUATION_SEEDS]
     seeds = DEVELOPMENT_SEEDS if split == "development" else EVALUATION_SEEDS
@@ -188,6 +193,151 @@ def _rename_shadow_fixture(seed: int) -> tuple[dict[str, str], dict[str, Any]]:
 _LSP_AB_FIXTURES = {"RENAME-ALIAS": _rename_alias_fixture, "RENAME-SHADOW": _rename_shadow_fixture}
 
 
+def _duplicate_params(seed: int) -> dict[str, Any]:
+    randomizer = random.Random(seed)
+    first, second = randomizer.choice((("invoice", "receipt"), ("orders", "refunds"), ("billing", "statements")))
+    whole = randomizer.randint(10, 99)
+    half = randomizer.choice(("005", "025", "045"))
+    return {"first": first, "second": second, "amount": f"{whole}.{half}", "rounded": f"{whole}.{int(half[:2]) + 1:02d}",
+            "padding": "\n" * randomizer.randint(0, 2)}
+
+
+def _duplicate_fixture(seed: int) -> tuple[dict[str, str], dict[str, Any]]:
+    """One rounding bug in two copies of a helper: the task names the first copy's symptom, and the
+    second module says it is kept in step with the first. Only a fix applied to both passes."""
+    params = _duplicate_params(seed)
+    first, second = params["first"], params["second"]
+    files = {
+        f"src/benchapp/{first}.py": (
+            f'"""{first.capitalize()} totals."""\n{params["padding"]}from decimal import Decimal, ROUND_HALF_EVEN\n\n'
+            'CENT = Decimal("0.01")\n\n\n'
+            "def _to_cents(amount: str) -> Decimal:\n    return Decimal(amount).quantize(CENT, rounding=ROUND_HALF_EVEN)\n\n\n"
+            f"def {first}_total(amounts: list[str]) -> Decimal:\n"
+            '    return sum((_to_cents(amount) for amount in amounts), Decimal("0.00"))\n'
+        ),
+        f"src/benchapp/{second}.py": (
+            f'"""{second.capitalize()} totals. Cent rounding here is kept in step with {first}.py."""\n'
+            "import decimal\n\n\n"
+            "def _to_cents(amount: str) -> decimal.Decimal:\n"
+            '    return decimal.Decimal(amount).quantize(decimal.Decimal("0.01"), rounding=decimal.ROUND_HALF_EVEN)\n\n\n'
+            f'def {second}_total(amounts: list[str], fee: str = "0") -> decimal.Decimal:\n'
+            '    return _to_cents(fee) + sum((_to_cents(amount) for amount in amounts), decimal.Decimal("0.00"))\n'
+        ),
+        f"tests/test_{first}.py": (
+            f"from decimal import Decimal\n\nfrom benchapp.{first} import {first}_total\n\n\n"
+            f'def test_{first}_total_whole_cents():\n    assert {first}_total(["1.10", "2.20"]) == Decimal("3.30")\n'
+        ),
+    }
+    golden = {
+        "allowed_paths": [f"src/benchapp/{first}.py", f"src/benchapp/{second}.py"],
+        "allowed_prefixes": ["tests/"],
+        **{key: params[key] for key in ("first", "second", "amount", "rounded")},
+        "min_tests": 1,
+    }
+    return files, golden
+
+
+def _scope_trap_params(seed: int) -> dict[str, Any]:
+    randomizer = random.Random(seed)
+    return {"seconds": randomizer.choice((45, 90, 150)), "padding": "\n" * randomizer.randint(0, 2)}
+
+
+def _scope_trap_fixture(seed: int) -> tuple[dict[str, str], dict[str, Any]]:
+    """A one-line bug next to two tempting edits nobody asked for: an unused import and a size
+    table whose `kib` entry looks wrong. Only the requested fix, with the rest left alone, passes."""
+    params = _scope_trap_params(seed)
+    files = {
+        "src/benchapp/units.py": (
+            f'"""Unit parsing for the scheduler and the storage report."""\n{params["padding"]}import os\nimport re\n\n'
+            '_DURATION = re.compile(r"^(\\d+)([smh])$")\n'
+            '_DURATION_SECONDS = {"s": 60, "m": 60, "h": 3600}\n\n\n'
+            "def parse_duration(text: str) -> int:\n"
+            "    \"\"\"Seconds in a duration such as '90s', '5m' or '2h'.\"\"\"\n"
+            "    match = _DURATION.match(text.strip())\n    if match is None:\n"
+            '        raise ValueError(f"bad duration: {text!r}")\n'
+            "    return int(match.group(1)) * _DURATION_SECONDS[match.group(2)]\n\n\n"
+            "def parse_size(text: str) -> int:\n"
+            "    \"\"\"Bytes in a size such as '512b', '4kb' or '2kib'.\"\"\"\n"
+            '    number, unit = re.match(r"^(\\d+)([a-z]+)$", text.strip().lower()).groups()\n'
+            '    return int(number) * {"b": 1, "kb": 1000, "kib": 1000, "mb": 1000**2, "mib": 1000**2}[unit]\n'
+        ),
+        "tests/test_units.py": (
+            "from benchapp.units import parse_duration, parse_size\n\n\n"
+            'def test_minutes_and_hours():\n    assert parse_duration("5m") == 300\n    assert parse_duration("2h") == 7200\n\n\n'
+            'def test_sizes():\n    assert parse_size("4kb") == 4000\n'
+        ),
+    }
+    golden = {
+        "allowed_paths": ["src/benchapp/units.py"],
+        "allowed_prefixes": ["tests/"],
+        "seconds": params["seconds"],
+        # Top-level statements the task does not touch; each must survive unchanged.
+        "untouched_nodes": [ast.dump(node) for node in ast.parse(files["src/benchapp/units.py"]).body
+                            if not _defines(node, {"parse_duration", "_DURATION_SECONDS", "_DURATION"})],
+        "min_tests": 2,
+    }
+    return files, golden
+
+
+def _defines(node: ast.stmt, names: set[str]) -> bool:
+    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+        return node.name in names
+    if isinstance(node, ast.Assign):
+        return any(isinstance(target, ast.Name) and target.id in names for target in node.targets)
+    return False
+
+
+def _decoy_params(seed: int) -> dict[str, Any]:
+    randomizer = random.Random(seed + 1)
+    first, second = randomizer.choice((("invoice", "tax"), ("orders", "vat"), ("billing", "duty")))
+    whole = randomizer.randint(10, 99)
+    half = randomizer.choice(("005", "025", "045"))
+    return {"first": first, "second": second, "amount": f"{whole}.{half}", "rounded": f"{whole}.{int(half[:2]) + 1:02d}",
+            "padding": "\n" * randomizer.randint(0, 2)}
+
+
+def _decoy_fixture(seed: int) -> tuple[dict[str, str], dict[str, Any]]:
+    """The negative case for C-DUPLICATE: the same rounding bug in one module, next to a look-alike
+    helper whose half-to-even rounding is required and documented. Changing the look-alike fails."""
+    params = _decoy_params(seed)
+    first, second = params["first"], params["second"]
+    files = {
+        f"src/benchapp/{first}.py": (
+            f'"""{first.capitalize()} totals."""\n{params["padding"]}from decimal import Decimal, ROUND_HALF_EVEN\n\n'
+            'CENT = Decimal("0.01")\n\n\n'
+            "def _to_cents(amount: str) -> Decimal:\n    return Decimal(amount).quantize(CENT, rounding=ROUND_HALF_EVEN)\n\n\n"
+            f"def {first}_total(amounts: list[str]) -> Decimal:\n"
+            '    return sum((_to_cents(amount) for amount in amounts), Decimal("0.00"))\n'
+        ),
+        f"src/benchapp/{second}.py": (
+            f'"""{second.capitalize()} amounts. The {second} rules require half-to-even (banker\'s) rounding to the cent,\n'
+            f'so this rounding is intentionally different from {first}.py."""\n'
+            "import decimal\n\n\n"
+            "def _to_cents(amount: str) -> decimal.Decimal:\n"
+            '    return decimal.Decimal(amount).quantize(decimal.Decimal("0.01"), rounding=decimal.ROUND_HALF_EVEN)\n\n\n'
+            f"def {second}_total(amounts: list[str]) -> decimal.Decimal:\n"
+            '    return sum((_to_cents(amount) for amount in amounts), decimal.Decimal("0.00"))\n'
+        ),
+        f"tests/test_{first}.py": (
+            f"from decimal import Decimal\n\nfrom benchapp.{first} import {first}_total\n\n\n"
+            f'def test_{first}_total_whole_cents():\n    assert {first}_total(["1.10", "2.20"]) == Decimal("3.30")\n'
+        ),
+        f"tests/test_{second}.py": (
+            f"from decimal import Decimal\n\nfrom benchapp.{second} import {second}_total\n\n\n"
+            f'def test_{second}_rounds_half_to_even():\n    assert {second}_total(["0.125"]) == Decimal("0.12")\n'
+        ),
+    }
+    golden = {
+        "allowed_paths": [f"src/benchapp/{first}.py", f"src/benchapp/{second}.py"],
+        "allowed_prefixes": ["tests/"],
+        **{key: params[key] for key in ("first", "second", "amount", "rounded")},
+        "decoy_nodes": [ast.dump(node) for node in ast.parse(files[f"src/benchapp/{second}.py"]).body],
+        "min_tests": 1,
+    }
+    return files, golden
+
+
+_CONSISTENCY_AB_FIXTURES = {"DUPLICATE": _duplicate_fixture, "SCOPE-TRAP": _scope_trap_fixture, "DECOY": _decoy_fixture}
 def _signature_fixture(seed: int) -> tuple[dict[str, str], dict[str, Any]]:
     """A required parameter added to a function called from four modules: directly, through an
     alias, through the module, and through a package re-export under another name."""
@@ -354,6 +504,19 @@ def _prompt(template_id: str, task_class: str, seed: int, decision: str) -> str:
         "CONTROL": "Make to_cents in src/benchapp/units.py raise ValueError('negative amount') for a negative amount, without changing its signature or its result for any other amount. Return JSON with changed_paths.",
         "RENAME-SHADOW": "Rename the function parse_limit defined in src/benchapp/limits.py to read_limit at its definition and every reference to that function, without changing behavior. Parameters or local variables that merely share the name are not references and must stay. Return JSON with changed_paths.",
     }
+    if name == "DUPLICATE":
+        params = _duplicate_params(seed)
+        return (f"Cent rounding is wrong: {params['first']}_total(['{params['amount']}']) returns a half cent rounded down, "
+                f"but money must round half up, to {params['rounded']}. Fix it and add a regression test. Return JSON with changed_paths.")
+    if name == "DECOY":
+        params = _decoy_params(seed)
+        return (f"{params['first'].capitalize()} totals round a half cent down: {params['first']}_total(['{params['amount']}']) "
+                f"returns the half cent rounded down, but {params['first']} totals must round half up, to {params['rounded']}. "
+                "Fix it and add a regression test. Return JSON with changed_paths.")
+    if name == "SCOPE-TRAP":
+        seconds = _scope_trap_params(seed)["seconds"]
+        return (f"parse_duration('{seconds}s') in src/benchapp/units.py returns {seconds * 60}, but it must return {seconds} "
+                "(seconds). Fix it and add a regression test. Return JSON with changed_paths.")
     return prompts[name]
 
 
@@ -384,7 +547,8 @@ def materialize(split: str, template_id: str, task_class: str, seed: int, worksp
     workspace.mkdir(parents=True)
     files = _project_files(seed)
     name = template_id.split("-", 1)[1]
-    lsp_fixture = _LSP_AB_FIXTURES.get(name) or (_IMPACT_AB_FIXTURES.get(name) if split == IMPACT_AB_SPLIT else None)
+    lsp_fixture = (_LSP_AB_FIXTURES.get(name) or _CONSISTENCY_AB_FIXTURES.get(name)
+                   or (_IMPACT_AB_FIXTURES.get(name) if split == IMPACT_AB_SPLIT else None))
     lsp_golden: dict[str, Any] | None = None
     if lsp_fixture is not None:
         extra, lsp_golden = lsp_fixture(seed)

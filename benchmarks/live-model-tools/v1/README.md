@@ -554,6 +554,499 @@ Results describe this pinned corpus, OMH version, Hermes version, provider,
 model id and conditions only. They do not establish universal model
 superiority.
 
+### 2026-10-30 round-end consistency check in `pre_verify`: off vs on, five measurements
+
+Measurements 1 to 4 failed their gates. The owner then relaxed the token clause to 1.4x
+("Owner decision" below). Measurement 5, with the sentinel swap, passed every clause it was
+registered against. Each measurement is recorded below as it ran.
+
+One question, from oh-my-pi's prewalk checklist and its delivery rules: after a turn
+that edited code, does one short checklist at the first stop (consistency, scope,
+verification) make the model's diff more correct? The checklist is
+`ROUND_END_CHECKLIST` in `src/plugin_bundle/omh/hooks/verify_hooks.py`; `pre_verify`
+returns it at `attempt == 0` when the turn's changed paths include a source file, so a
+turn sees it at most once. No new tool.
+
+The setup, fixed before the first live run:
+
+- The pinned `E-BUGFIX` and `E-RENAME` templates, plus a new split `consistency-ab`
+  (`--split consistency-ab`; the evaluation corpus and its digest are unchanged):
+  - `C-DUPLICATE`: a cent-rounding bug in two copies of a helper. The task names the
+    first copy's symptom; the second module says it is kept in step with the first.
+    Fixing only the first scores `copy_not_updated`.
+  - `C-SCOPE-TRAP`: a one-line duration bug next to an unused import and a size table
+    whose `kib` entry looks wrong. Changing either scores `unrequested_edit`.
+  - Both allow any new or changed file under `tests/`.
+- 3 seeds each, 12 instances per model per arm, effort `medium`, condition `baseline`.
+- Both arms: `--edit-directive`, `--git-init-workspace`, `--test-env`,
+  `--harness hermes_current_session`, toolsets `file,terminal`.
+- Two Hermes profiles that differ only in the OMH plugin bundle and OMH home: `off`
+  links the bundle at origin/main `5cc1ed311` (the branch's base), `on` links this
+  branch. The bundles differ only in `verify_hooks.py`. `agent.max_turns: 120` in both.
+- Hermes runs from its own venv entry point (`~/.hermes/hermes-agent/.venv/bin/hermes
+  -p <profile>`), not the `hermes` launcher. This does not make the bench timeout stop
+  the turn: `--oneshot` is a client, and the turn runs in the one Hermes gateway that
+  serves every profile. A runaway turn is bounded in the profile instead, by
+  `agent.max_turns: 120` and `agent.run_budget_seconds: 600`.
+- Subscription routes only: Claude through the local proxy (`claude-proxy`), GPT through
+  Hermes `openai-codex`.
+
+| Weak | Strong |
+| --- | --- |
+| `claude-haiku-4-5-20251001`, `claude-haiku-5-5`, `gpt-6-luna` | `claude-sonnet-5-5`, `claude-opus-5-5`, `gpt-6.1-sol` |
+
+`gpt-6-luna` is the smallest model the Codex subscription served on 2026-10-30
+(`gpt-6.1-sol`, `gpt-6-astra`, `gpt-6.1-terra`, `gpt-6-sol`, `gpt-6-luna`, `gpt-5.6-*`).
+
+The merge gate, fixed before the first live run. Runs are scored as in the sections
+below: a run with no completed record is a fail.
+
+- Total passes, all six models and both splits: on at least off + 3.
+- Strong models: on at least off - 1.
+- `mutation_outside_scope` count: on at most off.
+- Median tokens per run over all runs: on at most 1.3x off. No on run above 3x the off
+  median of its model and template.
+- The checklist fired in at least 90% of on-arm coding sessions, and at most once per
+  turn. A coding session is a completed on-arm session with a `patch` or `write_file`
+  call on a `.py` path. Firing is read from the session database: an assistant row with
+  `finish_reason = 'verify_hook_continue'`. These tasks touch no served surface and keep
+  no plan, so a second such row in a session (a one-shot run is one turn) would be a
+  repeat. The off arm is checked for zero such rows.
+
+Measurement 1 (checklist text at `0c0e1c5e2`) failed one clause: on-arm median tokens
+were 1.434x off (302,806 vs 211,211). Every other clause passed, with 66 on vs 57 off.
+After the checklist the on arm ran pytest 62 times, in 49 of 72 sessions. For
+comparison, the off arm ran it 24 times after its last code edit. The verification line
+said "run a check". Measurement 2 (`185abfc78`) changes only that line: it asks for the
+command already run after the last edit, and says to run one only if none was. It
+re-runs both arms on two fresh profiles (`cebench-off2`, `cebench-on2`), with
+`agent.run_budget_seconds: 600` set from the start. The gate does not change.
+
+Measurement 2 passed every clause as written: omh `185abfc78` on origin/main `5cc1ed311`;
+Hermes Agent v0.22.5 · stable · local bf0203a794a0; 144 of 144 run records, all
+completed.
+
+| Model | off | on | off tokens (median) | on tokens (median) |
+| --- | ---: | ---: | ---: | ---: |
+| `claude-haiku-4-5-20251001` | 9 / 12 | 9 / 12 | 252,983 | 266,655 |
+| `claude-haiku-5-5` | 12 / 12 | 12 / 12 | 216,944 | 286,772 |
+| `gpt-6-luna` | 8 / 12 | 8 / 12 | 178,550 | 276,370 |
+| `claude-sonnet-5-5` | 10 / 12 | 12 / 12 | 171,288 | 231,342 |
+| `claude-opus-5-5` | 12 / 12 | 12 / 12 | 208,235 | 248,666 |
+| `gpt-6.1-sol` | 10 / 12 | 12 / 12 | 174,745 | 200,312 |
+| **Total** | **61 / 72** | **65 / 72** | 14.9M total | 19.3M total |
+
+Per template, off vs on: `E-BUGFIX` 17 vs 17, `E-RENAME` 18 vs 18, `C-DUPLICATE` 8 vs 12,
+`C-SCOPE-TRAP` 18 vs 18. Failure codes: `copy_not_updated` 10 vs 6,
+`mutation_outside_scope` 1 vs 1, `unrequested_edit` 0 vs 0.
+
+Measurement 2 against the gate:
+
+- Total, on at least off + 3: 65 vs 61.
+- Strong models, on at least off - 1: 36 vs 32.
+- `mutation_outside_scope`, on at most off: 1 vs 1.
+- Median tokens, on at most 1.3x off: 247,577 vs 204,806, 1.21x. No on run above 3x its
+  off pair's median.
+- Fired in 71 of 72 on-arm coding sessions (98.6%), never twice in a session; 0 rows in
+  the off arm.
+
+Measurement 1, for the record (same setup, profiles `cebench-off`/`cebench-on`):
+
+| Model | off | on | off tokens (median) | on tokens (median) |
+| --- | ---: | ---: | ---: | ---: |
+| `claude-haiku-4-5-20251001` | 9 / 12 | 10 / 12 | 267,697 | 318,877 |
+| `claude-haiku-5-5` | 10 / 12 | 12 / 12 | 236,284 | 365,807 |
+| `gpt-6-luna` | 8 / 12 | 9 / 12 | 245,026 | 336,545 |
+| `claude-sonnet-5-5` | 9 / 12 | 11 / 12 | 171,681 | 288,278 |
+| `claude-opus-5-5` | 12 / 12 | 12 / 12 | 210,593 | 319,305 |
+| `gpt-6.1-sol` | 9 / 12 | 12 / 12 | 173,697 | 199,080 |
+| **Total** | **57 / 72** | **66 / 72** | 15.9M total | 22.0M total |
+
+`C-DUPLICATE` went from 4 to 13; the other templates were even. During measurement 1
+another session stopped the shared Hermes gateway (01:59:52 to 02:01:13 KST), which
+interrupted every running turn and failed the next runs at launch. Every cell (model,
+arm, template) with a run overlapping that window was moved aside and run again in full,
+and `agent.run_budget_seconds: 600` was added to both profiles then.
+
+**Neither measurement can ship the checklist.** An independent review found a defect
+that the gate did not measure: the checklist displaced the turn's final answer. Hermes
+keeps the answer the model stopped with only as an interim message, and returns
+whatever the model says after the nudge as the turn's final response. That is the
+response `--oneshot`, API and delegating callers receive. The checklist ended "say so in
+one line and finish", so models finished with a report on the check. The bench missed
+this because it grades the answer file. Read from the session databases, the last
+assistant message contained the task's `changed_paths` answer in these sessions:
+
+| | off | on |
+| --- | ---: | ---: |
+| Measurement 1 | 48 / 72 | 3 / 72 |
+| Measurement 2 | 53 / 72 | 3 / 72 |
+
+The token figures were also re-counted. The on arm ran pytest 62 times in 49 sessions
+after the checklist in measurement 1, and 10 times in 10 sessions in measurement 2. The
+off arm ran it 24 and 23 times after its last code edit. Counted by `session_counts.py`.
+A sentence in earlier commits said "62 of 72 sessions": that was the number of calls,
+not of sessions.
+
+What measurements 1 and 2 show, and what they do not:
+
+- The pass margin is inside noise. The off arm ran identical code both times and moved
+  from 57 to 61. Measurement 2's 65 vs 61 alone has a two-sided Fisher exact p of 0.45,
+  and measurement 1's 66 vs 57 has 0.057. Pooled over both, the totals are 131 vs 118 of
+  144 (p = 0.038).
+- The one effect that stands out is `C-DUPLICATE`: pooled, 25 vs 12 of 36 (p = 0.004).
+  A model fixed a second copy of the logic that the task did not name, after searching
+  for other uses: `search_files` and `read_file` were most of the 1.8 extra calls per
+  session in measurement 2.
+- `C-DUPLICATE` plants exactly the defect the checklist names, and the corpus had no
+  negative case for it. Measurement 3 adds one (`C-DECOY`, below).
+- Scope did not move. No model took the `C-SCOPE-TRAP` bait in either arm. The one
+  `mutation_outside_scope` in each arm is `gpt-6-luna` on the same `E-BUGFIX` seed.
+- Weak models gained in measurement 1 (27 to 31) and not in measurement 2 (29 to 29).
+  Strong models gained in both (30 to 35, 32 to 36). n = 12 per model per arm.
+- The one measurement-2 coding session without the checklist (opus, `E-BUGFIX`) was
+  dropped by Hermes, not by OMH. The profile log reads "Hook 'pre_verify' callback
+  pre_verify skipped after previous timeout or while still running". `pre_verify` has no
+  entry in `_HOOK_CALL_IDENTITY_FIELDS` (`hermes_cli/plugins_dispatch.py`). So two
+  sessions of one profile that reach the hook at the same moment share one gate key, and
+  the second call is skipped.
+
+#### Measurement 3, pre-registered before its first run
+
+Changes from measurement 2:
+
+- The checklist's last line now asks for the final answer to the task again, in full and
+  in the form the task asked for, because it replaces the answer just given. It also
+  says not to answer with a report on the check.
+- Delegated children (`platform == "subagent"`) get no checklist.
+- New template `C-DECOY`, the negative case for `C-DUPLICATE`. It has the same rounding
+  bug in one module, next to a look-alike helper whose half-to-even rounding is
+  required, documented, and pinned by a test. Changing the look-alike's code scores
+  `decoy_changed`.
+- 5 templates × 3 seeds = 15 runs per model per arm, 90 per arm. Same panel, same flags,
+  subscription routes only. Fresh profiles `cebench-off3` and `cebench-on3`, both with
+  `agent.max_turns: 120` and `agent.run_budget_seconds: 600`.
+
+The gate keeps every clause above unchanged, now over 90 runs per arm, and adds two:
+
+- Final answer kept: the number of runs whose last assistant message contains
+  `changed_paths` is, in the on arm, at least the off arm's minus 2. It is read from the
+  session databases.
+- `C-DECOY`: on at least off - 1.
+
+If measurement 3 fails a clause, it is recorded here and the checklist does not merge.
+
+#### Measurement 3 result: gate failed, the checklist does not merge
+
+omh `4f5c4a053` on origin/main `5cc1ed311`, Hermes Agent v0.22.5 · stable · local
+bf0203a794a0. 180 of 180 run records, all completed. No gateway outage.
+
+| Model | off | on | off tokens (median) | on tokens (median) |
+| --- | ---: | ---: | ---: | ---: |
+| `claude-haiku-4-5-20251001` | 12 / 15 | 12 / 15 | 238,984 | 388,392 |
+| `claude-haiku-5-5` | 15 / 15 | 15 / 15 | 243,744 | 284,464 |
+| `gpt-6-luna` | 12 / 15 | 13 / 15 | 217,959 | 326,159 |
+| `claude-sonnet-5-5` | 13 / 15 | 15 / 15 | 171,075 | 243,310 |
+| `claude-opus-5-5` | 15 / 15 | 15 / 15 | 208,441 | 280,784 |
+| `gpt-6.1-sol` | 14 / 15 | 15 / 15 | 173,835 | 218,535 |
+| **Total** | **81 / 90** | **85 / 90** | 19.0M total | 27.2M total |
+
+Per template, off vs on: `E-BUGFIX` 18 vs 17, `E-RENAME` 18 vs 18, `C-DUPLICATE` 9 vs 15,
+`C-SCOPE-TRAP` 18 vs 17, `C-DECOY` 18 vs 18.
+
+The gate:
+
+- Total, on at least off + 3: 85 vs 81. Pass.
+- Strong models, on at least off - 1: 45 vs 42. Pass.
+- `mutation_outside_scope`, on at most off: 1 vs 0. **Fail.** The one run was
+  `claude-haiku-4-5-20251001`, `E-BUGFIX`.
+- Median tokens, on at most 1.3x off: 281,158 vs 207,898, 1.35x. **Fail.**
+- No on run above 3x its off pair's median. **Fail, two runs:** `gpt-6-luna`
+  `E-RENAME` (3.20x) and `C-DECOY` (3.19x).
+- Fired in at least 90% of coding sessions, at most once per turn: 90 / 90, never
+  twice; 0 rows in the off arm. Pass.
+- Final answer kept, on at least off - 2: 90 / 90 vs 58 / 90. Pass.
+- `C-DECOY`, on at least off - 1: 18 vs 18. Pass.
+
+What measurement 3 shows:
+
+- The final-answer line works. Every on-arm run ended on a message carrying the task's
+  answer, which is more than the off arm, where models often end with prose.
+- It costs tokens again. Told to give the answer "again, in full", models re-ran their
+  tests before answering: 48 pytest runs in 46 of 90 sessions after the checklist,
+  against 10 in 10 of 72 in measurement 2. The off arm had 26 after its last code
+  edit. Counted by `session_counts.py`. Median tokens went from 1.21x to 1.35x.
+- The decoy did not catch a false consistency fix. No model changed the documented
+  half-to-even look-alike in either arm. So the `C-DUPLICATE` gain is not this
+  checklist making models change look-alike code blindly. This corpus has one decoy
+  shape only.
+- Scope moved the wrong way, at n = 1 each: one on-arm `mutation_outside_scope`
+  (haiku-4-5, `E-BUGFIX`). There was also one on-arm `unrequested_edit` (`gpt-6-luna`,
+  `C-SCOPE-TRAP`), where the off arm had none. Neither is established as caused by the
+  checklist.
+- `C-DUPLICATE` is still the only effect that stands out: 9 vs 15 here (p = 0.075).
+  Pooled over the three measurements it is 21 vs 40 of 54 (two-sided Fisher exact
+  p = 0.0004). The total margin, 85 vs 81, has p = 0.40.
+
+The checklist branch stays unmerged. Changing the wording again (for example, asking
+for the answer without re-running checks) needs the owner's decision and a new
+pre-registered measurement.
+
+#### Measurement 4, pre-registered before its first run (the last one)
+
+This is the fourth measurement of this feature family against one gate, so a pass
+should be read with that in mind. The owner chose a fourth and final attempt. If it
+fails any clause, the PR closes and there is no fifth.
+
+The feature is narrower, not reworded. Only the consistency check holds across
+measurements: `C-DUPLICATE`, pooled over measurements 1 to 3, is 40 vs 21 of 54. The
+scope and verification lines showed no effect, and the "check again" and "answer again
+in full" wording drove the token cost through test re-runs. So the continuation now
+carries one check: look for other copies or call sites of the logic changed this turn
+that have to change with it, and fix any found. It also says:
+
+- do not re-run tests or re-check anything else;
+- restate the final answer exactly as given, in the form the task asked for, updated
+  only if something more changed;
+- give no report on this check.
+
+The subagent skip stays.
+
+The setup is that of measurement 3:
+
+- the same panel and the same five templates (including `C-DECOY`), 15 runs per model
+  per arm;
+- subscription routes only;
+- fresh profiles `cebench-off4` and `cebench-on4`, each with `agent.max_turns: 120` and
+  `agent.run_budget_seconds: 600`.
+
+The gate is the same eight clauses with unchanged thresholds:
+
+- Total: on at least off + 3.
+- Strong models: on at least off - 1.
+- `mutation_outside_scope`: on at most off.
+- Median tokens: on at most 1.3x off.
+- No on run above 3x the off median of its model and template.
+- The check fires in at least 90% of on-arm coding sessions, and at most once per turn.
+- Final answer kept: on at least off - 2.
+- `C-DECOY`: on at least off - 1.
+
+The result is reported here with pooled `C-DUPLICATE` over all four measurements.
+
+#### Measurement 4 result: gate failed, item closed
+
+omh `530068797` on origin/main `5cc1ed311`, Hermes Agent v0.22.5 · stable · local
+bf0203a794a0. 180 of 180 run records, all completed.
+
+| Model | off | on | off tokens (median) | on tokens (median) |
+| --- | ---: | ---: | ---: | ---: |
+| `claude-haiku-4-5-20251001` | 12 / 15 | 15 / 15 | 268,730 | 318,424 |
+| `claude-haiku-5-5` | 15 / 15 | 15 / 15 | 243,538 | 302,141 |
+| `gpt-6-luna` | 12 / 15 | 14 / 15 | 241,621 | 306,662 |
+| `claude-sonnet-5-5` | 13 / 15 | 15 / 15 | 172,363 | 246,287 |
+| `claude-opus-5-5` | 15 / 15 | 15 / 15 | 207,843 | 283,440 |
+| `gpt-6.1-sol` | 14 / 15 | 15 / 15 | 174,484 | 216,839 |
+| **Total** | **81 / 90** | **89 / 90** | 19.5M total | 25.9M total |
+
+Per template, off vs on: `E-BUGFIX` 18 vs 17, `E-RENAME` 18 vs 18, `C-DUPLICATE` 9 vs 18,
+`C-SCOPE-TRAP` 18 vs 18, `C-DECOY` 18 vs 18.
+
+The gate:
+
+- Total, on at least off + 3: 89 vs 81. Pass.
+- Strong models, on at least off - 1: 45 vs 42. Pass.
+- `mutation_outside_scope`, on at most off: 1 vs 0. **Fail.** The one run was
+  `gpt-6-luna`, `E-BUGFIX`.
+- Median tokens, on at most 1.3x off: 280,668 vs 207,804, 1.35x. **Fail.**
+- No on run above 3x its off pair's median. Pass.
+- Fired in at least 90% of coding sessions, at most once per turn: 90 / 90, never
+  twice; 0 rows in the off arm. Pass.
+- Final answer kept, on at least off - 2: 89 / 90 vs 61 / 90. Pass.
+- `C-DECOY`, on at least off - 1: 18 vs 18. Pass.
+
+What the four measurements show together:
+
+- **Consistency is a real effect on this corpus.** `C-DUPLICATE` was 18 vs 9 in
+  measurement 4 (two-sided Fisher exact p = 0.001). Pooled over all four measurements it
+  is 58 vs 30 of 72 (p < 0.0001). This is the fourth measurement of one feature family,
+  and the template plants exactly the miss the check names. `C-DECOY` (18 vs 18 in
+  measurements 3 and 4) shows the check did not make models change a documented
+  look-alike. It is one decoy shape.
+- **The cost does not come from re-running tests.** The consistency-only text stopped
+  test re-runs entirely: 0 pytest calls after the check, against 48 in measurement 3.
+  Median tokens still rose 1.35x. The cost is the extra round itself: about two more
+  model calls, each re-sending the whole context, to search for other uses and restate
+  the answer. On these short tasks, about 200k tokens each, that round is a large
+  fraction. No wording change removes it.
+- **Scope failed at n = 1 in measurements 3 and 4, a different model each time.** Each
+  was one on-arm `mutation_outside_scope` on `E-BUGFIX`, against none off. Whether the
+  extra round causes stray edits is not established.
+- Weak models gained 39 to 44 and strong 42 to 45 in measurement 4.
+
+Item B closes here, unmerged, as the owner decided before the run. The code stays on
+branch `feature/round-end-checklist` (`530068797`). A future attempt would need a gate
+that prices the extra round differently, or a cheaper way to ask for the check than a
+continuation. Either is a new decision for the owner.
+
+The owner later reversed this. See "Owner decision, 2026-10-30 (after measurement 4)" below.
+
+#### Owner decision, 2026-10-30 (after measurement 4)
+
+After measurement 4, the owner relaxed the median-token clause from 1.3x to 1.4x and chose
+to merge the measurement-4 design, the consistency-only check at `530068797`. The owner gave
+these reasons:
+
+- The runs go through subscription routes.
+- Measurement 4 gained 8 passes in total (89 vs 81), and `C-DUPLICATE` went from 9 to 18.
+- Pooled over all four measurements, `C-DUPLICATE` is 58 vs 30 of 72 (two-sided Fisher
+  exact p of about 3e-6).
+- The decoy was even, 18 vs 18.
+- The final answer was kept in 89 of 90 runs.
+
+This does not mean measurement 4 passed the gate it was registered against. It did not:
+it failed the token clause (1.35x against 1.3x) and the scope clause. Against the relaxed
+gate, measurement 4 passes every clause except scope. That is `mutation_outside_scope` 1 vs
+0, one `gpt-6-luna` `E-BUGFIX` run, and its cause is not established. The owner accepted
+that miss with the merge. The thresholds above and the measurement records are unchanged.
+
+#### Measurement 5, pre-registered before its first run
+
+A second review of the measurement-4 design, after the owner decision, found two
+conflicts in the joined message.
+
+- **The served-surface gate.** Its "run the smallest real load or check" request
+  sat beside the check's "do not re-run tests or re-check anything else".
+- **The open-plan directive.** It sat beside "restate your final answer".
+
+The owner chose a fix and one more measurement, merging if it passes. Measurement
+5 is the fifth measurement of this feature family. The changes from measurement 4:
+
+- **The check is scoped.** It now says "Do not re-run tests for this check", and a
+  served-surface request beside it stands.
+- **One closing sentence.** It goes last, and only when no plan directive is open.
+  With an open plan the message has no closing and nothing is stashed. The order is
+  served-surface gate, consistency check, plan directive, closing. #2410's impact
+  note goes between the gate and the check once it lands.
+- **The sentinel.**
+  - The closing asks for one fixed line, `OMH: no further changes.`, when nothing
+    more changed, or the full updated answer otherwise.
+  - `pre_verify` stashes the answer the turn stopped with, in process, per session,
+    bounded and aged out.
+  - `transform_llm_output` swaps the sentinel back to that answer before Hermes
+    persists the final row, and clears the stash on every turn end. It never swaps
+    without a stash.
+- **The OMH TUI** keeps the streamed sentinel line instead of printing the restored
+  answer a second time.
+
+The setup is that of measurement 4, on fresh profiles `cebench-off5` and
+`cebench-on5`: the same panel, the same five templates including `C-DECOY`, 15 runs
+per model per arm, subscription routes only, `agent.max_turns: 120` and
+`agent.run_budget_seconds: 600`.
+
+The gate keeps the measurement-4 clauses, with the token clause at the owner's 1.4x.
+The scope clause is stated as registered, and its result is reported as measured.
+
+- Total: on at least off + 3.
+- Strong models: on at least off - 1.
+- `mutation_outside_scope`: on at most off.
+- Median tokens: on at most 1.4x off.
+- No on run above 3x the off median of its model and template.
+- The check fires in at least 90% of on-arm coding sessions, and at most once per
+  turn.
+- Final answer kept: the last assistant message contains `changed_paths`, on at
+  least off - 2.
+- `C-DECOY`: on at least off - 1.
+- Swap fidelity, new.
+  - Read from the session DB: in every on-arm session where the sentinel was used,
+    the persisted final answer equals the pre-check answer byte for byte.
+  - Both rows are persisted: the pre-check answer is the interim row with
+    `finish_reason = 'verify_hook_continue'`, and the final answer is the last
+    assistant row.
+  - The model's raw reply is not stored once swapped. So a session counts as having
+    used the sentinel when its final row equals its interim row byte for byte, or
+    when its final row is still the sentinel line.
+  - The clause fails if any session's final row is the sentinel line (a swap that
+    did not happen).
+
+The result is reported here, with pooled `C-DUPLICATE` over all five measurements.
+If measurement 5 fails a clause, it is recorded and there is no further iteration.
+
+#### Measurement 5 result: every clause passes
+
+omh `b707b6281` on origin/main `4b7674616`, Hermes Agent v0.22.5 · stable · local
+bf0203a794a0. 180 of 180 run records, all completed. A three-run smoke on a separate
+profile (`cebench-smoke5`) checked the swap before the run, and is not counted here.
+
+| Model | off | on | off tokens (median) | on tokens (median) |
+| --- | ---: | ---: | ---: | ---: |
+| `claude-haiku-4-5-20251001` | 12 / 15 | 15 / 15 | 268,044 | 388,258 |
+| `claude-haiku-5-5` | 15 / 15 | 15 / 15 | 216,739 | 317,480 |
+| `gpt-6-luna` | 10 / 15 | 15 / 15 | 226,839 | 335,894 |
+| `claude-sonnet-5-5` | 14 / 15 | 15 / 15 | 172,393 | 248,950 |
+| `claude-opus-5-5` | 15 / 15 | 15 / 15 | 208,639 | 280,572 |
+| `gpt-6.1-sol` | 12 / 15 | 15 / 15 | 174,684 | 217,182 |
+| **Total** | **78 / 90** | **90 / 90** | 19.3M total | 26.7M total |
+
+Per template, off vs on: `E-BUGFIX` 16 vs 18, `E-RENAME` 18 vs 18, `C-DUPLICATE` 8 vs 18,
+`C-SCOPE-TRAP` 18 vs 18, `C-DECOY` 18 vs 18. Failure codes: off has `copy_not_updated`
+10 and `mutation_outside_scope` 2; on has none.
+
+The gate:
+
+- Total, on at least off + 3: 90 vs 78. Pass.
+- Strong models, on at least off - 1: 45 vs 41. Pass.
+- `mutation_outside_scope`, on at most off: 0 vs 2. Pass.
+- Median tokens, on at most 1.4x off: 283,865 vs 206,990, 1.37x. Pass.
+- No on run above 3x its off pair's median. Pass.
+- Fired in at least 90% of coding sessions, at most once per turn: 90 / 90, never twice;
+  0 rows in the off arm. Pass.
+- Final answer kept, on at least off - 2: 67 / 90 vs 61 / 90. Pass.
+- `C-DECOY`, on at least off - 1: 18 vs 18. Pass.
+- Swap fidelity: 67 sessions used the sentinel and their final row equals the pre-check
+  answer byte for byte; 0 final rows are still the sentinel line. Pass.
+
+What it shows, and what it does not:
+
+- **`C-DUPLICATE` is 18 vs 8** (two-sided Fisher exact p = 0.0003). Pooled over all five
+  measurements it is 76 vs 38 of 90 (p ≈ 5e-9). That is five measurements of one feature
+  family, and the template plants exactly the miss the check names. `C-DECOY` stayed
+  even in all three measurements that had it.
+- **Weak models gained most:** 37 to 45. Strong models went from 41 to 45.
+- **Tokens are 1.37x** the off median, with no test re-runs after the check (0 calls).
+  The cost is the extra round itself. Measured only on these short tasks of about 200k
+  tokens; whether long turns pay proportionally less is not measured.
+- **A residual, inside the gate.** In 23 on-arm sessions the model did not use the
+  sentinel. For 11 of them the final answer was an updated answer that carried
+  `changed_paths`: 8 from gpt-6-luna, gpt-6.1-sol, sonnet and haiku-5-5, and 3 from
+  haiku-4-5. For 12 of the 15
+  `claude-haiku-4-5-20251001` sessions it was a report on the check ("No other call
+  sites exist ...") rather than the answer. So that model's final response is still
+  displaced. The final-answer clause passes because, read by `changed_paths`, the off
+  arm also often ends on prose.
+- **Swap fidelity is read from the DB only.** The model's raw reply is not stored once
+  swapped, so "the sentinel was used" is inferred from final == pre-check byte for byte.
+
+Measurement 5 passed the gate registered for it at `b707b6281`. The owner decided to
+merge if it passed.
+
+After measurement 5, a review changed the stash lifecycle. That is why the description
+above, written for `b707b6281`, no longer matches the shipped code.
+
+- The stash is now consumed only by a sentinel match. A non-sentinel
+  `transform_llm_output` no longer clears it, because Hermes's background-review fork
+  shares the session id and could otherwise take it.
+- A leftover stash is cleared at the session's next turn start (`pre_llm_call`).
+- The sentinel also matches when wrapped in `**`, `*`, `_`, backticks or quotes, or
+  written without its period.
+- A delegated child that gets only the impact note is asked for its full answer, and
+  nothing is stashed for it.
+- The OMH TUI dedupes only when Hermes marks the reply `response_transformed`.
+
+None of these changes the measured path: no review fork ran in these one-shot bench
+sessions, and no bench run is a delegated child. Measurement 5 was not re-run.
+
+Pass counts come from the run records. Firing, final answers and tool calls come from
+each profile's session DB.
 ### 2026-10-30 impact check: callers broken by an edit, off vs on (`impact_check` + `lsp_diagnostics`), gate passed
 
 One question, from oh-my-pi's workspace diagnostics: when an edit changes a definition, does
