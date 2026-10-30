@@ -86,6 +86,10 @@ class Frame:
     budget: Budget
 
 
+# The live rows a tail cut short must still show above its spacer for the spacer to stay (`build_frame`).
+SPACER_LIVE_ROWS = 6
+
+
 def build_frame(
     *,
     cols: int,
@@ -180,8 +184,12 @@ def build_frame(
 
     budget = fit(tail)
     spacer = len(tail) - tail_floor - 1  # the blank row `tail_spacer` says stands right above the working rows
-    if tail_spacer and budget.tail < len(tail) and 0 <= spacer and not tail[spacer]:
-        tail = [*tail[:spacer], *tail[spacer + 1 :]]  # a tail cut short gives its spacer up before a live row
+    # A tail cut short keeps its spacer and loses its oldest live row instead (owner, 2026-10-30: the working row
+    # read glued to the last block), so long as `SPACER_LIVE_ROWS` live rows still show above it; on a terminal too
+    # short for that the spacer goes first, as #2342 asked, so a gap never costs one of the few live rows.
+    if tail_spacer and budget.tail < len(tail) and budget.tail - tail_floor - 1 < SPACER_LIVE_ROWS \
+            and 0 <= spacer and not tail[spacer]:
+        tail = [*tail[:spacer], *tail[spacer + 1 :]]
         budget = fit(tail)
     rule = rule_line(cols, theme)
     if glow and not composer_blank:

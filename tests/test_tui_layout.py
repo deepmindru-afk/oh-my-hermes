@@ -345,6 +345,30 @@ class GapsNeverCostALiveRowTests(unittest.TestCase):
         rule = next(index for index, row in enumerate(screen) if row.startswith("─") and index > plan)
         self.assertEqual((screen[plan - 1], screen[rule - 1]), ("", ""), "\n".join(screen))
 
+    def test_a_tall_terminal_keeps_the_spacer_over_the_working_row_when_the_tail_is_cut(self) -> None:
+        """Owner, 2026-10-30: on a tall terminal during a long turn `✻ Working…` read glued to the last tool row, since
+        a tail cut short gave its spacer up first. With `SPACER_LIVE_ROWS` live rows still above it the spacer stays
+        and the oldest live row goes instead."""
+        from omh.tui.gateway import Event
+        from test_tui_modes import SID, make_app
+
+        now = [100.0]
+        app, _client = make_app(rows=30, cols=110, clock=lambda: now[0])
+        for index in range(30):
+            app.transcript.add_notice(f"earlier line {index}")
+        app._submit_prompt("write the report")
+        app._on_event(Event("message.start", SID, {}))
+        for index in range(16):
+            now[0] += 0.2
+            app._on_event(Event("tool.start", SID, {"tool_id": f"t{index}", "name": "read_file",
+                                                    "context": f"f{index}.py"}))
+        app._render()
+        screen = app.terminal.screen.lines()
+        working = next(index for index, row in enumerate(screen) if row.startswith("✻ Working"))
+        self.assertNotIn("read_file(f0.py)", "\n".join(screen))  # the tail is cut
+        self.assertEqual(screen[working - 1], "", "\n".join(screen))
+        self.assertIn("read_file(f15.py)", screen[working - 2], "\n".join(screen))
+
 
 class HiddenComposerBudgetTests(unittest.TestCase):
     """While the person picks from a list the composer frame is not drawn and the slot takes its rows."""

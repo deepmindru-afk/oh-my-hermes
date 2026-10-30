@@ -42,9 +42,10 @@ from .width import cell_width, line_width, truncate_line
 # says it too, and `app` imports this module.
 NO_SESSION_NOTICE = "No session is open yet; try again in a moment."
 
-# The info line under the composer. Its left side is the badge, the mode's label, the agent count and the keys that
-# matter now (none in the normal mode between turns: the launch card names `?`); its right side is the branch and what
-# `App._info_right` gives (model, context, effort), cut down first when the line is narrow.
+# The info line under the composer. Its left side is the badge, the branch, the background-process row, the mode's
+# label, the agent count and the keys that matter now (none in the normal mode between turns: the launch card names
+# `?`); its right side is what `App._info_right` gives (title, model, context, effort), cut down first when the line is
+# narrow (`info_line`).
 # After accept's or plan's label: what Shift+Tab does next. `{cycle}` is CYCLE_WORDS while the key walks normal, accept
 # all and plan; while Hermes has approvals off on its own it turns plan on and off and nothing else (`HERMES_OWN_CYCLE`).
 MODE_HINTS = (" (⇧⇥ {cycle})", "")
@@ -186,18 +187,25 @@ def info_line(
     cycle: str = "",
     badge: Sequence[Line] = (),
     branch: Sequence[Line] = (),
+    background: Sequence[Line] = (),
+    right_spare: int = 0,
 ) -> Line:
-    """The one line under the composer. Its left side is `badge` (`[⚚ OMH Native]`), `branch` (the git branch), the
-    mode's label (accept, plan, a shell line), the agent count and the keys that matter now, `BADGE_GAP` cells between
-    the first three; its right side is the first of `right` (the title, the model, the context, the effort) that leaves
-    room for the left side whole. `badge`, `branch` and `right` are forms, longest first.
+    """The one line under the composer. Its left side is `badge` (`[⚚ OMH Native]`), `branch` (the git branch),
+    `background` (the background-process row: `background.running_forms`), the mode's label (accept, plan, a shell
+    line), the agent count and the keys that matter now, `BADGE_GAP` cells between the first four; its right side is
+    the first of `right` (the title, the model, the context, the effort) that leaves room for the left side whole.
+    `badge`, `branch`, `background` and `right` are forms, longest first.
 
-    What gives way, in order: the right side (through its forms, then
-    whole), then the branch's name (`branch`'s shorter forms), then the
-    badge (to `[⚚ OMH]`, then `⚚`, then none), then the branch; the
-    label, the agent count and what the next key does (a question's or a
-    picker's way out) keep their words until all of those are gone, and
-    only then shorten.
+    What gives way, in order: the first `right_spare` of the right
+    side's forms (the session's title), then the background-process row
+    (through its forms, then whole), then the rest of the right side
+    (through its forms, then whole), then the branch's name (`branch`'s
+    shorter forms), then the badge (to `[⚚ OMH]`, then `⚚`, then none),
+    then the branch; the label, the agent count and what the next key
+    does (a question's or a picker's way out) keep their words until all
+    of those are gone, and only then shorten. So the row goes before the
+    model, the context and the effort shorten, and a terminal too narrow
+    for those shows none of it.
 
     `chip` is the count of the agents in the view under the line while there
     are any, after the label. `say`, when given, is what the next key
@@ -238,7 +246,7 @@ def info_line(
     whole = line_width(label_of(0)) + (cell_width(placed(hints, label_of(0))[0]) if hints else 0)
 
     def lead(*parts: Line) -> Line:
-        """The badge and the branch forms shown, `BADGE_GAP` cells after each but a last one nothing follows."""
+        """The badge, branch and background forms shown, `BADGE_GAP` cells after each but a last one nothing follows."""
         shown = [part for part in parts if part]
         gap = Span(" " * BADGE_GAP)
         joined: Line = ()
@@ -249,15 +257,19 @@ def info_line(
     def fits(left: int, side: Line) -> bool:
         return left + (INFO_GAP + line_width(side) if side else 0) <= width
 
-    badges, branches = list(badge) or [()], list(branch) or [()]
-    tries = [(badges[0], branches[0], side) for side in [*(form for form in right if form), ()]]
-    tries += [(badges[0], form, ()) for form in branches[1:]]
-    tries += [(form, branches[-1], ()) for form in [*badges[1:], ()]]
-    tries += [((), (), ())]
-    shown_badge, shown_branch, shown_right = next(
-        (tried for tried in tries if fits(line_width(lead(tried[0], tried[1])) + whole, tried[2])), tries[-1]
+    badges, branches, rows = list(badge) or [()], list(branch) or [()], list(background) or [()]
+    sides = [*(form for form in right if form), ()]
+    spare = min(right_spare, len(sides) - 1)
+    tries = [(badges[0], branches[0], rows[0], side) for side in sides[: spare + 1]]
+    tries += [(badges[0], branches[0], form, sides[spare]) for form in [*rows[1:], ()]]
+    tries += [(badges[0], branches[0], (), side) for side in sides[spare + 1 :]]
+    tries += [(badges[0], form, (), ()) for form in branches[1:]]
+    tries += [(form, branches[-1], (), ()) for form in [*badges[1:], ()]]
+    tries += [((), (), (), ())]
+    shown_badge, shown_branch, shown_row, shown_right = next(
+        (tried for tried in tries if fits(line_width(lead(*tried[:3])) + whole, tried[3])), tries[-1]
     )
-    front = lead(shown_badge, shown_branch)
+    front = lead(shown_badge, shown_branch, shown_row)
     room = width - (line_width(shown_right) + INFO_GAP if shown_right else 0) - line_width(front)
     label = label_of(0)
     hint = ""
