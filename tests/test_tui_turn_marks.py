@@ -3,9 +3,9 @@
 Your prompt sits on no band: a dim `>` and dim text, as Claude Code shows it.
 A band (an outcome's) fills to the right edge by an erase in its background
 rather than by spaces. A prompt the queue sent once the turn before it ended
-says `⧗ from queue`. A steer shows as
-`↪ steer · <text>` under what is running until Hermes answers, and is
-written into the transcript at the next block boundary after that, so it
+says `⧗ from queue`. A steer shows as a dim prompt row (`┃ ❯ <text>`) under
+what is running until the turn takes it in, and is written into the
+transcript, as any prompt reads, at the next block boundary after that, so it
 never closes a running tool group (whose calls would read as cut off) or
 splits a streaming reply. A turn's done line sits right above the panel
 however tall its last tool group was.
@@ -34,7 +34,7 @@ from omh.tui.transcript import (
     NOTICE_OK,
     NOTICE_WARN,
     OUTPUT_FAILED,
-    STEER_READ,
+    STEER_TAKEN,
     TOOL_DENIED,
     TOOL_ERROR,
     TOOL_OK,
@@ -268,18 +268,18 @@ class SteerPlacementTests(unittest.TestCase):
         app._on_event(ev("tool.start", tool_id="t1", name="terminal", context="pytest"))
         self.steer(app, "only the failing test")
         live = lines_text(app.transcript.live_lines(80, THEME))
-        self.assertEqual(live[-1], "↪ steer · only the failing test")  # under what is running, until Hermes answers
+        self.assertEqual(live[-1], "┃ ❯ only the failing test")  # under what is running, until Hermes answers
         answer(app, client, {"status": "queued", "text": "only the failing test"})
         group = app.transcript.blocks[-1]
         self.assertIsInstance(group, ToolGroup)
         self.assertEqual(group.tools[0].status, TOOL_RUNNING)  # not cut off by the steer
-        self.assertEqual(lines_text(app.transcript.live_lines(80, THEME))[-1], "↪ steer · waits for the current step · only the failing test")
+        self.assertEqual(lines_text(app.transcript.live_lines(80, THEME))[-1], "┃ ❯ only the failing test")
         app._on_event(ev("tool.complete", tool_id="t1", name="terminal", result={"output": "1 passed"}))
         app._on_event(ev("message.delta", text="Running only that test now."))
         kinds = [type(block) for block in app.transcript.blocks]
         self.assertEqual(kinds, [ToolGroup, SteerBlock, AssistantBlock])
         self.assertEqual(app.transcript.blocks[0].tools[0].status, TOOL_OK)
-        self.assertEqual(app.transcript.blocks[1].state, STEER_READ)  # the tool's result carried it to the model
+        self.assertEqual(app.transcript.blocks[1].state, STEER_TAKEN)  # the tool's result carried it to the model
 
     def test_the_steer_command_is_its_own_echo_and_leaves_a_running_tool_running(self) -> None:
         # Found live: `> /steer ...` echoed as a command closed the tool group and marked the running call `▪`.
@@ -291,7 +291,7 @@ class SteerPlacementTests(unittest.TestCase):
         answer(app, client, {"status": "queued", "text": "also echo steered"})
         (group,) = app.transcript.blocks
         self.assertEqual(group.tools[0].status, TOOL_RUNNING)
-        self.assertEqual(lines_text(app.transcript.live_lines(80, THEME))[-1], "↪ steer · waits for the current step · also echo steered")
+        self.assertEqual(lines_text(app.transcript.live_lines(80, THEME))[-1], "┃ ❯ also echo steered")
         self.assertEqual(app.composer.history[-1], "/steer also echo steered")  # Up still finds what was typed
 
     def test_a_steer_during_a_streaming_reply_does_not_split_it(self) -> None:
@@ -325,23 +325,22 @@ class SteerPlacementTests(unittest.TestCase):
         drawn(app)
         screen = "\n".join(app.terminal.screen.history())  # type: ignore[attr-defined]  # scrollback and the screen
         for words in ("SLOW-START the first reply SLOW-END", "Reply #2 to: steer me. REPLY-END-2",
-                      "↪ steer · taken by Hermes · steer me"):
+                      "┃ ❯ steer me"):
             self.assertEqual(screen.count(words), 1, screen)
-        self.assertLess(screen.index("REPLY-END-2"), screen.index("↪ steer · taken by Hermes"), screen)
+        self.assertLess(screen.index("REPLY-END-2"), screen.index("┃ ❯ steer me"), screen)
 
     def test_the_screen_shows_the_steer_waiting_then_once_in_scrollback(self) -> None:
         app, client = make_app(busy=True, rows=16)
         app._on_event(ev("message.start"))
         app._on_event(ev("tool.start", tool_id="t1", name="terminal", context="ls"))
         self.steer(app, "and the docs")
-        self.assertIn("↪ steer · and the docs", drawn(app))
+        self.assertIn("┃ ❯ and the docs", drawn(app))
         answer(app, client, {"status": "queued", "text": "and the docs"})
         app._on_event(ev("tool.complete", tool_id="t1", name="terminal", result={"output": ""}))
         app._on_event(ev("message.complete", text="done", status="complete"))
         drawn(app)
         screen = app.terminal.screen.history()  # type: ignore[attr-defined]  # scrollback and the screen
-        self.assertEqual(screen.count("↪ steer · ✓ read · and the docs"), 1, screen)
-        self.assertNotIn("↪ steer · and the docs", screen)
+        self.assertEqual(screen.count("┃ ❯ and the docs"), 1, screen)  # the waiting row went; the row taken in stays
 
     def test_a_refused_steer_reads_in_amber_and_waits_in_the_queue(self) -> None:
         app, client = make_app(busy=True)

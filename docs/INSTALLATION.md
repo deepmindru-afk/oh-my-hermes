@@ -728,8 +728,8 @@ run and approval decision stays Hermes'; the screen is OMH's.
   Hermes does not take comes back to the composer, and so does one Hermes
   has not answered in 120 s, which is never sent again; its row says which,
   with Hermes' reason when it gave one. Its row reads as the main
-  steer's does, naming the agent before the text (`↪ steer · <agent>:
-  <text>`, then `↪ steer · taken by Hermes · …`), and it and what `x` reports
+  steer's does, a prompt row naming the agent before the text (`❯ <agent>:
+  <text>`), and it and what `x` reports
   wait under the running call and are written at the next block boundary,
   so neither cuts that call off nor splits a reply.
 - The OMH TUI asks the terminal for click reports only while the agent list
@@ -1051,10 +1051,9 @@ run and approval decision stays Hermes'; the screen is OMH's.
     band behind it, on a grey rail; a prompt the queue sent says `⧗ from queue`. A command
     you run is echoed the same way, on the same rail (`┃ ❯ /model`), so a
     bare `❯` on the left edge is only ever the composer.
-  - A steer shows as `↪ steer · <text>` under what is running until Hermes
-    answers, then waits there as `↪ steer · waits for the current step ·
-    <text>` until the turn reads it (`✓ read`), or becomes the amber refusal
-    (see below).
+  - A steer shows as the prompt it is, dim under what is running until the
+    turn takes it in, then as any prompt you sent; a refused one is the amber
+    refusal (see below).
   - Each turn closes with its done line, dim and with no rule after it
     (`✻ 34s · 3 tools · ↓1.2k`), so the start of the next one is easy to
     find when you scroll back.
@@ -1300,17 +1299,14 @@ was and says so.
 A steer adds what you typed to the turn that is running, without interrupting
 it: Hermes reads it after its next tool call, or, while it is compressing the
 context, queues it and sends it as the next prompt once compression is done.
-Hermes gives the same answer for both. Until Hermes answers, the steer shows
-as `↪ steer · <text>` under what is running; once it took it, the row stays
-right above the working row as `↪ steer · waits for the current step`, with
-`↪ steer` bold and the state in amber, until the first tool that finishes
-carries it to the model, when it turns green (`↪ steer · ✓ read`). A turn
-that ends first leaves it `↪ steer · taken by Hermes` (Hermes read it before
-a later model call, or sends it as the next prompt, and does not say which),
-and a turn you stop before it was read says so (`⧗ not read — the turn
-stopped first`). The row is written into the transcript at the next boundary
-after that, never between calls that are still running or inside a streaming
-reply. If Hermes does not take the steer
+Hermes gives the same answer for both. The steer shows as a dim prompt row
+(`❯ <text>`) right above the working row, as Claude Code shows one, until the
+turn takes it in: the first tool that finishes carries it to the model, or the
+turn ends first (Hermes then read it before a later model call, or sends it as
+the next prompt). It then reads as any prompt you sent and is written into the
+transcript at the next boundary, never between calls that are still running
+or inside a streaming reply. A turn you stop before taking it in says so
+(`⧗ not read — the turn stopped first`). If Hermes does not take the steer
 while the turn still runs (an agent still starting, or one that takes no
 steer), the text joins the OMH TUI's own queue (`⧗`) and goes when the turn
 ends, whatever `display.busy_input_mode` says, so it never interrupts the

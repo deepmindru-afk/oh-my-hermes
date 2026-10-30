@@ -304,7 +304,6 @@ from .transcript import (
     OUTPUT_MARK,
     OUTPUT_MARKED,
     STEER_QUEUED,
-    STEER_READ,
     STEER_REFUSED,
     STEER_TAKEN,
     AssistantBlock,
@@ -659,8 +658,8 @@ INTERRUPTING = "interrupting…"
 
 # Hermes answers `queued` both when the running turn takes the steer (at its next tool call) and when it
 # queues the text as the next prompt because it is compressing the context; the transcript's
-# `↪ steer · waits for the current step` is true of both, until a tool finishes (`✓ read`) or the turn ends
-# (`taken by Hermes`). A steer it refuses says what became of the text instead.
+# steer's dim prompt row above the working row is true of both, until a tool finishes or the turn ends and it reads
+# as any prompt you sent. A steer it refuses says what became of the text instead.
 STEER_REFUSED_OUTCOME = "{fallback} — Hermes refused the steer ({reason})"
 STEER_FALLBACK_QUEUED = "queued"  # a turn still runs: the text waits in the TUI's queue for it to end
 STEER_FALLBACK_SENT = "sent as a prompt"
@@ -4874,7 +4873,7 @@ class App(ModesMixin, AgentViewMixin):
         """
         if event_type == "tool.complete":
             self.sent_now = []
-            self._settle_unread_steers(STEER_READ)
+            self._settle_unread_steers(STEER_TAKEN)
 
     def _settle_steers_at_turn_end(self) -> None:
         """The turn ends: a steer it stopped before reading was dropped (`_requeue_unread_steers`); one still unread

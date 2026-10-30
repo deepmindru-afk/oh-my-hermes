@@ -41,7 +41,6 @@ from omh.tui.theme import DEFAULT_THEME as THEME
 from omh.tui.theme import KIND_FAMILIES, TEXT_CONTRAST, build_theme, contrast_ratio, kind_style, surface_for, tool_family
 from omh.tui.transcript import (
     NOTICE_INFO,
-    STEER_MARK,
     STEER_QUEUED,
     TOOL_ERROR,
     TOOL_GENERATING,
@@ -522,7 +521,7 @@ class RunningBlueTests(unittest.TestCase):
             "image token": (build_frame(cols=60, rows=24, composer=token, info=(Span("info"),)).lines, "[Image #1]"),
             "history search": (search.lines(60, THEME, 4), SEARCH_LABEL),
             "paste chip": (build_frame(cols=60, rows=24, composer=composer, info=(Span("info"),)).lines, chip),
-            "steer": ([row for steer in steers for row in block_rows(steer, 60, THEME)], STEER_MARK),
+            "steer": ([row for steer in steers for row in block_rows(steer, 60, THEME)], "❯ look at c"),
         }
         for name, (lines, drawn) in sites.items():
             with self.subTest(site=name):
