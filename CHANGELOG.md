@@ -6,6 +6,16 @@ All notable changes will be documented here.
 
 ![Sprite Forge patch notes](https://raw.githubusercontent.com/rlaope/oh-my-hermes/main/assets/omh-sprite-forge-patch-notes.png)
 
+- **A `/compact` that is still running shows it is.** Hermes can take a
+  minute or more to summarize the older turns, and until its report came
+  the screen showed only the started notice and nothing moved, so a
+  compression that was working read as a stuck one. While a `/compress` (or
+  `/compact`) is out and no turn runs, the working row now shows a spinner
+  and `Compressing…` with the time it has taken so far, and it goes away
+  when the report or the unanswered notice lands. It offers no Esc, since
+  Esc between turns sends no interrupt and so does not stop a compression.
+  The working glow does not start for it, and a prompt typed meanwhile
+  still goes out as before.
 - **The working glow is smaller.** The light that goes round the screen
   while a turn runs read too big and hid most of the top row's text as it
   passed. Its trail is half as long (a seventh of the way round, from a
