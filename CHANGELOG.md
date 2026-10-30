@@ -675,6 +675,26 @@ All notable changes will be documented here.
   skill body was one only the Hermes arm was allowed to finish. The unit
   scope is now the whole checkout.
 
+- **show-reel now checks a film's motion the way an editor would, and has a
+  kinetic-type lane.** `motion_check.py` reads every frame at the film's own
+  frame rate and reports the share of still frames, each still stretch, cuts
+  per 10 seconds and back-and-forth flashes. The default `general` profile
+  flags a still stretch over one second; the `kinetic` profile, for fast
+  launch films, asks for 40% still frames or fewer and no still stretch over
+  0.6 seconds. `--endcard` leaves the end card out and `--reference` prints a
+  reference film's numbers beside yours. `music_tools.py analyze --bpm`
+  reads fast tracks at their real tempo instead of halving them, and reports
+  where the music drops, which `timeline.py` exposes as `music.drop1` cues.
+  Hard cuts listed in `project.json` `cuts` keep `render.mjs`'s motion blur
+  inside each shot, so the first frame after a cut is never a blend of two
+  shots. `qa_check.py` gains `max_h264_level` and macOS `hardware_decode`
+  policy keys, `finish.py` keeps 1080p share copies at H.264 level 4.2, and
+  `mix.py` lists sound effects that sit under the music. The opt-in
+  `references/kinetic-type.md` covers beat-unit authoring, the drop and the
+  kinetic gate, and stays out of explainer and evidence films. The method
+  notes were informed by Scenario's Kinetic Film exploration; OMH wrote its
+  own wording and code.
+
 ## 4.0.3 - 2026-10-27
 
 - **`plan` and `ralplan` name the goal beyond the request, the raw material,

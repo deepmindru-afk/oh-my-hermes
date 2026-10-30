@@ -204,7 +204,10 @@ class AiJobSearchContextBudgetTests(unittest.TestCase):
         # and reverting it reproduces c68f1cca2df78a15c4822345f421b1aab01c43d8f4ae0944accb41065bef384c.
         # Then frontend's observe-each-change quality-bar line; only frontend moves.
         # Then visual-qa's playable-check quality-bar line; only visual-qa moves, and its portable shadow pin is re-read.
-        self.assertEqual(_digest(legacy_hashes), '40cbc6d62e8eed6bf90ff03c3362ecf8bb6030ca055ceddc11150752cd84987f')
+        # Then show-reel's kinetic-type lane pointer (one opening-step line);
+        # only show-reel moves, and main's producer gives the previous pin
+        # 40cbc6d62e8eed6bf90ff03c3362ecf8bb6030ca055ceddc11150752cd84987f.
+        self.assertEqual(_digest(legacy_hashes), 'dea773e27e735e108611c1fe72c593375d3f70d89a79e0d3cd89bdef8b1f65e4')
         legacy = _skill_context_cost_profile('full', legacy_templates, refs)
         current = _skill_context_cost_profile('full', templates, refs)
         # Main's search guidance adds 305; repro-audit's mandatory rails 1,943.
