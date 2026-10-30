@@ -717,6 +717,19 @@ All notable changes will be documented here.
   notes were informed by Scenario's Kinetic Film exploration; OMH wrote its
   own wording and code.
 
+- **A delegated child no longer dies on a model its inherited provider does
+  not have.** A route written with no provider runs on the session's own, and
+  `omh_delegate_route` checks that provider can serve the model first. Two
+  gaps let a known-bad route through: a session on `custom:<name>` was looked
+  up under that spelling while OMH records the bare `<name>`, and a relay
+  block counted as serving every model even when its `providers.<name>` block
+  in `config.yaml` lists the models it has. Both now resolve, so a session on
+  a Claude-only relay sending a `gpt-6.1-sol` category head is caught. When
+  exactly one provider you configured is known to serve the model, the route
+  pins it instead of refusing (`provider_pinned` in the result names the
+  inherited and the pinned provider), on `set` and `fallback`; otherwise it is
+  refused as before, naming only providers that could serve it.
+
 ## 4.0.3 - 2026-10-27
 
 - **`plan` and `ralplan` name the goal beyond the request, the raw material,

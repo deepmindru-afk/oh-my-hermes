@@ -33,6 +33,8 @@ from ..hermes_delegation import (
     load_provider_entitlements,
     effective_provider_entitlements,
     provider_serves_alias,
+    provider_block_name,
+    providers_known_to_serve_alias,
     providers_serving_alias,
     mixture_chain_overrides_path,
     model_provider_routes_path,
@@ -49,7 +51,7 @@ from ..delegation_backend_mode import (
     read_backend_mode,
 )
 from ..route_endpoint_guard import managed_config_layer, route_endpoint_refusal
-from ..provider_detection import config_provider_base_url_hosts, configured_provider_ids
+from ..provider_detection import config_provider_base_url_hosts, config_provider_declared_models, configured_provider_ids
 from ..host_observation import OBSERVATION_SCHEMA, attach_public_observation, host_session_id, observe_plugin_tool_call
 from ..kanban_board_reader import conversation_session_ids
 from ..orchestration_say import route_say, with_say
@@ -264,6 +266,65 @@ def _legacy_custom_provider_names(config_text: str) -> set[str]:
             if value:
                 names.add(value)
     return names
+
+
+def _block_lists_alias(hermes_home: Any, provider_id: str, alias: str, wire_model: str) -> bool | None:
+    """Whether the `providers.<name>` block behind ``provider_id`` lists the model.
+
+    False only when the block exists and its `models:` section names neither
+    the alias nor its wire id; None (unknown) when there is no provider, no
+    readable config, no such block, or a block that lists nothing.
+    """
+    name = provider_block_name(provider_id)
+    if not name:
+        return None
+    text, _signature, error = read_config_snapshot(Path(hermes_home).expanduser() / "config.yaml")
+    if error:
+        return None
+    declared = config_provider_declared_models(text).get(name)
+    if not declared:
+        return None
+    wanted = {str(alias or "").casefold(), str(wire_model or "").casefold()} - {""}
+    return bool(wanted & declared)
+
+
+def _inherited_provider_view(
+    hermes_home: Any,
+    omh_home: Any,
+    alias: str,
+    wire_model: str,
+    *,
+    serving: str,
+    on_endpoint: bool,
+    entitlements: Any,
+) -> tuple[bool | None, tuple[str, ...], tuple[str, ...]]:
+    """What a route with no provider would inherit, judged three ways.
+
+    Returns ``(serves, candidates, pinnable)``: whether the inherited provider
+    can serve the model (None = unknown), the providers to name in a refusal,
+    and the configured providers the catalog knows serve it.
+
+    A relay the catalog cannot place still says what it serves when its
+    `providers.<name>` block lists models: Hermes reads the same list to find
+    the block that serves a model. A listed block that omits the model cannot
+    serve it, so it is neither the inherited answer nor a candidate. Observed
+    live: a session on `custom:cliproxy`, a block listing only Claude models,
+    inherited by a `gpt-6.1-sol` category head, and every child died on
+    "model not found" before a single model call.
+    """
+    serves = provider_serves_alias(alias, serving, entitlements)
+    if serves is None and not on_endpoint:
+        serves = _block_lists_alias(hermes_home, serving, alias, wire_model)
+    candidates = tuple(
+        item
+        for item in providers_serving_alias(alias, entitlements)
+        if _block_lists_alias(hermes_home, item, alias, wire_model) is not False
+    )
+    configured = _configured_providers(hermes_home, omh_home)
+    pinnable = tuple(
+        item for item in providers_known_to_serve_alias(alias, entitlements) if item.casefold() in configured
+    )
+    return serves, candidates, pinnable
 
 
 def _configured_providers(hermes_home: Any, omh_home: Any) -> frozenset[str]:
@@ -857,6 +918,21 @@ def omh_delegate_route_handler(args: dict[str, Any], **kwargs) -> str:
         wire_model, next_provider = resolve_provider_model(
             next_model, routes=provider_routes
         )
+        fallback_pinned: dict[str, str] | None = None
+        if not next_provider and not read_child_endpoint(hermes_home):
+            # The same inheritance the set path guards: a fallback entry with
+            # no provider runs on the session's, and a session the entry
+            # cannot run on dies the same way the head did. Pin the one known
+            # server when there is exactly one; otherwise write it as before.
+            inherited = read_session_provider(hermes_home)
+            fallback_entitlements, _fs, _fp = effective_provider_entitlements(omh_home, hermes_home)
+            fallback_serves, _fc, fallback_pinnable = _inherited_provider_view(
+                hermes_home, omh_home, next_model, wire_model,
+                serving=inherited, on_endpoint=False, entitlements=fallback_entitlements,
+            )
+            if fallback_serves is False and len(fallback_pinnable) == 1:
+                next_provider = fallback_pinnable[0]
+                fallback_pinned = {"inherited_provider": inherited, "pinned_provider": next_provider}
         if "/" in wire_model and not next_provider:
             payload = {
                 "status": "error",
@@ -879,6 +955,8 @@ def omh_delegate_route_handler(args: dict[str, Any], **kwargs) -> str:
         if result.get("status") == "routed":
             result["status"] = "fell_back"
             result["applied"]["alias"] = next_model
+            if fallback_pinned is not None:
+                result["provider_pinned"] = fallback_pinned
             result["category"] = category
             result["from"] = current_model
             result["position_source"] = position_source
@@ -959,6 +1037,7 @@ def omh_delegate_route_handler(args: dict[str, Any], **kwargs) -> str:
         wire_model = model
     else:
         wire_model, provider = resolve_provider_model(alias, routes=provider_routes)
+    pinned_for_inherited: dict[str, str] | None = None
     if not provider:
         # With no provider the child inherits the session's own, and nothing
         # checked that it can serve the model being pinned. Observed live: a
@@ -977,39 +1056,52 @@ def omh_delegate_route_handler(args: dict[str, Any], **kwargs) -> str:
         on_endpoint = bool(endpoint.get("host"))
         serving = endpoint["provider"] if on_endpoint else read_session_provider(hermes_home)
         entitlements, _status, _providers = effective_provider_entitlements(omh_home, hermes_home)
-        if not (on_endpoint and serving == "custom") and provider_serves_alias(alias, serving, entitlements) is False:
-            candidates = providers_serving_alias(alias, entitlements)
-            remedy = (
-                f"pin one of your providers that can: {', '.join(candidates)}"
-                if candidates
-                else "record which provider serves it in routing/model-providers.json"
-            )
-            if on_endpoint:
-                payload = {
-                    "status": "error",
-                    "error": (
-                        f"{alias} would run on delegation.base_url ({endpoint['host']}), which Hermes builds "
-                        f"as provider {serving!r}, and that provider does not serve it. Route a model it "
-                        "serves, or remove delegation.base_url yourself "
-                        f"(`hermes config unset delegation.base_url`) and {remedy}."
-                    ),
-                    "alias": alias,
-                    "endpoint_provider": serving,
-                    "providers_serving_alias": list(candidates),
-                }
+        serves, candidates, pinnable = _inherited_provider_view(
+            hermes_home, omh_home, alias, wire_model, serving=serving, on_endpoint=on_endpoint, entitlements=entitlements
+        )
+        if not (on_endpoint and serving == "custom") and serves is False:
+            if not endpoint and len(pinnable) == 1:
+                # Exactly one provider the operator holds is known to serve the
+                # model: pin it rather than refuse. It is the provider the
+                # refusal would have told the caller to pass, and a route that
+                # names it is what a careful caller writes by hand. Never with
+                # `delegation.base_url` set, readable or not: a route naming a
+                # provider there is refused (`route_endpoint_refusal`), so a
+                # pin would swap this answer for that one.
+                provider = pinnable[0]
+                pinned_for_inherited = {"inherited_provider": serving, "pinned_provider": provider}
             else:
-                payload = {
-                    "status": "error",
-                    "error": (
-                        f"{alias} would inherit this session's provider {serving!r}, "
-                        f"which does not serve it. Pass an explicit provider with its wire model, "
-                        f"or {remedy}."
-                    ),
-                    "alias": alias,
-                    "inherited_provider": serving,
-                    "providers_serving_alias": list(candidates),
-                }
-            return json.dumps(attach_public_observation(payload, observation), sort_keys=True)
+                remedy = (
+                    f"pin one of your providers that can: {', '.join(candidates)}"
+                    if candidates
+                    else "record which provider serves it in routing/model-providers.json"
+                )
+                if on_endpoint:
+                    payload = {
+                        "status": "error",
+                        "error": (
+                            f"{alias} would run on delegation.base_url ({endpoint['host']}), which Hermes builds "
+                            f"as provider {serving!r}, and that provider does not serve it. Route a model it "
+                            "serves, or remove delegation.base_url yourself "
+                            f"(`hermes config unset delegation.base_url`) and {remedy}."
+                        ),
+                        "alias": alias,
+                        "endpoint_provider": serving,
+                        "providers_serving_alias": list(candidates),
+                    }
+                else:
+                    payload = {
+                        "status": "error",
+                        "error": (
+                            f"{alias} would inherit this session's provider {serving!r}, "
+                            f"which does not serve it. Pass an explicit provider with its wire model, "
+                            f"or {remedy}."
+                        ),
+                        "alias": alias,
+                        "inherited_provider": serving,
+                        "providers_serving_alias": list(candidates),
+                    }
+                return json.dumps(attach_public_observation(payload, observation), sort_keys=True)
     if "/" in wire_model and not provider:
         payload = {
             "status": "error",
@@ -1037,6 +1129,8 @@ def omh_delegate_route_handler(args: dict[str, Any], **kwargs) -> str:
     if result.get("status") == "routed":
         result["applied"]["alias"] = alias
         result["category"] = category
+        if pinned_for_inherited is not None:
+            result["provider_pinned"] = pinned_for_inherited
         result["route_provenance"] = append_delegation_route_provenance(
             {
                 "origin": "head" if category and not model else "explicit",
