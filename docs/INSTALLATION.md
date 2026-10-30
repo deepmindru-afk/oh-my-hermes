@@ -2457,6 +2457,19 @@ wrong. A provider neither recorded nor linked, a model the catalog never
 described, and a multi-vendor relay (which serves every family) all leave
 the answer unknown, and unknown dispatches unchanged.
 
+A relay stops being unknown when its `providers.<name>` block in
+`config.yaml` lists models: Hermes reads that same `models:` list to find
+the block serving a model, so a block that lists models and omits this one
+cannot serve it. A session on `custom:<name>` is the same provider as the
+`<name>` OMH records, whichever spelling either side uses. When the
+inherited provider cannot serve the model and exactly one provider you
+configured is known to serve it (a vendor family the catalog names, never
+a relay), the route pins that provider instead of refusing, on `set` and on
+`fallback` alike, and its result carries `provider_pinned` naming both the
+inherited and the pinned provider. With none or several such providers the
+route is refused as before, and the providers it names leave out any listed
+block that does not list the model.
+
 A route is also refused when Hermes would not send the child where the route
 says. OMH reads `config.yaml` and Hermes' managed config
 (`$HERMES_MANAGED_DIR/config.yaml`, otherwise `/etc/hermes/config.yaml`),
