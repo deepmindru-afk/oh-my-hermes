@@ -64,7 +64,7 @@ omh setup
 
 - **Callers an edit broke, named before the turn ends, opt-in.**<br>
   When an edit changes a Python definition, OMH asks the language server about every file that imports it and hands back the new errors as `path:line` lines.<br>
-  Hermes checks only the file it wrote. Measured, the gain is on callers that reach a function through a renamed package re-export, which models without the check missed; they already fixed aliased and module-level callers. `lsp_diagnostics` re-checks a file or glob.<br>
+  Hermes checks only the file it wrote. Measured, the gain is on callers that reach a function through a renamed package re-export, which models without the check missed; they mostly fixed aliased and module-level callers already. `lsp_diagnostics` re-checks a file or glob.<br>
   Off by default; turn on `impact_check` in the OMH plugin settings ([measurement](benchmarks/live-model-tools/v1/README.md)).
 
 - **Long-term memory you can trust.**<br>

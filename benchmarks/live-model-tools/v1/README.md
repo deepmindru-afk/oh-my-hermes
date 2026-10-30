@@ -636,6 +636,50 @@ Amendment 2, fixed before run 3 and after run 2. A second review changed the mea
 The seven clauses are unchanged. Run 3, on the plugin with these changes, is the reported result;
 runs 1 and 2 stay recorded below.
 
+Run 3, plugin `de9ddab71` (reported). Every clause passes, so the check ships, off by default.
+
+| Model | off | on | off tokens (median) | on tokens (median) |
+| --- | ---: | ---: | ---: | ---: |
+| `claude-haiku-4-5-20251001` | 8 / 12 | 12 / 12 | 291,260 | 353,263 |
+| `claude-haiku-5-5` | 11 / 12 | 12 / 12 | 219,708 | 225,544 |
+| `gpt-5.6-luna` | 9 / 12 | 11 / 12 | 145,068 | 175,135 |
+| `claude-sonnet-5-5` | 12 / 12 | 12 / 12 | 178,670 | 180,781 |
+| `claude-opus-5-5` | 12 / 12 | 12 / 12 | 214,839 | 220,788 |
+| `gpt-6.1-sol` | 12 / 12 | 12 / 12 | 135,548 | 149,799 |
+| **Total** | **64 / 72** | **71 / 72** | 14.6M | 16.6M |
+
+Per template, off vs on: `I-SIGNATURE` 11 vs 18, `I-RETURN-SHAPE` 18 vs 18, `I-KWARG` 17 vs 17,
+`I-CONTROL` 18 vs 18.
+
+- Weak models, on at least off + 3: 35 vs 28, pass.
+- Strong models, on at least off - 1: 36 vs 36, pass.
+- No on-arm run above 3x its pair's median tokens: none; the highest is 2.22x (haiku 4.5
+  `I-SIGNATURE`).
+- The note fired in 10 of the 11 on-arm sessions with a broken caller, pass (9 `I-SIGNATURE`,
+  1 `I-KWARG`); every session that got a note ended passing. The one broken session without a
+  note is gpt-5.6-luna `I-KWARG`.
+- Notes on `I-CONTROL`: 0, pass.
+- Round-end latency p95 139 ms (max 354 ms) over the 65 sessions that reached a round-end check,
+  pass.
+- Final answer preserved after a note: 6 of 10, against round(28 / 54 x 10) - 2 = 3, pass.
+- First-edit baseline: median 0.4 s, p90 2.9 s, max 9.4 s. In 7 of 72 sessions the server gave no
+  verdict for any importer within the 8 s share, so the baseline recorded nothing and the round
+  end had nothing to check (those 7 sessions all passed). The full test suite was running on the
+  same machine during this run; run 2, without it, had a baseline max of 0.9 s. The overrun past 8 s
+  is the bridge's 2 s loop margin, well inside the 30 s host timeout.
+- Tools in the on arm: `lsp_diagnostics` 20 calls, no other `lsp_*` tool. The off arm made none.
+- omh `de9ddab71`, Hermes Agent v0.22.5 (`bf0203a794`), fresh on/off profile pair per model,
+  2026-10-30 10:58-11:24 KST (run 3 pre-registered in `de9ddab71`, committed 10:58:16; first
+  run started 10:58:24). 144 of 144 records completed, none failed, timed out or was retried.
+
+What the gain covers. All of it is on `I-SIGNATURE`. There were 23 off-arm `I-SIGNATURE` failures
+across the three runs (8, 8 and 7), and every one of them missed the caller that reaches the
+function through a renamed package re-export (`cli.py`: `from benchapp import fee`). Four of them
+also missed the alias caller: 1 in run 2, and 3 in run 3, all haiku 4.5. None missed the direct or
+module-attribute caller. The importer scan's unit test, written in the same change, covers the
+same shape. So the measured outcome gain is for callers reached through a renamed re-export, and
+in a few weak-model sessions for an aliased import. The other templates did not separate the arms.
+
 Run 2, plugin `41e91a195` (superseded by run 3). Every clause passed:
 
 | Model | off | on | off tokens (median) | on tokens (median) |
