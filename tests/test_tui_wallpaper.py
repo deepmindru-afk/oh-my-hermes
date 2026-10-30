@@ -724,7 +724,8 @@ class AppWallpaperTests(unittest.TestCase):
             app._render()
             top = app.region.top_row(app.size[1])
             answer = next(row for row in range(top) if "an answer someone may copy" in screen.line(row))
-            self.assertIn("an answer someone may copy" + " " * TEXT_GAP + MARK, screen.line(answer),
+            # The rail's `┃` is East Asian Ambiguous: counted as wide as a terminal may draw it, one cell more.
+            self.assertIn("an answer someone may copy" + " " * (TEXT_GAP + 1) + MARK, screen.line(answer),
                           "the transcript's tail, past the gap (owner's choice; /wallpaper off keeps it clean)")
 
     def test_theme_light_or_dark_against_the_terminal_holds_the_ground_off(self) -> None:

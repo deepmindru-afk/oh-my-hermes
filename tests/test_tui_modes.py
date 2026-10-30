@@ -1597,7 +1597,7 @@ class RedrawTailTests(unittest.TestCase):
             app._draw_history(messages)
         taken = [line for line in app.transcript.take_stable_lines(80, DEFAULT_THEME) if line]
         self.assertEqual(taken[0][0].text, "⋯ 37 earlier messages · /history shows all")
-        self.assertEqual([line_text(line) for line in taken[1:]], ["  ❯ question 37", "  ❯ question 38", "  ❯ question 39"])  # each prompt on its rail
+        self.assertEqual([line_text(line) for line in taken[1:]], ["┃ ❯ question 37", "┃ ❯ question 38", "┃ ❯ question 39"])  # each prompt on its rail
 
 
 class CallExpiryTests(unittest.TestCase):

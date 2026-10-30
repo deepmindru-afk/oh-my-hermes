@@ -135,8 +135,8 @@ OMH is:
   tool run, approval decision and `!` shell command the person types (it
   switches a session's model on its own only to follow a move of Hermes'
   configured default, at a turn boundary); its look
-  is the rail and kind colours the owner picked on 2026-10-22 (a rail per
-  transcript block with no fill, a painted cell a selection does not copy, a call's state in its mark's glyph and colour
+  is the rail and kind colours the owner picked on 2026-10-22 (a `┃` rail per
+  transcript block with no fill, a call's state in its mark's glyph and colour
   as the dag view draws it, its name in its tool family's hue, the composer
   between two full-width rules with no side edges); in a dag run the agent
   view under the composer is a folding tree of the run's nodes, each with
