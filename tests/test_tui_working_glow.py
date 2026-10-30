@@ -123,7 +123,16 @@ class EdgeShapeTests(unittest.TestCase):
         drawn = len(lit(moment.top)) + len(lit(moment.bottom)) + sum(
             bool(lit(line)) for line in (*moment.left, *moment.right))
         self.assertGreater(drawn, 0)
-        self.assertLess(drawn, 0.4 * (2 * 110 + 2 * 28))  # the trail is under a third of the way round, the rest blank
+        # the trail is about a seventh of the way round (owner, 2026-10-30: a third read too big), the rest blank
+        self.assertLess(drawn, 0.2 * (2 * 110 + 2 * 28))
+
+    def test_the_top_and_bottom_rows_are_half_a_row_thick_with_the_background_known(self) -> None:
+        theme = glowing_theme()
+        for seconds in (0.0, 2.0):  # the head on the top row, then on the bottom row
+            moment = edge(110, 30, theme, seconds)
+            drawn = [span for span in (*moment.top, *moment.bottom) if span.style.fg is not None]
+            self.assertTrue(drawn)
+            self.assertTrue(all(span.style.bg is None for span in drawn), "the inner half is left as it is")
 
     def test_the_head_is_round_a_circle_rising_ahead_of_it(self) -> None:
         self.assertEqual(brightness(0.0, 100), 1.0)

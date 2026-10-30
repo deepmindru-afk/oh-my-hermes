@@ -40,12 +40,13 @@ workspace, test_file, checks = sys.argv[1], sys.argv[2], sys.argv[3]
 sys.path.insert(0, workspace + "/src")
 namespace = {}
 exec(checks, namespace)
-module = runpy.run_path(workspace + "/" + test_file)
 ran = 0
-for key, value in sorted(module.items()):
-    if key.startswith("test_") and callable(value):
-        value()
-        ran += 1
+if test_file != "-":
+    module = runpy.run_path(workspace + "/" + test_file)
+    for key, value in sorted(module.items()):
+        if key.startswith("test_") and callable(value):
+            value()
+            ran += 1
 print(json.dumps({"tests_run": ran}))
 """
 
@@ -219,6 +220,85 @@ def _decoy_failures(workspace: Path, golden: dict[str, Any]) -> list[str]:
 
 
 _CONSISTENCY_AB_VALIDATORS = {"DUPLICATE": _duplicate_failures, "SCOPE-TRAP": _scope_trap_failures, "DECOY": _decoy_failures}
+# impact-ab: the definition and every caller module are exercised in a fresh interpreter. The
+# workspace's own tests are the model's to change; they are not run here, because a bare runpy cannot
+# run what pytest can (fixtures, parametrize, `import pytest` in this interpreter): measured on a
+# first run, a correct gpt-6.1-sol edit whose new test imported pytest was scored as a fail.
+_NO_TESTS = "-"
+def _signature_ok(workspace: Path, golden: dict[str, Any]) -> bool:
+    rate = golden["rate"]
+    amount = 12345
+    checks = (
+        "import inspect\n"
+        "from benchapp.pricing import compute_fee\n"
+        "parameters = inspect.signature(compute_fee).parameters\n"
+        "assert 'minimum_cents' in parameters and parameters['minimum_cents'].default is inspect.Parameter.empty\n"
+        "assert compute_fee(10000, 250, minimum_cents=0) == 250\n"
+        "assert compute_fee(10000, 250, minimum_cents=400) == 400\n"
+        "from benchapp.billing import bill_total\nfrom benchapp.invoices import invoice_fee\n"
+        "from benchapp.report import fee_line\nfrom benchapp.cli import cli_fee\n"
+        f"assert bill_total({amount}) == {amount + amount * rate // 10000}\n"
+        f"assert invoice_fee({amount}) == {amount * rate * 2 // 10000}\n"
+        f"assert fee_line({amount}) == 'fee={amount * 100 // 10000}'\n"
+        f"assert cli_fee(['{amount}']) == {amount * 50 // 10000}\n"
+    )
+    return _behaviour_ok(workspace, _NO_TESTS, checks, 0)
+
+
+def _return_shape_ok(workspace: Path, golden: dict[str, Any]) -> bool:
+    price = golden["price"]
+    checks = (
+        "import dataclasses\n"
+        "from benchapp.quotes import Quote, build_quote\n"
+        "quote = build_quote(3)\n"
+        "assert isinstance(quote, Quote) and dataclasses.is_dataclass(quote)\n"
+        f"assert (quote.units, quote.total_cents) == (3, {3 * price})\n"
+        "try:\n    quote.units = 4\nexcept dataclasses.FrozenInstanceError:\n    pass\n"
+        "else:\n    raise AssertionError('Quote is not frozen')\n"
+        "from benchapp.checkout import checkout_total\nfrom benchapp.emailer import email_subject\n"
+        "from benchapp.ledger import ledger_entry\n"
+        f"assert checkout_total(3) == {3 * price}\n"
+        "assert email_subject(2) == 'Your quote for 2 units'\n"
+        f"assert ledger_entry(4) == (4, {4 * price})\n"
+    )
+    return _behaviour_ok(workspace, _NO_TESTS, checks, 0)
+
+
+def _kwarg_ok(workspace: Path, golden: dict[str, Any]) -> bool:
+    checks = (
+        "import inspect\n"
+        "from benchapp.http_client import fetch\n"
+        "parameters = inspect.signature(fetch).parameters\n"
+        "assert 'timeout_s' in parameters and 'timeout' not in parameters\n"
+        "assert not any(p.kind is inspect.Parameter.VAR_KEYWORD for p in parameters.values())\n"
+        "assert fetch('u', timeout_s=7.0) == {'url': 'u', 'timeout': 7.0, 'retries': 1}\n"
+        "from benchapp.sync import sync_page\nfrom benchapp.crawler import crawl\nfrom benchapp.health import ping\n"
+        f"assert sync_page('a') == {{'url': 'a', 'timeout': {golden['sync_timeout']}, 'retries': 1}}\n"
+        f"assert crawl('b') == {{'url': 'b', 'timeout': {golden['crawl_timeout']}, 'retries': 3}}\n"
+        "assert ping('c') == {'url': 'c', 'timeout': 1.0, 'retries': 0}\n"
+    )
+    return _behaviour_ok(workspace, _NO_TESTS, checks, 0)
+
+
+def _control_ok(workspace: Path, golden: dict[str, Any]) -> bool:
+    checks = (
+        "from benchapp.units import to_cents\n"
+        "assert to_cents(1.25) == 125 and to_cents(0) == 0\n"
+        "try:\n    to_cents(-0.5)\nexcept ValueError as exc:\n    assert str(exc) == 'negative amount'\n"
+        "else:\n    raise AssertionError('no ValueError')\n"
+        "from benchapp.cart import cart_total\nfrom benchapp.refunds import refund_cents\n"
+        "from benchapp.summary import summary_line\n"
+        "assert cart_total([1.0, 2.5]) == 350 and refund_cents(0.99) == 99 and summary_line(3.0) == '300 cents'\n"
+    )
+    return _behaviour_ok(workspace, _NO_TESTS, checks, 0)
+
+
+_IMPACT_AB_VALIDATORS = {
+    "SIGNATURE": _signature_ok,
+    "RETURN-SHAPE": _return_shape_ok,
+    "KWARG": _kwarg_ok,
+    "CONTROL": _control_ok,
+}
 
 
 def _ratio(found: set[tuple[Any, ...]], gold: set[tuple[Any, ...]]) -> tuple[float, float]:
@@ -262,7 +342,7 @@ def validate(template_id: str, task_class: str, workspace: Path, golden_path: Pa
     if task_class == "edit":
         allowed = set(golden["allowed_paths"])
         prefixes = tuple(golden.get("allowed_prefixes", ()))
-        if not paths or any(path not in allowed and not path.startswith(prefixes) for path in paths):
+        if not paths or any(path not in allowed and not (prefixes and path.startswith(prefixes)) for path in paths):
             failures.append("mutation_outside_scope")
         try:
             if name == "RENAME":
@@ -276,6 +356,8 @@ def validate(template_id: str, task_class: str, workspace: Path, golden_path: Pa
                 consistency_failures = _CONSISTENCY_AB_VALIDATORS[name](workspace, golden)
                 failures.extend(code for code in consistency_failures if code != "semantic_validator_failed")
                 semantic = not consistency_failures
+            elif name in _IMPACT_AB_VALIDATORS:
+                semantic = _IMPACT_AB_VALIDATORS[name](workspace, golden)
             else:
                 module = runpy.run_path(str(workspace / "src/benchapp/provider_select.py"))
                 select_provider = module["select_provider"]

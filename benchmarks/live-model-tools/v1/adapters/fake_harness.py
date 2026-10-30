@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import subprocess
 import sys
 
@@ -41,6 +42,39 @@ SEMANTIC_RENAMES = {
         "src/benchapp/batch.py": [("limits.parse_limit)", "limits.read_limit)")],
         "tests/test_limits.py": [("limits import parse_limit", "limits import read_limit"), ("assert parse_limit(", "assert read_limit(")],
     },
+}
+
+
+# Reference edits for the impact-ab templates: (path, regex, replacement), applied in order.
+IMPACT_EDITS = {
+    "SIGNATURE": [
+        ("src/benchapp/pricing.py", r"rate_bp: int\) -> int:", "rate_bp: int, minimum_cents: int) -> int:"),
+        ("src/benchapp/pricing.py", r"return amount_cents \* rate_bp // 10000", "return max(amount_cents * rate_bp // 10000, minimum_cents)"),
+        ("src/benchapp/billing.py", r"\(amount_cents, (\d+)\)", r"(amount_cents, \1, 0)"),
+        ("src/benchapp/invoices.py", r"\(amount_cents, (\d+)\)", r"(amount_cents, \1, 0)"),
+        ("src/benchapp/report.py", r"\(amount_cents, 100\)", "(amount_cents, 100, 0)"),
+        ("src/benchapp/cli.py", r", 50\)", ", 50, 0)"),
+        ("tests/test_pricing.py", r"compute_fee\(10000, 250\)", "compute_fee(10000, 250, 0)"),
+    ],
+    "RETURN-SHAPE": [
+        ("src/benchapp/quotes.py", r'"""Quotes."""\n', '"""Quotes."""\n\nfrom dataclasses import dataclass\n'),
+        ("src/benchapp/quotes.py", r"def build_quote\(units: int\) -> dict\[str, int\]:\n    return \{\"units\": units, \"total_cents\": units \* UNIT_PRICE_CENTS\}",
+         "@dataclass(frozen=True)\nclass Quote:\n    units: int\n    total_cents: int\n\n\ndef build_quote(units: int) -> Quote:\n    return Quote(units, units * UNIT_PRICE_CENTS)"),
+        ("src/benchapp/checkout.py", r'quote\["total_cents"\]', "quote.total_cents"),
+        ("src/benchapp/emailer.py", r"quote\['units'\]", "quote.units"),
+        ("src/benchapp/ledger.py", r'\(quote\["units"\], quote.get\("total_cents", 0\)\)', "(quote.units, quote.total_cents)"),
+        ("tests/test_quotes.py", r'quote\["total_cents"\]', "quote.total_cents"),
+    ],
+    "KWARG": [
+        ("src/benchapp/http_client.py", r"\*, timeout: float", "*, timeout_s: float"),
+        ("src/benchapp/http_client.py", r'"timeout": timeout,', '"timeout": timeout_s,'),
+        ("src/benchapp/sync.py", r"timeout=", "timeout_s="),
+        ("src/benchapp/crawler.py", r'\{"timeout":', '{"timeout_s":'),
+        ("src/benchapp/health.py", r"timeout=", "timeout_s="),
+    ],
+    "CONTROL": [
+        ("src/benchapp/units.py", r"    return int\(round", "    if amount < 0:\n        raise ValueError('negative amount')\n    return int(round"),
+    ],
 }
 
 
@@ -89,6 +123,17 @@ def main():
         path.write_text(path.read_text(encoding="utf-8").replace('{"s": 60,', '{"s": 1,'), encoding="utf-8")
         events.append({"sequence":1,"name":"edit","mutating":True,"arguments_digest":"0"*64,"started_ms":0,"ended_ms":1,"result":"success"})
         answer = {"changed_paths":["src/benchapp/units.py"]}
+    elif name in IMPACT_EDITS:
+        changed = []
+        for relative, pattern, replacement in IMPACT_EDITS[name]:
+            path = workspace / relative
+            text, count = re.subn(pattern, replacement, path.read_text(encoding="utf-8"))
+            if count != 1:
+                raise SystemExit(f"fake impact anchor matched {count} times in {relative}: {pattern}")
+            path.write_text(text, encoding="utf-8")
+            changed.append(relative)
+        events.append({"sequence":1,"name":"edit","mutating":True,"arguments_digest":"0"*64,"started_ms":0,"ended_ms":1,"result":"success"})
+        answer = {"changed_paths":sorted(set(changed))}
     elif name == "BUGFIX":
         path = workspace / "src/benchapp/provider_select.py"
         text = path.read_text(encoding="utf-8")

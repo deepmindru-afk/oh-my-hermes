@@ -87,7 +87,11 @@ Every turn that edited a source file also gets a round-end consistency check,
 once, at its first stop (`attempt == 0`). The check asks the model to look for
 other copies or call sites of the logic it changed that have to change with it,
 and to fix any it finds. It also tells the model not to re-run tests for this
-check. The served-surface request above, when present, still stands.
+check, unless something beside it asks for a run or a re-check: the
+served-surface request above, or the opt-in impact check's note about
+importers the edit broke. The message keeps a fixed order: served-surface gate,
+impact note, consistency check, plan directive, and one closing sentence for
+the final answer.
 
 Hermes keeps the answer the model stopped with only as an interim message, and
 returns whatever follows the nudge as the turn's final response. So when no

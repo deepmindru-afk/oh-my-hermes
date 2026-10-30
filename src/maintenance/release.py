@@ -351,7 +351,13 @@ SKILL_INDEX_LINE_CHAR_LIMIT = 100
 # `OMH_LSP_TOOLS` or the profile setting `lsp_tools`, so they cost schema
 # bytes only when explicitly enabled; measured by per_turn_context's
 # register() recorder against base 7a2de348a. No headroom.
-PLUGIN_TOOL_SCHEMA_CHAR_LIMIT = 71831
+# 71831 -> 72227: `lsp_diagnostics` (+396), the fourth opt-in omh-lsp tool:
+# language-server errors for a file or glob, so a model can re-check the
+# callers the opt-in impact check named. Same toolset and check_fn as the
+# three above, so it costs schema bytes only when `lsp_tools` is on;
+# measured by per_turn_context's register() recorder against base 5cc1ed311.
+# No headroom.
+PLUGIN_TOOL_SCHEMA_CHAR_LIMIT = 72227
 # PRE_LLM_CALL_CONTEXT_CHAR_LIMIT, PRE_LLM_CALL_CONTEXT_FALLBACK_CHAR_LIMIT: moved with
 # their history to src/plugin_bundle/omh/turn_budget.py; imported at the top of this file.
 # 340000 -> 349637: three capability-skill sections were added by the domain

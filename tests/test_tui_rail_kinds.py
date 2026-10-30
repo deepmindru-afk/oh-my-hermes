@@ -94,7 +94,7 @@ def answer_catalog(app: App, client: RecordingClient, pairs: list[list[str]]) ->
 
 def prompt_tokens(app: App) -> list[list[str]]:
     """The `/name` tokens drawn bold in each prompt row the next frame prints."""
-    rows = [line for line in app.transcript.take_stable_lines(100, THEME) if line_text(line).startswith("  ❯")]
+    rows = [line for line in app.transcript.take_stable_lines(100, THEME) if line_text(line).startswith("┃ ❯")]
     return [[span.text for span in row if span.style == THEME.slash] for row in rows]
 
 
@@ -164,44 +164,44 @@ class GroupingTests(unittest.TestCase):
             ToolRow("d", "skill_view", "omh-routing → references/skill-common-rail.md", TOOL_OK, duration_s=0.7),
             ToolRow("e", "tool_describe", "Reading tool details · 3 tools", TOOL_OK, duration_s=0.0),
         )
-        self.assertEqual(rows, ["  ● Loaded 4 skills + tool details · github-development-workflows, dag-ulw, hermes-agent, "
+        self.assertEqual(rows, ["┃ ● Loaded 4 skills + tool details · github-development-workflows, dag-ulw, hermes-agent, "
                                 "omh-routing/skill-common-rail.md  2.8s"])
 
     def test_any_other_call_breaks_the_run(self) -> None:
         rows = calls(loaded("a", "dag-ulw"), ToolRow("b", "terminal", "pwd", TOOL_OK, duration_s=0.1),
                      loaded("c", "hermes-agent"), loaded("d", "omh-terminal"))
-        self.assertEqual(rows, ["  ● Loaded 1 skill · dag-ulw  0.7s", "", "  ● terminal(pwd)  0.1s", "",
-                                "  ● Loaded 2 skills · hermes-agent, omh-terminal  1.4s"])
+        self.assertEqual(rows, ["┃ ● Loaded 1 skill · dag-ulw  0.7s", "", "┃ ● terminal(pwd)  0.1s", "",
+                                "┃ ● Loaded 2 skills · hermes-agent, omh-terminal  1.4s"])
 
     def test_tool_details_alone_and_a_folded_name_in_the_skill_hue(self) -> None:
         tool = ToolRow("e", "tool_describe", "Reading tool details · 1 tool", TOOL_OK, duration_s=0.4)
-        self.assertEqual(calls(tool), ["  ● Read tool details  0.4s"])
+        self.assertEqual(calls(tool), ["┃ ● Read tool details  0.4s"])
         row = block_rows(ToolGroup([loaded("a", "dag-ulw")], done=True), 80, THEME)[0]
         self.assertEqual([span.style for span in row if span.text == "Loaded 1 skill"], [kind_style("skill_view", THEME)])
 
     def test_a_running_member_makes_the_row_run_and_a_failed_one_keeps_its_own(self) -> None:
         running = calls(loaded("a", "dag-ulw"), loaded("b", "hermes-agent", TOOL_RUNNING, None))
-        self.assertEqual(running, ["  ○ Loaded 2 skills · dag-ulw, hermes-agent"])  # no time until each has one
+        self.assertEqual(running, ["┃ ○ Loaded 2 skills · dag-ulw, hermes-agent"])  # no time until each has one
         failed = ToolRow("b", "skill_view", "nope", TOOL_ERROR, duration_s=0.1, output=("Skill not found: nope",))
         rows = calls(loaded("a", "dag-ulw"), failed, loaded("c", "hermes-agent"))
-        self.assertEqual(rows, ["  ● Loaded 1 skill · dag-ulw  0.7s", "", "  ✗ skill_view(nope)  0.1s",
-                                "    ⎿  Skill not found: nope", "", "  ● Loaded 1 skill · hermes-agent  0.7s"])
+        self.assertEqual(rows, ["┃ ● Loaded 1 skill · dag-ulw  0.7s", "", "┃ ✗ skill_view(nope)  0.1s",
+                                "┃   ⎿  Skill not found: nope", "", "┃ ● Loaded 1 skill · hermes-agent  0.7s"])
 
     def test_a_draft_or_a_cut_off_call_is_not_counted_as_loaded(self) -> None:
         # #2223 review 6: a draft names nothing yet (an empty label left `· x, ,`), a cut-off call loaded nothing.
         draft = ToolRow("b", "skill_view", "", TOOL_GENERATING)
         self.assertEqual(calls(loaded("a", "dag-ulw"), loaded("c", "hermes-agent"), draft),
-                         ["  ● Loaded 2 skills · dag-ulw, hermes-agent  1.4s", "", "  ◌ skill_view"])
+                         ["┃ ● Loaded 2 skills · dag-ulw, hermes-agent  1.4s", "", "┃ ◌ skill_view"])
         cut = ToolRow("b", "skill_view", "omh-docs", TOOL_INTERRUPTED)
         self.assertEqual(calls(loaded("a", "dag-ulw"), cut),
-                         ["  ● Loaded 1 skill · dag-ulw  0.7s", "", "  ▪ skill_view(omh-docs)"])
+                         ["┃ ● Loaded 1 skill · dag-ulw  0.7s", "", "┃ ▪ skill_view(omh-docs)"])
         nameless = ToolRow("d", "skill_view", "", TOOL_OK, duration_s=0.1)
-        self.assertEqual(calls(loaded("a", "dag-ulw"), nameless), ["  ● Loaded 2 skills · dag-ulw  0.8s"])
+        self.assertEqual(calls(loaded("a", "dag-ulw"), nameless), ["┃ ● Loaded 2 skills · dag-ulw  0.8s"])
 
     def test_the_details_view_unfolds_the_run(self) -> None:
         rows = calls(loaded("a", "dag-ulw"), loaded("b", "hermes-agent"), expanded=True)
-        self.assertEqual(rows, ["  ● skill_view(dag-ulw)  0.7s", "    ⎿  loaded skill dag-ulw", "",
-                                "  ● skill_view(hermes-agent)  0.7s", "    ⎿  loaded skill hermes-agent"])
+        self.assertEqual(rows, ["┃ ● skill_view(dag-ulw)  0.7s", "┃   ⎿  loaded skill dag-ulw", "",
+                                "┃ ● skill_view(hermes-agent)  0.7s", "┃   ⎿  loaded skill hermes-agent"])
 
     def test_a_turn_counts_every_folded_call(self) -> None:
         transcript = Transcript(clock=lambda: 0.0)
@@ -211,7 +211,7 @@ class GroupingTests(unittest.TestCase):
             transcript.apply(Event("tool.complete", SID, {"tool_id": tool_id, "name": "skill_view", "duration_s": 0.1,
                                                           "result": {"success": True, "name": tool_id}}))
         transcript.apply(Event("message.complete", SID, {"text": "", "status": "complete"}))
-        self.assertEqual(lines_text(transcript.take_stable_lines(80, THEME)), ["  ● Loaded 3 skills · a, b, c  0.3s"])
+        self.assertEqual(lines_text(transcript.take_stable_lines(80, THEME)), ["┃ ● Loaded 3 skills · a, b, c  0.3s"])
         (group,) = transcript.blocks
         self.assertEqual(len(group.tools), 3)  # folded on the screen, each still a call
 
@@ -247,7 +247,7 @@ class HeredocTests(unittest.TestCase):
         }
         for command, said in cases.items():
             with self.subTest(command=command):
-                self.assertEqual(self.started("terminal", command), [f"  ○ terminal({said})"])
+                self.assertEqual(self.started("terminal", command), [f"┃ ○ terminal({said})"])
 
     def test_any_other_command_keeps_its_own_first_line(self) -> None:
         cases = {
@@ -265,7 +265,7 @@ class HeredocTests(unittest.TestCase):
         }
         for command, said in cases.items():
             with self.subTest(command=command):
-                self.assertEqual(self.started("terminal", command), [f"  ○ terminal({said})"])
+                self.assertEqual(self.started("terminal", command), [f"┃ ○ terminal({said})"])
         self.assertNotIn("script", "".join(self.started("read_file", "python3 - <<'PY'\nx\nPY")))  # not a shell
 
     def test_only_the_commands_around_the_script_are_counted(self) -> None:
@@ -293,12 +293,12 @@ class HeredocTests(unittest.TestCase):
         }
         for command, said in cases.items():
             with self.subTest(command=command):
-                self.assertEqual(self.started("terminal", command), [f"  ○ terminal(python3 script · 1 line{said})"])
+                self.assertEqual(self.started("terminal", command), [f"┃ ○ terminal(python3 script · 1 line{said})"])
 
     def test_the_details_view_shows_the_command_itself(self) -> None:
         command = "python3 - <<'PY'\nimport json\nprint(1)\nPY"
-        self.assertEqual(self.started("terminal", command), ["  ○ terminal(python3 script · 2 lines)"])
-        self.assertEqual(self.started("terminal", command, expanded=True), ["  ○ terminal(python3 - <<'PY')"])
+        self.assertEqual(self.started("terminal", command), ["┃ ○ terminal(python3 script · 2 lines)"])
+        self.assertEqual(self.started("terminal", command, expanded=True), ["┃ ○ terminal(python3 - <<'PY')"])
 
     def test_the_documented_rows_are_the_rows_the_code_draws(self) -> None:
         prose = " ".join((Path(__file__).resolve().parents[1] / "docs" / "INSTALLATION.md").read_text(
@@ -308,10 +308,10 @@ class HeredocTests(unittest.TestCase):
             ToolRow("d", "skill_view", "omh-routing → references/skill-common-rail.md", TOOL_OK, duration_s=0.7),
             ToolRow("e", "tool_describe", "Reading tool details · 3 tools", TOOL_OK, duration_s=0.0),
         )[0]
-        self.assertIn(f"`{' '.join(folded.removeprefix('  ').split())}`", prose)
+        self.assertIn(f"`{' '.join(folded.removeprefix('┃ ').split())}`", prose)
         script = "python3 - <<'PY'\n" + "x = 1\n" * 23 + "PY"
         (row,) = self.started("terminal", script)
-        self.assertIn(f"`{row.removeprefix('  ○ ')}`", prose)
+        self.assertIn(f"`{row.removeprefix('┃ ○ ')}`", prose)
 
 
 class ShortTitleTests(unittest.TestCase):
@@ -404,7 +404,7 @@ class SlashTokenTests(unittest.TestCase):
         app, _client = make_app(rows=40, cols=100)
         app.known_slash = known_names([("/dag-ulw", "Graph work")])
         app._draw_history([{"role": "user", "text": "/dag-ulw go"}])
-        (row,) = [line for line in app.transcript.take_stable_lines(100, THEME) if line_text(line).startswith("  ❯")]
+        (row,) = [line for line in app.transcript.take_stable_lines(100, THEME) if line_text(line).startswith("┃ ❯")]
         self.assertEqual([span.text for span in row if span.style == THEME.slash], ["/dag-ulw"])
 
     def test_a_prompt_resumed_before_the_catalog_answers_is_redrawn_once_it_does(self) -> None:
@@ -467,7 +467,7 @@ class SlashTokenTests(unittest.TestCase):
 
     def test_the_echoed_prompt_and_the_sticky_row_draw_it_too(self) -> None:
         (echo,) = block_rows(UserBlock("/dag-ulw go a/dag-ulw", known=KNOWN), 60, THEME)
-        self.assertEqual(line_text(echo), "  ❯ /dag-ulw go a/dag-ulw")
+        self.assertEqual(line_text(echo), "┃ ❯ /dag-ulw go a/dag-ulw")
         self.assertEqual([span.text for span in echo if span.style == THEME.slash], ["/dag-ulw"])
         sticky = sticky_line("/dag-ulw go /foo", 60, THEME, KNOWN)
         self.assertEqual(line_text(sticky), "↳ you: /dag-ulw go /foo")

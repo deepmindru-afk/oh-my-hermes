@@ -7,6 +7,7 @@ author: oh-my-hermes maintainers
 provides_memory_provider: omh
 provides_tools:
   - lsp_definition
+  - lsp_diagnostics
   - lsp_references
   - lsp_rename
   - omh_agent_board

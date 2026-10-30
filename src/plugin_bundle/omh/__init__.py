@@ -232,11 +232,13 @@ def register(ctx: _PluginContext) -> None:
     from .tools.jev_ask_tool import OMH_JEV_ASK_SCHEMA, jev_ask_available, omh_jev_ask_handler
     from .tools.lsp_nav_tool import (
         OMH_LSP_DEFINITION_SCHEMA,
+        OMH_LSP_DIAGNOSTICS_SCHEMA,
         OMH_LSP_REFERENCES_SCHEMA,
         OMH_LSP_RENAME_SCHEMA,
         LSP_TOOLSET,
         _lsp_tools_enabled,
         lsp_definition_handler,
+        lsp_diagnostics_handler,
         lsp_references_handler,
         lsp_rename_handler,
     )
@@ -344,6 +346,14 @@ def register(ctx: _PluginContext) -> None:
         lsp_rename_handler,
         check_fn=_lsp_tools_enabled,
         description=OMH_LSP_RENAME_SCHEMA["description"],
+    )
+    _ = ctx.register_tool(
+        "lsp_diagnostics",
+        LSP_TOOLSET,
+        OMH_LSP_DIAGNOSTICS_SCHEMA,
+        lsp_diagnostics_handler,
+        check_fn=_lsp_tools_enabled,
+        description=OMH_LSP_DIAGNOSTICS_SCHEMA["description"],
     )
     # The one tool that sends data off the machine. `check_fn` keeps its
     # schema out of every turn unless a route resolves (a TypeSafe key, or an

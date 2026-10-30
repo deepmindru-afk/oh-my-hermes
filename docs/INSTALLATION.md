@@ -764,10 +764,10 @@ run and approval decision stays Hermes'; the screen is OMH's.
   sent (terminal may not support OSC 52)` (under tmux, that tmux passes it on
   only with `set-clipboard on`). On the main screen the terminal's own
   selection is the only one: the transcript is in its scrollback, and taking
-  the mouse there would take the wheel and that scrollback away. Each rail is
-  a painted cell holding a space, so what it copies there has no bar in it,
-  only two leading spaces on each row (four on a reply's rows, with its
-  margin), and the terminal shows no copy notice of its own.
+  the mouse there would take the wheel and that scrollback away, so what it
+  copies there keeps each row's rail (`┃ ` in front of each row, and a
+  reply's margin after it), and the terminal shows no copy notice of its
+  own.
 - The composer takes a paste whole when the terminal brackets it, as most
   terminals do. A paste of more than 3 lines or 800 characters shows as one
   chip, `[Pasted text #1 +60 lines]` (or `· 1,204 chars` for one long line):
@@ -926,7 +926,7 @@ run and approval decision stays Hermes'; the screen is OMH's.
   colour, with a blank row between two calls and no header over a turn's
   calls: its state's mark (below), its name, and what it ran on (a path, a
   command, a query) in parentheses, cut with `…` where the row is too narrow
-  (`● terminal(rm -rf ./tmp-cache)  1.9s`). Under it (`  ⎿  `) it shows the first three lines of what the tool
+  (`┃ ● terminal(rm -rf ./tmp-cache)  1.9s`). Under it (`  ⎿  `) it shows the first three lines of what the tool
   printed and counts the rest (`… +5 lines · ctrl+o shows all`). A read says
   in one line what it read instead: `Read 715 lines` for
   `read_file`, `12 matches` for
@@ -1000,11 +1000,9 @@ run and approval decision stays Hermes'; the screen is OMH's.
   on you; on exit the title you had comes back where the terminal keeps a
   title stack.
 - Motion and colour follow one rule set, so scrollback reads at a glance:
-  - Each block hangs on a continuous rail with no fill behind it, one cell
-    painted in the rail's colour that holds a space, so selecting the text
-    in the terminal copies no bar with it (only the two leading spaces;
-    with `NO_COLOR` set only a reply's and a call's rail is painted, so your
-    prompt is told apart by its `❯` and no bar): grey
+  - Each block hangs on a continuous thin `┃` rail with no fill behind it
+    (with `NO_COLOR` set your prompt's is the light `│`, so it is told apart
+    from a reply's): grey
     for your prompt, the theme's accent for what Hermes said (which opens
     with a header row, `⚚ Hermes · <model>`, bold in the rail's colour and
     the model the reply was written under muted), and a tool call's state colour for
@@ -1037,7 +1035,7 @@ run and approval decision stays Hermes'; the screen is OMH's.
     across its verb, beside the elapsed time and the tokens written.
   - Your prompt reads as in Claude Code, the composer's dim `❯` and dim text with no
     band behind it, on a grey rail; a prompt the queue sent says `⧗ from queue`. A command
-    you run is echoed the same way, on the same rail (`❯ /model`), so a
+    you run is echoed the same way, on the same rail (`┃ ❯ /model`), so a
     bare `❯` on the left edge is only ever the composer.
   - A steer shows as `↪ steer · <text>` under what is running until Hermes
     answers, then becomes `↪ steer queued by Hermes · <text>`, or the amber
@@ -1115,7 +1113,7 @@ run and approval decision stays Hermes'; the screen is OMH's.
   one, its `❯` mark turns the shell family's amber and the info line says
   `! shell (not sent to the model)`. Sending it runs it through Hermes'
   `shell.exec` (Hermes' own limit of 30 s, its refusal of dangerous commands,
-  and its redaction of what the command printed) and shows `❯ !command` on the rail
+  and its redaction of what the command printed) and shows `┃ ❯ !command`
   with what it printed (its stdout, then its stderr, in the same colour) and
   its exit code when that is not 0 (`exit 0` when it printed nothing; a
   failure's lines are red on the red band with that exit line), or
@@ -1310,7 +1308,7 @@ says so; for an agent's steer it names the agent and the session you left. The O
 steers only with text you typed and sent this way: a queued prompt is never
 turned into a steer.
 
-A slash command you run is echoed in the transcript as `❯ /name arg` on the prompt's rail (but
+A slash command you run is echoed in the transcript as `┃ ❯ /name arg` (but
 `/steer`, whose own row is its echo, and a bare `/sessions`, `/rewind`,
 `/model`, `/keys`, `/history`, `/logs`, `/dag`, `/bots` or `/redraw`, which only open a picker
 or a pager, or repaint, and print nothing to attribute), and what it prints stays there, under it after `⎿`, in the terminal's scrollback

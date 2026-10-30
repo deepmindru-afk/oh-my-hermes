@@ -159,11 +159,12 @@ def current_session_argv(
         toolsets = "file,terminal"
     elif edit_surface == "hashline":
         toolsets = "omh-hashline,terminal"
-    elif edit_surface == "lsp":
-        # LSP augments the builtin file toolset; `patch` stays available.
+    elif edit_surface in {"lsp", "impact"}:
+        # LSP augments the builtin file toolset; `patch` stays available. `impact` is the
+        # impact-check arm: the same toolsets, with the check switched on in its profile.
         toolsets = "file,terminal,omh-lsp"
     else:
-        raise ValueError("edit_surface must be 'patch', 'hashline' or 'lsp'")
+        raise ValueError("edit_surface must be 'patch', 'hashline', 'lsp' or 'impact'")
     return [
         hermes_executable,
         "--oneshot",
@@ -186,12 +187,14 @@ def current_session_argv(
 # Same sentence for both surfaces; only the tool names differ. Without it a model with `terminal`
 # rewrites files through the shell and neither edit surface is measured (2026-10-27 smoke: 0 patch
 # and 0 hashline_edit calls, 7 terminal calls).
-_EDIT_TOOLS = {"patch": ("read_file", "patch"), "hashline": ("hashline_read", "hashline_edit")}
+# The impact arm edits with the same builtin tools, so its rule is the patch rule byte for byte.
+_EDIT_TOOLS = {"patch": ("read_file", "patch"), "hashline": ("hashline_read", "hashline_edit"),
+               "impact": ("read_file", "patch")}
 
 
 def edit_directive(edit_surface: str) -> str:
     if edit_surface not in _EDIT_TOOLS:
-        raise ValueError("edit_surface must be 'patch' or 'hashline'")
+        raise ValueError("edit_surface must be 'patch', 'hashline' or 'impact'")
     read, edit = _EDIT_TOOLS[edit_surface]
     return (f"EDIT TOOL RULE: read source files with `{read}` and change existing files only with `{edit}`. "
             "Do not modify files through terminal commands (sed, perl, python, shell redirection); "
@@ -569,6 +572,8 @@ def run_current_session_trial(
             "model_family": route["model_family"],
         },
         "observation": observation_metrics(observation),
+        # The Hermes session the run used, so its state.db rows and log lines can be joined.
+        "session_id": usage.get("session_id") if isinstance(usage.get("session_id"), str) else None,
     }
 
 
@@ -634,9 +639,14 @@ def _current_session_environment(workspace: Path, edit_surface: str = "patch") -
     # An opt-in flag inherited from the caller's shell must not reach the other arm.
     environment.pop("OMH_HASHLINE_TOOLS", None)
     environment.pop("OMH_LSP_TOOLS", None)
+    environment.pop("OMH_IMPACT_CHECK", None)
     if edit_surface == "hashline":
         environment["OMH_HASHLINE_TOOLS"] = "1"
     elif edit_surface == "lsp":
         # Harmless for the gateway, which reads the profile setting; set for parity with hashline.
         environment["OMH_LSP_TOOLS"] = "1"
+    elif edit_surface == "impact":
+        # Same: the gateway reads `impact_check` and `lsp_tools` from the arm's profile.
+        environment["OMH_LSP_TOOLS"] = "1"
+        environment["OMH_IMPACT_CHECK"] = "1"
     return environment

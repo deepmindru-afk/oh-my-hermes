@@ -27,6 +27,7 @@ from _local_package import load_local_package
 load_local_package()
 
 from omh.plugin_bundle.omh.hooks import nudge_budget, result_transforms, verify_hooks
+from omh.plugin_bundle.omh.impact_check import format_note
 from omh.plugin_bundle.omh.todo_store import build_todo_record, write_todo
 from omh.tui.gateway import Event
 from omh.tui.transcript import AssistantBlock, Transcript
@@ -154,11 +155,10 @@ class MessageOrderTest(_Homes):
                 message = self._fire(changed_paths=paths)["message"]
                 surface, rest = message.split("\n", 1)
                 self.assertIn("OMH served-surface verification gate", surface)
-                self.assertEqual(rest, f"{CHECK}\n{CLOSING}")
+                self.assertEqual(rest, f"{verify_hooks.ROUND_END_CHECKLIST_BESIDE_A_RECHECK}\n{CLOSING}")
                 self.assertEqual(message.count("When you are done"), 1)
-                # The check's "do not re-run" is scoped to itself, never to the gate's request.
-                self.assertNotIn("re-check anything else", message)
-                self.assertNotIn("Do not re-run tests.", message)
+                # Beside the gate's request to run something, the check says nothing about not re-running.
+                self.assertNotIn("Do not re-run", message)
 
     def test_an_open_plan_follows_the_check_with_no_closing_and_no_stash(self):
         self._open_plan()
@@ -168,6 +168,59 @@ class MessageOrderTest(_Homes):
         self.assertNotIn("When you are done", message)
         self.assertNotIn(SENTINEL, message)
         self.assertIsNone(verify_hooks.restore_round_end_answer(session_id=SESSION, response_text=SENTINEL))
+
+
+class WithTheImpactNoteTest(_Homes):
+    """#2410's impact note joins the same message: surface gate, impact note, check, plan, one closing."""
+
+    NOTE = format_note([("src/shop/report.py", 5, 'Cannot access attribute "get"')], recheck_tool=False)
+    PATHS = ["src/app.tsx", "src/shop/quote.py"]
+
+    def _fire_with_note(self, **overrides):
+        with patch.object(verify_hooks, "round_end_note", lambda session_id, changed_paths: self.NOTE):
+            return self._fire(changed_paths=self.PATHS, **overrides)
+
+    def _parts(self, message):
+        surface = message.index("OMH served-surface verification gate")
+        impact = message.index("OMH impact check")
+        check = message.index("OMH round-end consistency check")
+        return surface, impact, check
+
+    def test_all_four_come_in_the_defined_order_and_the_plan_leaves_no_closing(self):
+        self._open_plan()
+        message = self._fire_with_note()["message"]
+        surface, impact, check = self._parts(message)
+        plan = message.index("[OMH plan todo]")
+        self.assertLess(surface, impact)
+        self.assertLess(impact, check)
+        self.assertLess(check, plan)
+        self.assertNotIn("final answer", message.replace(self.NOTE, ""))
+        self.assertNotIn("final answer", self.NOTE)
+        self.assertNotIn("Do not re-run", message)
+
+    def test_without_a_plan_one_closing_sentence_ends_the_message(self):
+        message = self._fire_with_note()["message"]
+        surface, impact, check = self._parts(message)
+        self.assertLess(surface, impact)
+        self.assertLess(impact, check)
+        self.assertTrue(message.endswith(CLOSING))
+        self.assertEqual(message.count("When you are done"), 1)
+        self.assertEqual(message.count("final answer"), 1)
+        # The note asks to fix callers and re-check; the check beside it must not say "do not re-run".
+        self.assertIn(verify_hooks.ROUND_END_CHECKLIST_BESIDE_A_RECHECK, message)
+        self.assertNotIn("Do not re-run", message)
+
+    def test_the_note_alone_outside_coding_still_gets_the_one_closing(self):
+        with patch.object(verify_hooks, "round_end_note", lambda session_id, changed_paths: self.NOTE):
+            message = self._fire(coding=False, changed_paths=self.PATHS)["message"]
+        self.assertEqual(message, f"{self.NOTE}\n{CLOSING}")
+
+    def test_the_swap_fires_only_on_the_exact_sentinel_after_an_impact_fix(self):
+        self._fire_with_note()
+        updated = '{"changed_paths": ["src/shop/quote.py", "src/shop/report.py"]}'
+        self.assertIsNone(verify_hooks.restore_round_end_answer(session_id=SESSION, response_text=updated))
+        self._fire_with_note()
+        self.assertEqual(verify_hooks.restore_round_end_answer(session_id=SESSION, response_text=SENTINEL), ANSWER)
 
 
 class SentinelSwapTest(_Homes):

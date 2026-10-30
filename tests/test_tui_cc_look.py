@@ -1,5 +1,5 @@
 """Round 4, the Claude Code look in the transcript: per-call rows, results under `⎿`, the working row; since the
-rail and kind colours (2026-10-22) each block hangs on a rail: one painted cell and a space.
+rail and kind colours (2026-10-22) each block hangs on a `┃` rail.
 
 Each tool call is one row on a rail in the launch look's accent (red when it
 failed or was denied, as its band is; owner's pick of 2026-10-29): its state's mark
@@ -15,7 +15,7 @@ tokens · thinking with high effort · esc to interrupt)`: a glyph that turns,
 Hermes' activity as a verb with its kaomoji and dots taken off, and under it
 one tip a turn (`  ⎿  Tip: …`) where the rows allow.
 
-Your prompt reads `  ❯ 오마이 헤르메스란`: a dim rail, the composer's dim `❯` and
+Your prompt reads `┃ ❯ 오마이 헤르메스란`: a dim rail, the composer's dim `❯` and
 dim text with no band, as a command's echo does (with no rail). A turn closes with a dim `  ✻ 5s · 3 tools · ↓1.3k`
 and no rule after it.
 """
@@ -102,7 +102,7 @@ def completed(name: str, result: object, context: str = "x", details: bool = Fal
 class ToolRowTests(unittest.TestCase):
     def test_a_call_is_its_mark_then_its_name_and_what_it_ran_on_in_parentheses(self) -> None:
         (row,) = rows_of(ToolRow("t", "terminal", "rm -rf ./tmp-cache", TOOL_OK, duration_s=1.9))
-        self.assertEqual(line_text(row), "  ● terminal(rm -rf ./tmp-cache)  1.9s")
+        self.assertEqual(line_text(row), "┃ ● terminal(rm -rf ./tmp-cache)  1.9s")
         # The rail in the launch look's accent, then the mark in its state's colour.
         self.assertEqual(row[:3], (rail_cell(THEME.accent), Span(" ", GUTTER), Span("●", THEME.ok)))
         self.assertEqual([span.style for span in row if span.text == "terminal"], [kind_style("terminal", THEME)])
@@ -140,31 +140,31 @@ class ToolRowTests(unittest.TestCase):
 
     def test_a_call_with_nothing_to_show_has_no_parentheses(self) -> None:
         (row,) = rows_of(ToolRow("t", "todo_list", "", TOOL_OK, duration_s=0.0))
-        self.assertEqual(line_text(row), "  ● todo_list  0.0s")
+        self.assertEqual(line_text(row), "┃ ● todo_list  0.0s")
 
     def test_a_long_argument_is_cut_inside_its_parentheses_and_a_path_from_the_left(self) -> None:
         (row,) = rows_of(ToolRow("t", "terminal", "x" * 200, TOOL_OK, duration_s=12.0), width=40)
-        self.assertEqual(line_text(row), "  ● terminal(" + "x" * 18 + "…)  12.0s")  # the rail takes two cells
+        self.assertEqual(line_text(row), "┃ ● terminal(" + "x" * 18 + "…)  12.0s")  # the rail takes two cells
         self.assertEqual(line_width(row), 40)
         (row,) = rows_of(ToolRow("t", "read_file", "/repo/a/very/deep/tree/of/dirs/file.py", TOOL_OK), width=32)
-        self.assertEqual(line_text(row), "  ● read_file(…/of/dirs/file.py)")
+        self.assertEqual(line_text(row), "┃ ● read_file(…/of/dirs/file.py)")
 
     def test_what_it_printed_goes_under_the_result_mark_with_the_rest_counted(self) -> None:
         tool = ToolRow("t", "terminal", "seq 5", TOOL_OK, duration_s=0.1, output=("1", "2", "3", "4", "5"))
         self.assertEqual(
             lines_text(rows_of(tool)),
-            ["  ● terminal(seq 5)  0.1s", "    ⎿  1", "       2", "       3", "       … +2 lines · ctrl+o shows all"],
+            ["┃ ● terminal(seq 5)  0.1s", "┃   ⎿  1", "┃      2", "┃      3", "┃      … +2 lines · ctrl+o shows all"],
         )
         failed = ToolRow("t", "terminal", "pytest", TOOL_ERROR, duration_s=2.0, output=("a", "b", "c", "1 failed"))
-        self.assertEqual(lines_text(rows_of(failed))[1:], ["    ⎿  … +1 line · ctrl+o shows all", "       b",
-                                                           "       c", "       1 failed"])
+        self.assertEqual(lines_text(rows_of(failed))[1:], ["┃   ⎿  … +1 line · ctrl+o shows all", "┃      b",
+                                                           "┃      c", "┃      1 failed"])
 
     def test_a_diff_hangs_under_the_result_mark(self) -> None:
         diff = "a/src/app.py → b/src/app.py\n@@ -1,2 +1,2 @@\n import os\n-print('a')\n+print('b')"
         tool = ToolRow("t", "patch", "src/app.py", TOOL_OK, duration_s=0.3, inline_diff=diff.encode("utf-8"))
         shown = [row.rstrip() for row in lines_text(rows_of(tool))]
-        self.assertEqual(shown, ["  ● patch(src/app.py)  0.3s", "    ⎿  src/app.py", "     1  import os",
-                                 "     2 -print('a')", "     2 +print('b')"])
+        self.assertEqual(shown, ["┃ ● patch(src/app.py)  0.3s", "┃   ⎿  src/app.py", "┃    1  import os",
+                                 "┃    2 -print('a')", "┃    2 +print('b')"])
         self.assertEqual(DIFF_INDENT, len("  ⎿  "))  # the code starts where a result's words do
 
     def test_the_lead_takes_only_an_indent_and_a_narrow_diff_has_none_to_take(self) -> None:
@@ -180,53 +180,53 @@ class SummarisedReadTests(unittest.TestCase):
     def test_a_read_file_says_how_many_lines_it_read(self) -> None:
         content = "     1|# OMH\n     2|line\n     3|end\n"
         self.assertEqual(completed("read_file", {"content": content, "total_lines": 715}),
-                         ["  ● read_file(x)  0.2s", "    ⎿  Read 3 lines"])
-        self.assertEqual(completed("read_file", {"content": "     1|one", "total_lines": 1})[1], "    ⎿  Read 1 line")
+                         ["┃ ● read_file(x)  0.2s", "┃   ⎿  Read 3 lines"])
+        self.assertEqual(completed("read_file", {"content": "     1|one", "total_lines": 1})[1], "┃   ⎿  Read 1 line")
 
     def test_a_binary_read_or_a_failed_call_is_not_summarised(self) -> None:
-        self.assertEqual(completed("read_file", {"error": "File not found: x"})[1:], ["    ⎿  File not found: x"])
+        self.assertEqual(completed("read_file", {"error": "File not found: x"})[1:], ["┃   ⎿  File not found: x"])
         binary = completed("read_file", {"content": "", "is_binary": True, "error": None})
         self.assertNotIn("Read", "\n".join(binary))
         # Hermes' SearchResult always carries total_count, a failed search too: its error is what it says.
-        self.assertEqual(completed("search_files", {"total_count": 0, "error": "rg failed"})[1:], ["    ⎿  rg failed"])
+        self.assertEqual(completed("search_files", {"total_count": 0, "error": "rg failed"})[1:], ["┃   ⎿  rg failed"])
 
     def test_a_skill_view_names_the_skill_it_loaded(self) -> None:
         # In the transcript a load is folded into its `Loaded N skills` row; the details view unfolds it.
         loaded = {"success": True, "name": "omh-docs", "content": "---\nname: omh-docs\n---\n# body"}
-        self.assertEqual(completed("skill_view", loaded, "omh-docs"), ["  ● Loaded 1 skill · omh-docs  0.2s"])
-        self.assertEqual(completed("skill_view", loaded, details=True)[1:], ["    ⎿  loaded skill omh-docs"])
+        self.assertEqual(completed("skill_view", loaded, "omh-docs"), ["┃ ● Loaded 1 skill · omh-docs  0.2s"])
+        self.assertEqual(completed("skill_view", loaded, details=True)[1:], ["┃   ⎿  loaded skill omh-docs"])
         stub = {"success": True, "status": "unchanged", "name": "omh-docs", "file": "SKILL.md", "dedup": True}
-        self.assertEqual(completed("skill_view", stub, details=True)[1:], ["    ⎿  loaded skill omh-docs"])
+        self.assertEqual(completed("skill_view", stub, details=True)[1:], ["┃   ⎿  loaded skill omh-docs"])
         linked = {"success": True, "name": "omh-docs", "file": "references/api.md", "content": "# api"}
         self.assertEqual(completed("skill_view", linked, details=True)[1:],
-                         ["    ⎿  loaded references/api.md from skill omh-docs"])
+                         ["┃   ⎿  loaded references/api.md from skill omh-docs"])
 
     def test_a_search_says_how_many_it_found(self) -> None:
         matches = [{"path": "a.py", "line": 1, "content": "needle"}]
         self.assertEqual(completed("search_files", {"total_count": 12, "matches": matches * 12})[1:],
-                         ["    ⎿  12 matches"])
-        self.assertEqual(completed("search_files", {"total_count": 1, "matches": matches})[1:], ["    ⎿  1 match"])
+                         ["┃   ⎿  12 matches"])
+        self.assertEqual(completed("search_files", {"total_count": 1, "matches": matches})[1:], ["┃   ⎿  1 match"])
         self.assertEqual(completed("search_files", {"total_count": 3, "files": ["a", "b", "c"]})[1:],
-                         ["    ⎿  3 files"])
+                         ["┃   ⎿  3 files"])
         capped = {"total_count": 50, "matches_text": "a.py\n  1: x", "truncated": True, "total_count_is_lower_bound": True}
-        self.assertEqual(completed("search_files", capped)[1:], ["    ⎿  50+ matches"])
-        self.assertEqual(completed("search_files", {"total_count": 0})[1:], ["    ⎿  0 matches"])
+        self.assertEqual(completed("search_files", capped)[1:], ["┃   ⎿  50+ matches"])
+        self.assertEqual(completed("search_files", {"total_count": 0})[1:], ["┃   ⎿  0 matches"])
 
     def test_a_search_keeps_hermes_warning_under_its_count(self) -> None:
         # 6c61c3e27d tools/file_operations_search.py: a zero-match probe's hint, the line-oriented note.
         warned = {"total_count": 0, "warning": "0 results found. Note: search is line-oriented.\nUse context=N."}
         self.assertEqual(completed("search_files", warned)[1:],
-                         ["    ⎿  0 matches", "       0 results found. Note: search is line-oriented."])
+                         ["┃   ⎿  0 matches", "┃      0 results found. Note: search is line-oriented."])
 
     def test_the_details_view_shows_the_same_one_line(self) -> None:
         transcript = Transcript(clock=Clock())
         transcript.apply(Event("tool.start", SID, {"tool_id": "t", "name": "read_file", "context": "a.py"}))
         transcript.apply(Event("tool.complete", SID, {"tool_id": "t", "name": "read_file", "result": {"content": "a\nb"}}))
-        self.assertEqual(lines_text(transcript.history_lines(60, THEME, details=True))[1:], ["    ⎿  Read 2 lines"])
+        self.assertEqual(lines_text(transcript.history_lines(60, THEME, details=True))[1:], ["┃   ⎿  Read 2 lines"])
 
     def test_terminal_output_keeps_its_lines(self) -> None:
         self.assertEqual(completed("terminal", {"output": "hello\nworld", "exit_code": 0})[1:],
-                         ["    ⎿  hello", "       world"])
+                         ["┃   ⎿  hello", "┃      world"])
 
 
 class WorkingVerbTests(unittest.TestCase):
@@ -429,7 +429,7 @@ class PromptRowTests(unittest.TestCase):
         for theme in (THEME, build_theme(SKIN_THEMES[0], "#1E1E1E"), build_theme(SKIN_THEMES[0], "#FFFFFF")):
             rows = block_rows(UserBlock("first line\nsecond line"), 40, theme)
             with self.subTest(theme=theme.name):
-                self.assertEqual(lines_text(rows), ["  ❯ first line", "    second line"])
+                self.assertEqual(lines_text(rows), ["┃ ❯ first line", "┃   second line"])
                 self.assertEqual({row[0] for row in rows}, {rail_cell(theme.dim)})  # a grey rail down the prompt
                 self.assertEqual(rows[0][2], Span("❯ ", theme.dim))
                 self.assertEqual({span.style for row in rows for span in row[3:]}, {theme.muted})  # after the lead
@@ -453,19 +453,19 @@ class PromptRowTests(unittest.TestCase):
 
     def test_a_prompt_the_queue_sent_says_so_in_the_same_dim(self) -> None:
         (row,) = block_rows(UserBlock("next one", from_queue=True), 40, THEME)
-        self.assertEqual(line_text(row), "  ❯ next one  ⧗ from queue")
+        self.assertEqual(line_text(row), "┃ ❯ next one  ⧗ from queue")
         self.assertEqual(row[-1].style, THEME.muted)
 
     def test_the_sticky_reminder_and_the_queue_read_apart_from_a_prompt(self) -> None:
         prompt = line_text(block_rows(UserBlock("fix it"), 40, THEME)[0])
         sticky = line_text(sticky_line("fix it", 40, THEME))
         (queued,) = lines_text(queue_lines(["fix it"], 40, 3, THEME))
-        self.assertEqual([prompt[:4], sticky[:7], queued[:2]], ["  ❯ ", "↳ you: ", "⧗ "])
+        self.assertEqual([prompt[:4], sticky[:7], queued[:2]], ["┃ ❯ ", "↳ you: ", "⧗ "])
 
     def test_a_command_echoes_as_a_prompt_does_in_the_hint_colour(self) -> None:
         rows = block_rows(CommandBlock("/model", [("Current model: x", NOTICE_INFO)], done=True), 40, THEME)
         # On the prompt's dim rail (#2223 review 7), so a bare `❯` on the left edge is only ever the composer.
-        self.assertEqual(lines_text(rows), ["  ❯ /model", "    ⎿  Current model: x"])
+        self.assertEqual(lines_text(rows), ["┃ ❯ /model", "┃   ⎿  Current model: x"])
         self.assertEqual({row[0] for row in rows}, {rail_cell(THEME.dim)})
         self.assertEqual((rows[0][2], rows[0][3].style), (Span("❯ ", THEME.dim), THEME.hint))
 
@@ -577,14 +577,14 @@ class ResumedHistoryTests(unittest.TestCase):
         # Since the rail and kind colours (2026-10-22) a live turn puts a blank row between two calls; a record too.
         lines = self.history()
         texts = lines_text(lines)
-        first, after = texts.index("  ● read_file(README.md)"), texts.index("  ● terminal(sleep 6 + 1 command)")
-        self.assertEqual(texts[first + 1 : first + 5], ["", "  ● read_file(calc.py)", "", "  ● patch(calc.py)"])
+        first, after = texts.index("┃ ● read_file(README.md)"), texts.index("┃ ● terminal(sleep 6 + 1 command)")
+        self.assertEqual(texts[first + 1 : first + 5], ["", "┃ ● read_file(calc.py)", "", "┃ ● patch(calc.py)"])
         diff = texts[first + 5 : after - 1]
-        self.assertTrue(diff and all(text.startswith("  ") for text in diff), texts)  # the diff, on the edit's rail
+        self.assertTrue(diff and all(text.startswith("┃ ") for text in diff), texts)  # the diff, on the edit's rail
         self.assertEqual(texts[after - 1 : after + 4],
-                         ["", "  ● terminal(sleep 6 + 1 command)", "", "  ● terminal(ls does-not-exist)", ""])
-        self.assertEqual(texts[after + 4], "  ⚚ Hermes", texts)  # the reply's header, then its words
-        self.assertTrue(texts[after + 5].startswith("    Done — div added to calc.py"), texts)
+                         ["", "┃ ● terminal(sleep 6 + 1 command)", "", "┃ ● terminal(ls does-not-exist)", ""])
+        self.assertEqual(texts[after + 4], "┃ ⚚ Hermes", texts)  # the reply's header, then its words
+        self.assertTrue(texts[after + 5].startswith("┃   Done — div added to calc.py"), texts)
         calls = [lines[index] for index in (first, first + 2, first + 4, after, after + 2)]
         # The record says what ran, not how it ended: neither green nor red, its mark grey on the look's rail.
         self.assertEqual({row[0] for row in calls}, {rail_cell(THEME.accent)})
@@ -597,12 +597,12 @@ class ResumedHistoryTests(unittest.TestCase):
                 app, _client = make_app(rows=40, cols=100)
                 app._draw_history([{"role": "tool", "name": "patch", "context": "calc.py", "tool_call_id": "c1",
                                     "display_metadata": {"tool_result_metadata": junk}}])
-                self.assertEqual(lines_text(app.transcript.take_stable_lines(100, THEME)), ["  ● patch(calc.py)"])
+                self.assertEqual(lines_text(app.transcript.take_stable_lines(100, THEME)), ["┃ ● patch(calc.py)"])
 
     def test_the_edit_shows_the_diff_a_live_call_shows(self) -> None:
         texts = lines_text(self.history())
-        start = texts.index("  ● patch(calc.py)") + 1
-        recorded = texts[start : texts.index("  ● terminal(sleep 6 + 1 command)") - 1]  # up to the blank row
+        start = texts.index("┃ ● patch(calc.py)") + 1
+        recorded = texts[start : texts.index("┃ ● terminal(sleep 6 + 1 command)") - 1]  # up to the blank row
         patch = next(message for message in RESUME if message.get("name") == "patch")
         transcript = Transcript(clock=Clock())
         transcript.cwd = RESUME_CWD
@@ -612,9 +612,9 @@ class ResumedHistoryTests(unittest.TestCase):
         transcript.apply(Event("tool.complete", SID, {"tool_id": "t", "name": "patch", "inline_diff": inline_diff}))
         transcript.apply(Event("message.complete", SID, {"text": "", "status": "complete"}))
         live = lines_text(transcript.take_stable_lines(100, THEME))
-        self.assertTrue(live[0].startswith("  ● patch(calc.py)"), live)
+        self.assertTrue(live[0].startswith("┃ ● patch(calc.py)"), live)
         self.assertEqual(recorded, live[1:])
-        self.assertTrue(recorded and recorded[0].startswith("    ⎿  "), recorded)
+        self.assertTrue(recorded and recorded[0].startswith("┃   ⎿  "), recorded)
 
 
 def installation() -> str:
@@ -638,7 +638,7 @@ class DocumentedLookTests(unittest.TestCase):
         ]
         for line in said:
             with self.subTest(line=line):
-                self.assertTrue(f"`{line.removeprefix('    ⎿  ')}`" in prose, line)
+                self.assertTrue(f"`{line.removeprefix('┃   ⎿  ')}`" in prose, line)
 
     def test_installation_shows_the_working_row_the_code_draws(self) -> None:
         prose = installation()
@@ -664,7 +664,7 @@ class DocumentedLookTests(unittest.TestCase):
         (done,) = block_rows(TurnSummaryBlock(34.0, 3, 1200), 80, THEME)
         self.assertTrue(f"(`{line_text(done).strip()}`)" in prose, line_text(done))
         echo = block_rows(CommandBlock("/model", done=True), 80, THEME)[0]
-        self.assertTrue(f"(`{line_text(echo).strip()}`)" in prose, line_text(echo))  # after the rail's two cells
+        self.assertTrue(f"(`{line_text(echo).strip()}`)" in prose, line_text(echo))  # with the rail's bar
         self.assertTrue("the composer's dim `❯` and dim text with no band behind it" in prose)
 
 

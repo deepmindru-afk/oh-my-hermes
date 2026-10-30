@@ -10,6 +10,7 @@ from typing import Final, TypeGuard
 from .. import runtime_paths
 from ..catch_log import PLAN_CONTINUED, record_catch
 from ..host_observation import observe_plugin_hook_call
+from ..impact_check import round_end_note
 from ..todo_reconciliation import plan_continuation_parts
 from .nudge_budget import plan_nudge_allowed
 
@@ -45,12 +46,18 @@ _CODE_SUFFIXES: Final = frozenset(
 # check only: a second copy or call site of the changed logic that had to change
 # with it, the miss a model makes when it stops as soon as the target test
 # passes. Scope and verification lines were measured too and showed no effect
-# (bench README, 2026-10-30). "Do not re-run tests" is scoped to this check: the
-# served-surface gate beside it may ask for a real run, and that request stands.
+# (bench README, 2026-10-30). "Do not re-run tests" is scoped to this check and
+# dropped when the served-surface gate or the impact note beside it asks for a
+# run or a re-check: that request stands.
 ROUND_END_CHECKLIST: Final = (
     "OMH round-end consistency check, once per turn: look for other copies or call sites of the logic "
     "you changed this turn that have to change with it, and fix any you find. Do not re-run tests for "
     "this check. This note is guidance, not verification evidence."
+)
+ROUND_END_CHECKLIST_BESIDE_A_RECHECK: Final = (
+    "OMH round-end consistency check, once per turn: look for other copies or call sites of the logic "
+    "you changed this turn that have to change with it, and fix any you find. This note is guidance, not "
+    "verification evidence."
 )
 # The host keeps the answer the model stopped with only as an interim message,
 # and whatever the model says after this note becomes the turn's final
@@ -113,39 +120,47 @@ def pre_verify(
         }
     )
     _ = observe_plugin_hook_call("pre_verify", observation)
-    if not valid_coding or attempt_value is None or not paths:
+    if attempt_value is None or not paths:
         return None
-    plan_message, stamp, open_items = _session_plan_reading(_kwargs, session_id)
-    # The host offers `agent.max_verify_nudges` nudges per turn and enforces
-    # that bound itself, so the plan line may spend more than the first -- but
-    # only while the plan keeps being written. A nudge that produced no movement
-    # does not repeat, which is what the idempotency guidance was protecting;
-    # `nudge_budget` holds the one piece of per-turn state that tells the two
-    # apart.
-    if not plan_nudge_allowed(session_id=session_id, attempt=attempt_value, stamp=stamp):
-        plan_message = ""
-    # The served-surface gate stays one-shot. It asks for the check this turn's
-    # edit just earned, and the edits are the same on a later attempt of the
-    # same turn, so repeating it would restate a request the turn already has.
-    surface_message = _served_surface_message(paths) if attempt_value == 0 else ""
-    # The round-end check is one-shot for the same reason, and it is the
-    # turn's only one: attempt 0 is the first stop after the edits, and the
-    # host moves `attempt` past 0 once any nudge here continues the turn.
-    checklist_message = (
-        ROUND_END_CHECKLIST
-        if attempt_value == 0 and str(platform) not in _NO_CHECKLIST_PLATFORMS and any(map(_is_code_path, paths))
-        else ""
-    )
-    # Three obligations, one directive, in a fixed order: the served-surface
-    # gate, the round-end check, the plan directive. All can be true of the same
-    # turn, and dropping one because another fired would lose exactly the case
-    # each was written for. The closing final-answer sentence goes last and only
-    # without a plan directive: an open plan means the turn goes on, so there is
-    # no final answer to ask for yet.
+    # The opt-in cross-file impact check (`impact_check`) answers once per
+    # turn, at the first stop, and does not depend on the coding posture: it
+    # has a baseline only when this turn edited a Python file, which is the
+    # posture's own evidence. Empty unless an importer gained an error.
+    impact_message = round_end_note(session_id, changed_paths) if attempt_value == 0 else ""
+    surface_message = checklist_message = plan_message = ""
+    open_items = 0
+    if valid_coding:
+        plan_message, stamp, open_items = _session_plan_reading(_kwargs, session_id)
+        # The host offers `agent.max_verify_nudges` nudges per turn and enforces
+        # that bound itself, so the plan line may spend more than the first -- but
+        # only while the plan keeps being written. A nudge that produced no movement
+        # does not repeat, which is what the idempotency guidance was protecting;
+        # `nudge_budget` holds the one piece of per-turn state that tells the two
+        # apart.
+        if not plan_nudge_allowed(session_id=session_id, attempt=attempt_value, stamp=stamp):
+            plan_message = ""
+        # The served-surface gate stays one-shot. It asks for the check this turn's
+        # edit just earned, and the edits are the same on a later attempt of the
+        # same turn, so repeating it would restate a request the turn already has.
+        surface_message = _served_surface_message(paths) if attempt_value == 0 else ""
+        # The round-end check is one-shot for the same reason, and it is the
+        # turn's only one: attempt 0 is the first stop after the edits, and the
+        # host moves `attempt` past 0 once any nudge here continues the turn.
+        if attempt_value == 0 and str(platform) not in _NO_CHECKLIST_PLATFORMS and any(map(_is_code_path, paths)):
+            # Beside a request to run or re-check something, the check must not
+            # say "do not re-run": that request stands.
+            checklist_message = ROUND_END_CHECKLIST_BESIDE_A_RECHECK if surface_message or impact_message else ROUND_END_CHECKLIST
+    # One directive, in a fixed order: the served-surface gate, the impact
+    # note, the round-end check, the plan directive. Each can be true of the
+    # same turn, and dropping one because another fired would lose exactly the
+    # case it was written for. One closing final-answer sentence goes last, for
+    # the impact note and the check together, and only without a plan
+    # directive: an open plan means the turn goes on, so there is no final
+    # answer to ask for yet.
     closing = ""
-    if checklist_message and not plan_message:
+    if (impact_message or checklist_message) and not plan_message:
         closing = ROUND_END_CLOSING if _stash_answer(session_id, final_response) else ROUND_END_CLOSING_UNSTASHED
-    messages = [text for text in (surface_message, checklist_message, plan_message, closing) if text]
+    messages = [text for text in (surface_message, impact_message, checklist_message, plan_message, closing) if text]
     if not messages:
         return None
     # Recorded for the person once per turn. `attempt` is the only turn

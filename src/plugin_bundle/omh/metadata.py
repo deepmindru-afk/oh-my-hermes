@@ -2,6 +2,7 @@ from __future__ import annotations
 
 PROVIDED_TOOLS = (
     "lsp_definition",
+    "lsp_diagnostics",
     "lsp_references",
     "lsp_rename",
     "omh_agent_board",
@@ -51,6 +52,7 @@ PROVIDED_HOOKS = tuple(sorted(REQUIRED_HOOKS + OPTIONAL_HOOKS))
 
 TOOL_FILE_STEMS = {
     "lsp_definition": "lsp_nav_tool",
+    "lsp_diagnostics": "lsp_nav_tool",
     "lsp_references": "lsp_nav_tool",
     "lsp_rename": "lsp_nav_tool",
     "omh_agent_board": "agent_board_tool",
