@@ -1260,6 +1260,24 @@ Spend: 16.18M tokens, $0.
 No gateway was signalled; the eight `opta-*` profiles were deleted after their databases and
 logs were kept.
 
+#### Re-measure (owner decision), 2026-10-31, pre-registered before its first run
+
+After the result above, the owner chose one re-measure. It uses the same pre-registered gate,
+with every clause unchanged, including final answer kept at least base - 2.
+
+- **Seeds.** New seeds 181081, 206347 and 231419, none of them used above.
+- **Unchanged.** The panel, the seven templates and the profile configuration are the same as
+  above. Profiles are `opta2-<lane>-<arm>`.
+- **Base.** Current origin/main `b906cb425`.
+- **New.** This branch after merging it (`9f5f0430f`). The plugin bundles differ only in
+  `consistency_trigger.py`, `verify_hooks.py` and `tool_hooks.py`.
+- **Gate.** Clauses 1 to 6 as registered above, with the same thresholds and the same pooled
+  minimums (strong-model median tokens at most 0.90x base, median wall time at most 0.95x base).
+- **This run decides.** If every clause passes, the branch asks to merge. If any clause fails,
+  the change is recorded here as rejected. There is no further re-measure.
+- **Scoring.** The result is recomputed from the raw run records and session-DB snapshots and
+  recorded here.
+
 ### 2026-10-30 impact check: callers broken by an edit, off vs on (`impact_check` + `lsp_diagnostics`), gate passed
 
 One question, from oh-my-pi's workspace diagnostics: when an edit changes a definition, does
