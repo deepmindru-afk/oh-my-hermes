@@ -9,6 +9,7 @@ from typing import Final, TypeGuard
 
 from .. import runtime_paths
 from ..catch_log import PLAN_CONTINUED, record_catch
+from ..export_check import round_end_note as export_note
 from ..host_observation import observe_plugin_hook_call
 from ..impact_check import round_end_note
 from ..todo_reconciliation import plan_continuation_parts
@@ -127,6 +128,11 @@ def pre_verify(
     # has a baseline only when this turn edited a Python file, which is the
     # posture's own evidence. Empty unless an importer gained an error.
     impact_message = round_end_note(session_id, changed_paths) if attempt_value == 0 else ""
+    # The export check is always on: it parses only this turn's edited `.py` files (and the
+    # workspace modules they import from) with `ast`, so it costs no language server and no
+    # extra round of its own. It names an `__all__` entry or a `from x import name` that no
+    # longer resolves -- a rename's leftover that no type error reports -- and is empty otherwise.
+    export_message = export_note(changed_paths) if attempt_value == 0 else ""
     surface_message = checklist_message = plan_message = ""
     open_items = 0
     if valid_coding:
@@ -151,21 +157,21 @@ def pre_verify(
             # say "do not re-run": that request stands.
             checklist_message = ROUND_END_CHECKLIST_BESIDE_A_RECHECK if surface_message or impact_message else ROUND_END_CHECKLIST
     # One directive, in a fixed order: the served-surface gate, the impact
-    # note, the round-end check, the plan directive. Each can be true of the
-    # same turn, and dropping one because another fired would lose exactly the
-    # case it was written for. One closing final-answer sentence goes last, for
-    # the impact note and the check together, and only without a plan
-    # directive: an open plan means the turn goes on, so there is no final
-    # answer to ask for yet.
+    # note, the export note, the round-end check, the plan directive. Each can
+    # be true of the same turn, and dropping one because another fired would
+    # lose exactly the case it was written for. One closing final-answer
+    # sentence goes last, for the notes and the check together, and only
+    # without a plan directive: an open plan means the turn goes on, so there
+    # is no final answer to ask for yet.
     closing = ""
-    if (impact_message or checklist_message) and not plan_message:
+    if (impact_message or export_message or checklist_message) and not plan_message:
         # A delegated child's reply is its parent's tool result: it returns
         # its full answer, never a sentinel, so nothing is stashed for it.
         if str(platform) in _NO_CHECKLIST_PLATFORMS or not _stash_answer(session_id, final_response):
             closing = ROUND_END_CLOSING_UNSTASHED
         else:
             closing = ROUND_END_CLOSING
-    messages = [text for text in (surface_message, impact_message, checklist_message, plan_message, closing) if text]
+    messages = [text for text in (surface_message, impact_message, export_message, checklist_message, plan_message, closing) if text]
     if not messages:
         return None
     # Recorded for the person once per turn. `attempt` is the only turn

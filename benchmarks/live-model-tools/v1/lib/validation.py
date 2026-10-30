@@ -149,7 +149,45 @@ def _rename_shadow_ok(workspace: Path, golden: dict[str, Any]) -> bool:
     return _behaviour_ok(workspace, "tests/test_limits.py", checks, golden["min_tests"])
 
 
-_LSP_AB_VALIDATORS = {"RENAME-ALIAS": _rename_alias_ok, "RENAME-SHADOW": _rename_shadow_ok}
+def _rename_exports_ok(workspace: Path, golden: dict[str, Any]) -> bool:
+    old, new = "fetch_rows", "load_rows"
+    trees = {relative: ast.parse((workspace / relative).read_text(encoding="utf-8")) for relative in golden["allowed_paths"]}
+    functions = _module_functions(trees["src/benchapp/store/rows.py"])
+    if old in functions or new not in functions:
+        return False
+    exported: list[str] = []
+    for relative, tree in trees.items():
+        if old in _imported_names(tree):
+            return False
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Name) and node.id == old:
+                return False
+            if isinstance(node, ast.Attribute) and node.attr == old:
+                return False
+        if relative == "src/benchapp/store/__init__.py":
+            for node in tree.body:
+                if isinstance(node, ast.Assign) and any(isinstance(t, ast.Name) and t.id == "__all__" for t in node.targets):
+                    exported += list(ast.literal_eval(node.value))
+                elif isinstance(node, ast.AugAssign) and isinstance(node.target, ast.Name) and node.target.id == "__all__":
+                    exported += list(ast.literal_eval(node.value))
+    if sorted(exported) != golden["exports"]:
+        return False
+    checks = (
+        "namespace = {}\n"
+        "exec('from benchapp.store import *', namespace)\n"
+        f"assert namespace['load_rows'](99) == list(range({golden['limit']}))\n"
+        f"assert namespace['STORE_VERSION'] == '{golden['version']}'\n"
+        "assert namespace['fast_rows'] is None\n"
+        "assert namespace['codecs'].encode([1]) == bytes([1])\n"
+        "assert namespace['formats'].as_csv([1, 2]) == '1,2'\n"
+        "from benchapp.loader import load_csv\n"
+        "assert load_csv(2) == '0,1'\n"
+    )
+    return _behaviour_ok(workspace, "tests/test_store.py", checks, golden["min_tests"])
+
+
+_LSP_AB_VALIDATORS = {"RENAME-ALIAS": _rename_alias_ok, "RENAME-SHADOW": _rename_shadow_ok,
+                      "RENAME-EXPORTS": _rename_exports_ok}
 
 
 def _duplicate_failures(workspace: Path, golden: dict[str, Any]) -> list[str]:

@@ -21,7 +21,10 @@ TEMPLATES = (
 # Separate split for the omh-lsp A/B: kept out of development/evaluation so the
 # pinned corpus digest and manifest stay byte-identical.
 LSP_AB_SPLIT = "lsp-ab"
-LSP_AB_TEMPLATES = (("RENAME-ALIAS", "edit"), ("RENAME-SHADOW", "edit"))
+# RENAME-EXPORTS is the export check's control: a rename whose prompt names the package `__all__`, in a
+# package that exports names every valid way a reader could miss (a submodule never imported, a name
+# bound in both arms of a try, `+=`); a correct edit leaves no dangling export.
+LSP_AB_TEMPLATES = (("RENAME-ALIAS", "edit"), ("RENAME-SHADOW", "edit"), ("RENAME-EXPORTS", "edit"))
 # Separate split for the round-end checklist A/B, kept out of the pinned corpus the same way.
 CONSISTENCY_AB_SPLIT = "consistency-ab"
 CONSISTENCY_AB_TEMPLATES = (("DUPLICATE", "edit"), ("SCOPE-TRAP", "edit"), ("DECOY", "edit"))
@@ -190,7 +193,53 @@ def _rename_shadow_fixture(seed: int) -> tuple[dict[str, str], dict[str, Any]]:
     return files, golden
 
 
-_LSP_AB_FIXTURES = {"RENAME-ALIAS": _rename_alias_fixture, "RENAME-SHADOW": _rename_shadow_fixture}
+def _rename_exports_fixture(seed: int) -> tuple[dict[str, str], dict[str, Any]]:
+    """A rename in a package whose `__all__` also lists a submodule it never imports, a name bound in
+    both arms of a try, and a `+=` entry defined after it: the prompt asks for `__all__` too."""
+    randomizer = random.Random(seed)
+    limit = randomizer.randint(3, 9)
+    version = f"{randomizer.randint(1, 4)}.{randomizer.randint(0, 9)}"
+    padding = "\n" * randomizer.randint(0, 2)
+    files = {
+        "src/benchapp/store/__init__.py": (
+            f'"""Row store."""\n{padding}from . import formats\nfrom .rows import ROW_LIMIT, fetch_rows\n\n'
+            "try:\n    from ._native import fast_rows\nexcept ImportError:  # the pure-Python build\n    fast_rows = None\n\n"
+            '__all__ = ["ROW_LIMIT", "codecs", "fetch_rows", "fast_rows", "formats"]\n'
+            '__all__ += ["STORE_VERSION"]\n\n'
+            f'STORE_VERSION = "{version}"\n'
+        ),
+        "src/benchapp/store/rows.py": (
+            f'"""Rows."""\n\nROW_LIMIT = {limit}\n\n\n'
+            "def fetch_rows(count: int) -> list[int]:\n    return list(range(min(count, ROW_LIMIT)))\n"
+        ),
+        "src/benchapp/store/formats.py": (
+            "def as_csv(rows: list[int]) -> str:\n    return \",\".join(str(row) for row in rows)\n"
+        ),
+        "src/benchapp/store/codecs.py": (
+            "def encode(rows: list[int]) -> bytes:\n    return bytes(rows)\n"
+        ),
+        "src/benchapp/loader.py": (
+            "from benchapp.store import fetch_rows, formats\n\n\n"
+            "def load_csv(count: int) -> str:\n    return formats.as_csv(fetch_rows(count))\n"
+        ),
+        "tests/test_store.py": (
+            "from benchapp.loader import load_csv\nfrom benchapp.store import fetch_rows\n\n\n"
+            f"def test_fetch_rows_caps_at_the_limit():\n    assert fetch_rows(99) == list(range({limit}))\n\n\n"
+            f"def test_load_csv():\n    assert load_csv(2) == \"0,1\"\n"
+        ),
+    }
+    golden = {
+        "allowed_paths": sorted(files),
+        "limit": limit,
+        "version": version,
+        "exports": ["ROW_LIMIT", "STORE_VERSION", "codecs", "fast_rows", "formats", "load_rows"],
+        "min_tests": 2,
+    }
+    return files, golden
+
+
+_LSP_AB_FIXTURES = {"RENAME-ALIAS": _rename_alias_fixture, "RENAME-SHADOW": _rename_shadow_fixture,
+                    "RENAME-EXPORTS": _rename_exports_fixture}
 
 
 def _duplicate_params(seed: int) -> dict[str, Any]:
@@ -502,6 +551,7 @@ def _prompt(template_id: str, task_class: str, seed: int, decision: str) -> str:
         "RETURN-SHAPE": "Change build_quote in src/benchapp/quotes.py to return a frozen dataclass Quote, defined in quotes.py with fields units: int and total_cents: int, instead of a dict, and update the code that uses its result so behaviour stays the same. Return JSON with changed_paths.",
         "KWARG": "Rename the keyword-only parameter timeout of fetch in src/benchapp/http_client.py to timeout_s (do not keep timeout as an alias). What fetch returns stays the same, and every caller must keep its behaviour. Return JSON with changed_paths.",
         "CONTROL": "Make to_cents in src/benchapp/units.py raise ValueError('negative amount') for a negative amount, without changing its signature or its result for any other amount. Return JSON with changed_paths.",
+        "RENAME-EXPORTS": "Rename the function fetch_rows in src/benchapp/store/rows.py to load_rows everywhere it is referenced, including the store package's __all__, without changing behavior. Return JSON with changed_paths.",
         "RENAME-SHADOW": "Rename the function parse_limit defined in src/benchapp/limits.py to read_limit at its definition and every reference to that function, without changing behavior. Parameters or local variables that merely share the name are not references and must stay. Return JSON with changed_paths.",
     }
     if name == "DUPLICATE":

@@ -40,8 +40,17 @@ SEMANTIC = {
         "src/benchapp/batch.py": [("limits.parse_limit)", "limits.read_limit)")],
         "tests/test_limits.py": [("limits import parse_limit", "limits import read_limit"), ("assert parse_limit(", "assert read_limit(")],
     },
+    "RENAME-EXPORTS": {
+        "src/benchapp/store/rows.py": [("def fetch_rows(", "def load_rows(")],
+        "src/benchapp/store/__init__.py": [("import ROW_LIMIT, fetch_rows", "import ROW_LIMIT, load_rows"), ('"fetch_rows"', '"load_rows"')],
+        "src/benchapp/loader.py": [("import fetch_rows,", "import load_rows,"), ("(fetch_rows(count))", "(load_rows(count))")],
+        "tests/test_store.py": [("import fetch_rows", "import load_rows"), ("assert fetch_rows(", "assert load_rows(")],
+    },
 }
+# The wrong edit per template: a text replace that also renames what merely shares the name, or, for
+# RENAME-EXPORTS (no such name), the measured miss: every reference renamed except the `__all__` entry.
 NAIVE = {"RENAME-ALIAS": ("compute_quota", "allocate_quota"), "RENAME-SHADOW": ("parse_limit", "read_limit")}
+STALE_EXPORT = {"RENAME-EXPORTS": '"fetch_rows"'}
 
 
 class LspSurfaceTests(unittest.TestCase):
@@ -163,23 +172,28 @@ class LspAbTemplateTests(unittest.TestCase):
 
     def test_specs(self) -> None:
         self.assertEqual(corpus.all_specs("lsp-ab"), [
-            (f"L-{name}", "edit", seed) for name in ("RENAME-ALIAS", "RENAME-SHADOW") for seed in corpus.EVALUATION_SEEDS
+            (f"L-{name}", "edit", seed) for name in ("RENAME-ALIAS", "RENAME-SHADOW", "RENAME-EXPORTS")
+            for seed in corpus.EVALUATION_SEEDS
         ])
 
     def test_untouched_fails_semantic_passes_naive_fails(self) -> None:
         for template_id, _task_class, seed in corpus.all_specs("lsp-ab"):
             name = template_id.split("-", 1)[1]
 
-            def semantic(workspace: Path, name=name) -> None:
+            def semantic(workspace: Path, name=name, skip: str | None = None) -> None:
                 for relative, edits in SEMANTIC[name].items():
                     path = workspace / relative
                     text = path.read_text(encoding="utf-8")
                     for before, after in edits:
                         self.assertIn(before, text)
-                        text = text.replace(before, after)
+                        if before != skip:
+                            text = text.replace(before, after)
                     path.write_text(text, encoding="utf-8")
 
             def naive(workspace: Path, name=name) -> None:
+                if name in STALE_EXPORT:
+                    semantic(workspace, name, skip=STALE_EXPORT[name])
+                    return
                 old, new = NAIVE[name]
                 for path in workspace.rglob("*.py"):
                     path.write_text(path.read_text(encoding="utf-8").replace(old, new), encoding="utf-8")
@@ -206,7 +220,7 @@ class LspAbTemplateTests(unittest.TestCase):
         with TemporaryDirectory() as root:
             receipt = run_matrix(BASE, json.loads((BASE / "manifest.json").read_text()), "lsp-ab",
                                  "baseline", Path(root) / "runs.jsonl")
-        self.assertEqual((receipt["scheduled"], receipt["passed"]), (6, 6))
+        self.assertEqual((receipt["scheduled"], receipt["passed"]), (9, 9))
 
 
 class PinnedCorpusTests(unittest.TestCase):
