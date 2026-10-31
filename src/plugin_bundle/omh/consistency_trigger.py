@@ -63,7 +63,7 @@ from typing import Any, Final, NamedTuple
 
 from . import lsp_nav
 from .lsp_nav import LspNavError, inside
-from .tools.lsp_nav_tool import _workspace_root
+from .tools.lsp_nav_tool import _workspace_root, workspace_relative
 
 PYTHON_SUFFIXES: Final = (".py", ".pyi")
 # Files a `renamed` name can be load-bearing in without being Python: entry points, tool and CI
@@ -362,7 +362,7 @@ def _scan(root: str, edited: set[str], needles: _Needles, deadline: float) -> Ve
         for path in _walk(root, suffixes, deadline):
             if path in edited:
                 continue
-            where = os.path.relpath(path, root)
+            where = workspace_relative(path, root)
             python = path.endswith(PYTHON_SUFFIXES)
             text = _read(path)
             if text is None:
@@ -406,7 +406,7 @@ def _walk(root: str, suffixes: tuple[str, ...], deadline: float):
         for name in dirnames:
             linked = os.path.join(dirpath, name)
             if os.path.islink(linked) and not inside(os.path.realpath(linked), root):
-                raise _OutsideLink(os.path.relpath(linked, root))
+                raise _OutsideLink(workspace_relative(linked, root))
         visited += len(dirnames)
         for filename in sorted(filenames):
             visited += 1
@@ -419,7 +419,7 @@ def _walk(root: str, suffixes: tuple[str, ...], deadline: float):
             path = os.path.realpath(os.path.join(dirpath, filename))
             if not inside(path, root):
                 if filename.endswith(PYTHON_SUFFIXES):
-                    raise _OutsideLink(os.path.relpath(os.path.join(dirpath, filename), root))
+                    raise _OutsideLink(workspace_relative(os.path.join(dirpath, filename), root))
                 continue
             if os.path.isfile(path):
                 yield path
@@ -531,7 +531,8 @@ def _dunder(name: str) -> bool:
 
 
 def _relative(path: str, root: str) -> str:
-    return os.path.relpath(path, root) if inside(path, root) else os.path.basename(path)
+    """A verdict's path: workspace-relative with `/` on every platform, or the bare name outside it."""
+    return workspace_relative(path, root) if inside(path, root) else os.path.basename(path)
 
 
 def _edit_targets(tool_name: str, args: dict[str, Any]) -> list[str]:

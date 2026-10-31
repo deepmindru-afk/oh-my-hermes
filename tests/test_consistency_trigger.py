@@ -14,6 +14,7 @@ from pathlib import Path
 from unittest import mock
 
 from _local_package import load_local_package
+from _platform_support import requires_symlinks
 
 load_local_package()
 
@@ -55,7 +56,7 @@ class _Workspace(unittest.TestCase):
     def write(self, relative: str, text: str) -> str:
         path = self.root / relative
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(text, encoding="utf-8")
+        path.write_text(text, encoding="utf-8", newline="\n")
         return relative
 
     def edit(self, relative: str, old: str, new: str, session: str = SESSION) -> str:
@@ -65,7 +66,7 @@ class _Workspace(unittest.TestCase):
         path = self.root / relative
         text = path.read_text(encoding="utf-8") if path.exists() else ""
         self.assertIn(old, text)
-        path.write_text(text.replace(old, new, 1), encoding="utf-8")
+        path.write_text(text.replace(old, new, 1), encoding="utf-8", newline="\n")
         return str(path)
 
     def create(self, relative: str, text: str) -> str:
@@ -489,10 +490,11 @@ class ScanBoundsTest(_Workspace):
         with mock.patch.object(ct, "MAX_SCAN_ENTRIES", 15):
             self.assertEqual(self.verdict(changed), ct.Verdict(True, "scan_budget", "index"))
 
+    @requires_symlinks
     def test_a_python_symlink_out_of_the_workspace_fires_unread(self):
         outside = tempfile.TemporaryDirectory()
         self.addCleanup(outside.cleanup)
-        Path(outside.name, "receipt.py").write_text(RECEIPT, encoding="utf-8")
+        Path(outside.name, "receipt.py").write_text(RECEIPT, encoding="utf-8", newline="\n")
         self.write("src/app/invoice.py", INVOICE)
         os.symlink(Path(outside.name, "receipt.py"), self.root / "src/app/receipt.py")
         changed = self.edit("src/app/invoice.py", "ROUND_HALF_EVEN)\n\n\n", "ROUND_HALF_UP)\n\n\n")
@@ -501,6 +503,7 @@ class ScanBoundsTest(_Workspace):
         self.assertEqual(verdict, ct.Verdict(True, "outside_link", "src/app/receipt.py"))
         self.assertNotIn(os.path.realpath(Path(outside.name, "receipt.py")), [call.args[0] for call in reads.call_args_list])
 
+    @requires_symlinks
     def test_a_symlinked_directory_out_of_the_workspace_fires(self):
         outside = tempfile.TemporaryDirectory()
         self.addCleanup(outside.cleanup)
