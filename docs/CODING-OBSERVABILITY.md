@@ -352,7 +352,14 @@ What it shows, and what it leaves as `?`:
     waiting on its parents is `waiting` (`held` when one of them failed).
     Its child, bound by the `[dag:<run>/<node>]` goal marker, gives it a
     model, effort and time. A node no child has taken shows the category
-    its run planned. Nodes of an earlier repair group that were never
+    its run planned. `omh_dag` itself gives each open node (handed out,
+    running, or returned and not settled) its age as `open_for_s`, counted
+    from when the attempt first went out, and names one open past the stuck
+    mark (an hour, or the profile's `dag_stuck_after_s`; 0 turns it off) in
+    `stuck`, `say` and the run's status line (`1 open past 1h (Docs body
+    2h 10m)`). The profile's `dag_stale_after_s` and
+    `dag_max_lost_reoffers` move when a node no child took is offered again
+    (600 s) and how many times a restart's loss is (3). Nodes of an earlier repair group that were never
     accepted leave the drawing. Each node carries where it came from
     (`dag_origin`: `define`, `repair:<root>`, `extend:<round>`), and a repair
     node its repair cycle (`cycle`: 2 for the second repair of the same

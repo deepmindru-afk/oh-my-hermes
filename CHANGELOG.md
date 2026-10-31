@@ -930,6 +930,22 @@ All notable changes will be documented here.
   waiting or finished work, and the pane follows Desktop's language when
   Korean is selected.
 
+- **A dag-ulw node left open for hours says so.** `omh_dag status`, `ready`
+  and `settle` give every open node its age (`open_for_s`, from when it first
+  went out, so re-offering it does not reset it). One open past an hour is
+  listed in `stuck`, counted on the run's status line (`1 open past 1h (Docs
+  body 2h 10m)`), and named in `say` with what to check: no child took it,
+  its child still runs (`delegate_task action=list`, then settle failed and
+  repair when none is live), or it came back and was never settled. A run
+  whose wave never started or whose child went silent used to look the same
+  at two minutes and at eight hours. The marks are profile settings under
+  `plugins.entries.omh.settings`: `dag_stuck_after_s` (default 3600, 0 turns
+  the warning off), `dag_stale_after_s` (default 600) and
+  `dag_max_lost_reoffers` (default 3); a value that is not a number is named
+  in the result's `limits` and the default kept. OMH still starts no timer,
+  so the warning shows only when the parent calls the tool. Proposed by
+  @yqm-307 in #2427.
+
 ## 4.0.3 - 2026-10-27
 
 - **`plan` and `ralplan` name the goal beyond the request, the raw material,

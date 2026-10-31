@@ -194,12 +194,14 @@ def omh_dag_handler(args: Mapping[str, object], **kwargs: object) -> str:
             return _refused(action, "session_required", "A dag run needs a named chat session.")
         segments = sorted({durable, *conversation_session_ids(hermes_home, durable)})
         now = time.time()
+        limits, ignored = dag_limits(hermes_home)
         # The lanes this conversation's chat posts showed, so a status line names a node added since then once.
         shown = shown_lanes(omh_home, segments)
         # The parent's own task id, whose terminal environment its children share (`backend_root`).
         task = str(kwargs.get("task_id") or "default")
         if action == "define":
-            return _define(args, omh_home, hermes_home, durable, segments, now, shown, task)
+            return _define(args, omh_home, hermes_home, durable, segments, now, shown, task, limits=limits,
+                           ignored=ignored)
         found = _find(omh_home, segments, args.get("run"))
         if found is None and not args.get("run"):
             return _refused(action, "run_not_found", NO_RUN_YET_SAY)
@@ -213,7 +215,7 @@ def omh_dag_handler(args: Mapping[str, object], **kwargs: object) -> str:
             children = _children(omh_home, segments, hermes_home)
             derived = dag_run.derive(record, children, now)
             if action == "status":
-                return _result(action, record, derived, shown)
+                return _result(action, record, derived, shown, now=now, limits=limits, ignored=ignored)
             if action == "cancel":
                 if record.get("cancelled_at") is None:
                     record["cancelled_at"] = now
@@ -222,10 +224,10 @@ def omh_dag_handler(args: Mapping[str, object], **kwargs: object) -> str:
                 derived = dag_run.derive(record, children, now)
                 return _result(action, record, derived, shown, say=(
                     "The run is cancelled. Children already running keep running; stop them with "
-                    "delegate_task action=stop if they should not finish."))
+                    "delegate_task action=stop if they should not finish."), now=now, limits=limits, ignored=ignored)
             if action == "ready":
                 return _ready(action, record, path, derived, children, omh_home, hermes_home, now, shown, task=task,
-                              budget=budget)
+                              budget=budget, limits=limits, ignored=ignored)
             if action == "settle":
                 node = dag_run.valid_id(args.get("node"), "invalid_node_id", "Name the node to settle.")
                 backend = record.get("backend")
@@ -252,24 +254,24 @@ def omh_dag_handler(args: Mapping[str, object], **kwargs: object) -> str:
                            f"terminal the child wrote it in ({unread}). The nodes after it read that file; if it is "
                            "not there, they stop and say so.")
                 return _ready(action, record, path, derived, children, omh_home, hermes_home, now, shown, task=task,
-                              say=say, settled={"node": node, "outcome": happened}, budget=budget)
+                              say=say, settled={"node": node, "outcome": happened}, budget=budget, limits=limits, ignored=ignored)
             if action == "repair":
                 node = dag_run.valid_id(args.get("node"), "invalid_node_id", "Name the failed node to repair.")
                 added = dag_run.repair(record, derived, node, args.get("nodes"), now,
-                                       oneshot_remaining=_wave_budget(record, derived, budget, now))
+                                       oneshot_remaining=_wave_budget(record, derived, budget, now, limits=limits))
                 dag_run.write_run(path, record)
                 derived = dag_run.derive(record, children, now)
                 return _ready(action, record, path, derived, children, omh_home, hermes_home, now, shown, task=task,
-                              settled={"node": node, "repair_nodes": added}, budget=budget)
+                              settled={"node": node, "repair_nodes": added}, budget=budget, limits=limits, ignored=ignored)
             if action == "extend":
                 added = dag_run.extend(record, derived, args.get("nodes"), args.get("node"), now,
-                                       oneshot_remaining=_wave_budget(record, derived, budget, now))
+                                       oneshot_remaining=_wave_budget(record, derived, budget, now, limits=limits))
                 dag_run.write_run(path, record)
                 derived = dag_run.derive(record, children, now)
                 return _ready(action, record, path, derived, children, omh_home, hermes_home, now, shown, task=task,
                               settled={"extend_round": len(record["extends"]), "extend_nodes": added,
-                                       "found_by": record["nodes"][-1]["found_by"]}, budget=budget)
-            return _export(args, record, path, derived, children, omh_home, now, shown)
+                                       "found_by": record["nodes"][-1]["found_by"]}, budget=budget, limits=limits, ignored=ignored)
+            return _export(args, record, path, derived, children, omh_home, now, shown, limits=limits, ignored=ignored)
     except dag_run.DagRefusal as refusal:
         return _refused(action, refusal.reason, refusal.say)
     except (runtime_paths.RuntimeBindingError, OSError, ValueError):
@@ -342,9 +344,10 @@ def oneshot_budget(hermes_home: Path, segments: list[str]) -> dict[str, int] | N
     return {"limit": limit, "spent": spent, "remaining": max(0, limit - spent)}
 
 
-def _awaiting_dispatch(record: Mapping[str, Any], derived: Mapping[str, Mapping[str, Any]], now: float) -> list[str]:
+def _awaiting_dispatch(record: Mapping[str, Any], derived: Mapping[str, Mapping[str, Any]], now: float, *,
+                       limits: dag_run.Limits = dag_run.DEFAULT_LIMITS) -> list[str]:
     """Nodes handed to delegate_task that no child took yet and that are not offered again: each will cost a child."""
-    offered = set(dag_run.offerable(record, derived, now))
+    offered = set(dag_run.offerable(record, derived, now, limits=limits))
     return [str(node["id"]) for node in record["nodes"]
             if derived[str(node["id"])]["state"] == "handed_out" and not derived[str(node["id"])].get("lost")
             and str(node["id"]) not in offered
@@ -352,15 +355,17 @@ def _awaiting_dispatch(record: Mapping[str, Any], derived: Mapping[str, Mapping[
 
 
 def _wave_budget(record: Mapping[str, Any], derived: Mapping[str, Mapping[str, Any]],
-                 budget: Mapping[str, int] | None, now: float) -> int | None:
+                 budget: Mapping[str, int] | None, now: float, *,
+                 limits: dag_run.Limits = dag_run.DEFAULT_LIMITS) -> int | None:
     """How many more children this run may hand out now: the budget left, less the calls not yet dispatched."""
     if budget is None:
         return None
-    return max(0, budget["remaining"] - len(_awaiting_dispatch(record, derived, now)))
+    return max(0, budget["remaining"] - len(_awaiting_dispatch(record, derived, now, limits=limits)))
 
 
 def _define(args: Mapping[str, object], omh_home: Path, hermes_home: Path, durable: str, segments: list[str],
-            now: float, shown: set[str] | None, task: str) -> str:
+            now: float, shown: set[str] | None, task: str, *, limits: dag_run.Limits = dag_run.DEFAULT_LIMITS,
+            ignored: tuple[str, ...] = ()) -> str:
     run = dag_run.valid_id(args.get("run"), "invalid_run_id", "Give the run a short lowercase id (a-z, 0-9, -).")
     budget = oneshot_budget(hermes_home, segments)
     record = dag_run.new_record(durable, run, args.get("name"), args.get("goal"), args.get("nodes"), now,
@@ -376,7 +381,7 @@ def _define(args: Mapping[str, object], omh_home: Path, hermes_home: Path, durab
         children = _children(omh_home, segments, hermes_home)
         derived = dag_run.derive(existing, children, now)
         return _result("define", existing, derived, shown, say="This run was already defined; nothing changed.",
-                       extra={"reused": True})
+                       extra={"reused": True}, now=now, limits=limits, ignored=ignored)
     if not dag_run.make_room(omh_home, durable, _children(omh_home, segments, hermes_home), now):
         raise dag_run.DagRefusal(
             "too_many_runs", "This conversation already keeps the most dag runs it can; cancel one that is not needed.")
@@ -390,7 +395,8 @@ def _define(args: Mapping[str, object], omh_home: Path, hermes_home: Path, durab
             record["backend"] = backend  # where the children's handoff files land; `settle` reads them there
         dag_run.write_run(path, record)
         derived = dag_run.derive(record, [], now)
-        return _ready("define", record, path, derived, [], omh_home, hermes_home, now, shown, task=task, budget=budget)
+        return _ready("define", record, path, derived, [], omh_home, hermes_home, now, shown, task=task, budget=budget,
+                      limits=limits, ignored=ignored)
 
 
 def _find(omh_home: Path, segments: list[str], run: object) -> tuple[dict[str, Any], Path] | None:
@@ -636,16 +642,17 @@ def _ready(
     action: str, record: dict[str, Any], path: Path, derived: Mapping[str, Mapping[str, Any]],
     children: list[dict[str, Any]], omh_home: Path, hermes_home: Path, now: float, shown: set[str] | None, *,
     task: str, say: str = "", settled: Mapping[str, Any] | None = None, budget: Mapping[str, int] | None = None,
+    limits: dag_run.Limits = dag_run.DEFAULT_LIMITS, ignored: tuple[str, ...] = (),
 ) -> str:
     slots = free_slots(hermes_home)
     if budget is not None:
         slots["oneshot"] = dict(budget)  # only in a one-shot session: an interactive payload is unchanged
-    task_budget = _wave_budget(record, derived, budget, now)
+    task_budget = _wave_budget(record, derived, budget, now, limits=limits)
     owner = owner_choice(omh_home, now=now)
     nodes = {str(node["id"]): node for node in record["nodes"]}
     # With a coding owner the person chose, the ready coding nodes go to that owner's fanout, never to delegate_task;
     # baseline, verification and review nodes, and every node without a write scope, stay native.
-    offered = dag_run.offerable(record, derived, now)
+    offered = dag_run.offerable(record, derived, now, limits=limits)
     coding = [node_id for node_id in offered
               if derived[node_id]["state"] == "ready" and dag_run.is_coding(nodes[node_id])] if owner else []
     # A run on a Docker or SSH terminal pins where its handoff files live before its first node goes out, and with no
@@ -658,7 +665,7 @@ def _ready(
             pinned = True
     calls, held = ([], []) if waits else dag_run.calls_for(
         record, derived, free_slots=slots["free"], per_call=slots["cap"], omh_home=omh_home, now=now, skip=coding,
-        task_budget=task_budget, backend=delegation_backend(omh_home, hermes_home))
+        task_budget=task_budget, backend=delegation_backend(omh_home, hermes_home), limits=limits)
     # With the one-shot budget spent, a held node never gets a child: once nothing else is out, it is the parent's.
     spent_out = task_budget is not None and held and task_budget - sum(len(call["tasks"]) for call in calls) <= 0
     mine: list[str] = []
@@ -712,7 +719,7 @@ def _ready(
     if waits:
         instruction = TERMINAL_INTERRUPTED if waits == "interrupted" else TERMINAL_FIRST
         say = " ".join(part for part in (say, instruction.format(backend=record["backend"])) if part)
-    return _result(action, record, derived, shown, say=say, extra=extra)
+    return _result(action, record, derived, shown, say=say, extra=extra, now=now, limits=limits, ignored=ignored)
 
 
 def _backend_say(calls: list[dict[str, Any]]) -> str:
@@ -748,8 +755,57 @@ def delegation_backend(omh_home: Path, hermes_home: Path) -> dict[str, Any] | No
             "options": category_options(mode, chains, routes)}
 
 
+# The profile settings that move `dag_run.Limits`: `plugins.entries.omh.settings.<name>`, in seconds or a count.
+DAG_LIMIT_SETTINGS = ("dag_stale_after_s", "dag_stuck_after_s", "dag_max_lost_reoffers")
+
+
+def dag_limits(hermes_home: Path) -> tuple[dag_run.Limits, tuple[str, ...]]:
+    """The run marks this profile sets, and the names of settings it wrote but this cannot use. Read-only.
+
+    ``dag_stale_after_s``: how long a node no child took waits before ``ready``
+    offers it again. ``dag_stuck_after_s``: how long a node may stay open before
+    every view names it; ``0`` turns that off. ``dag_max_lost_reoffers``: how
+    many times a node whose child a restart ended is offered again. A time
+    mark under `dag_run.MIN_MARK_SECONDS` is raised to it, a count above
+    `dag_run.MAX_LOST_REOFFERS_LIMIT` lowered to it; a value that is not a
+    number, or a config this cannot read, keeps the default and is named.
+    """
+    try:
+        text = (Path(hermes_home) / "config.yaml").read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return dag_run.DEFAULT_LIMITS, ()
+    except (OSError, UnicodeDecodeError):
+        return dag_run.DEFAULT_LIMITS, DAG_LIMIT_SETTINGS
+    values: dict[str, Any] = {}
+    ignored: list[str] = []
+    for name in DAG_LIMIT_SETTINGS:
+        try:
+            raw = runtime_paths.plugin_setting_text(text, name)
+        except runtime_paths.RuntimeBindingError:
+            return dag_run.DEFAULT_LIMITS, DAG_LIMIT_SETTINGS
+        if raw is None:
+            continue
+        try:
+            number = float(raw.strip())
+        except ValueError:
+            ignored.append(name)
+            continue
+        if number != number or number in (float("inf"), float("-inf")) or number < 0:
+            ignored.append(name)
+        elif name == "dag_max_lost_reoffers":
+            values["max_lost_reoffers"] = min(int(number), dag_run.MAX_LOST_REOFFERS_LIMIT)
+        elif name == "dag_stuck_after_s" and number == 0:
+            values["stuck_after_s"] = 0.0
+        else:
+            values[name.removeprefix("dag_")] = max(number, dag_run.MIN_MARK_SECONDS)
+    return dag_run.Limits(**values), tuple(ignored)
+
+
 def _result(action: str, record: Mapping[str, Any], derived: Mapping[str, Mapping[str, Any]],
-            shown: set[str] | None, *, say: str = "", extra: Mapping[str, Any] | None = None) -> str:
+            shown: set[str] | None, *, say: str = "", extra: Mapping[str, Any] | None = None,
+            now: float | None = None, limits: dag_run.Limits = dag_run.DEFAULT_LIMITS,
+            ignored: tuple[str, ...] = ()) -> str:
+    now = time.time() if now is None else now
     state = dag_run.run_state(record, derived)
     payload: dict[str, Any] = {
         "schema_version": dag_run.DAG_RESULT_SCHEMA_VERSION,
@@ -760,8 +816,9 @@ def _result(action: str, record: Mapping[str, Any], derived: Mapping[str, Mappin
         "goal": record.get("goal", ""),
         "state": state,
         "counts": dag_run.counts(record, derived),
-        "status_line": dag_run.status_line(record, derived, added=dag_added_clause(record, derived, shown)),
-        "nodes": dag_run.node_rows(record, derived),
+        "status_line": dag_run.status_line(record, derived, added=dag_added_clause(record, derived, shown), now=now,
+                                           limits=limits),
+        "nodes": dag_run.node_rows(record, derived, now),
         "claim_boundary": dag_run.DAG_CLAIM_BOUNDARY,
     }
     if state == "needs_repair":
@@ -780,14 +837,24 @@ def _result(action: str, record: Mapping[str, Any], derived: Mapping[str, Mappin
             if left else
             "Every node is accepted and the extend rounds are spent. Check each one against its SCOPE and the goal "
             "criteria, then report the goal met or what is still open.")
-    lost = dag_run.lost_for_good(record, derived)
+    lost = dag_run.lost_for_good(record, derived, limits=limits)
     if lost:
         # Added to whatever else the reply says, on every action: nothing offers these nodes again.
         one = len(lost) == 1
         say = " ".join(part for part in (say, (
             f"Hermes restarted while {'node' if one else 'nodes'} {', '.join(lost)} ran, "
-            f"{dag_run.MAX_LOST_REOFFERS + 1} times, so {'it is' if one else 'they are'} not offered again: "
+            f"{limits.max_lost_reoffers + 1} times, so {'it is' if one else 'they are'} not offered again: "
             f"settle {'it' if one else 'each'} failed or blocked.")) if part)
+    found = dag_run.stuck(record, derived, now, limits=limits)
+    if found:
+        # Added to whatever else the reply says, on every action: a silent child gives no other signal.
+        payload["stuck"] = [{"id": node_id, "open_for_s": int(age)} for node_id, age in found]
+        say = " ".join(part for part in (say, dag_run.stuck_say(record, derived, found, limits)) if part)
+    if limits != dag_run.DEFAULT_LIMITS or ignored:
+        payload["limits"] = {"stale_after_s": limits.stale_after_s, "stuck_after_s": limits.stuck_after_s,
+                             "max_lost_reoffers": limits.max_lost_reoffers}
+        if ignored:
+            payload["limits"]["ignored"] = list(ignored)
     if extra:
         payload.update(extra)
     if say:
@@ -882,7 +949,8 @@ def export_goal(record: Mapping[str, Any], units: list[dict[str, Any]]) -> str:
 
 def _export(args: Mapping[str, object], record: dict[str, Any], path: Path,
             derived: Mapping[str, Mapping[str, Any]], children: list[dict[str, Any]], omh_home: Path,
-            now: float, shown: set[str] | None) -> str:
+            now: float, shown: set[str] | None, *, limits: dag_run.Limits = dag_run.DEFAULT_LIMITS,
+            ignored: tuple[str, ...] = ()) -> str:
     owner = args.get("owner")
     if owner not in EXTERNAL_OWNERS:
         raise dag_run.DagRefusal("invalid_owner", f"Name the coding owner: {', '.join(EXTERNAL_OWNERS)}.")
@@ -924,7 +992,7 @@ def _export(args: Mapping[str, object], record: dict[str, Any], path: Path,
                 f"omh coding fanout dispatch {fanout_id} --goal-file {goal_file} --repo-root .",
             ],
         },
-    })
+    }, now=now, limits=limits, ignored=ignored)
 
 
 def _refused(action: str, reason: str, say: str, *, detail: str = "") -> str:
