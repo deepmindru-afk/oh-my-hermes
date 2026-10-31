@@ -59,6 +59,7 @@ from .agent_debug_report import (
     COMPACTION_BOUNDARY,
     FINDING_KINDS,
     IDENTICAL_RETRY_AFTER_ERROR,
+    SILENT_TURN_END,
     TOOL_ERROR,
     agent_debug_reference_errors,
     agent_debug_report_errors,
@@ -84,6 +85,7 @@ OBSERVABLES: tuple[str, ...] = (
 TOOL_ERROR_RETRY_LOOP = "tool_error_retry_loop"
 CONTEXT_LOSS_AFTER_COMPACTION = "context_loss_after_compaction"
 UNWATCHED_BACKGROUND_WORK = "unwatched_background_work"
+TURN_ENDED_WITHOUT_REPLY = "turn_ended_without_reply"
 OUTSIDE_RECORDED_EVIDENCE = "outside_recorded_evidence"
 # pattern -> (the kind whose absence rules it out, the observation that decides it)
 PATTERNS: dict[str, tuple[str | None, str]] = {
@@ -99,6 +101,10 @@ PATTERNS: dict[str, tuple[str | None, str]] = {
         BACKGROUND_WITHOUT_NOTIFY,
         "the run waiting on a process whose completion it was notified of",
     ),
+    TURN_ENDED_WITHOUT_REPLY: (
+        SILENT_TURN_END,
+        "the host's turn exit reason for the cited turn (agent.log `Turn ended: reason=`)",
+    ),
     OUTSIDE_RECORDED_EVIDENCE: (
         None,
         "a replay of the cited turns, or host evidence (provider, model, or runtime state) the record does not hold",
@@ -109,7 +115,7 @@ _OBSERVABLE_PATTERNS: dict[str, tuple[str, ...]] = {
     "repeated_work": (TOOL_ERROR_RETRY_LOOP, CONTEXT_LOSS_AFTER_COMPACTION, OUTSIDE_RECORDED_EVIDENCE),
     "goal_drift": (CONTEXT_LOSS_AFTER_COMPACTION, TOOL_ERROR_RETRY_LOOP, OUTSIDE_RECORDED_EVIDENCE),
     "context_loss": (CONTEXT_LOSS_AFTER_COMPACTION, OUTSIDE_RECORDED_EVIDENCE),
-    "tool_stall": (UNWATCHED_BACKGROUND_WORK, TOOL_ERROR_RETRY_LOOP, OUTSIDE_RECORDED_EVIDENCE),
+    "tool_stall": (UNWATCHED_BACKGROUND_WORK, TOOL_ERROR_RETRY_LOOP, TURN_ENDED_WITHOUT_REPLY, OUTSIDE_RECORDED_EVIDENCE),
     "unexpected_cost": (
         TOOL_ERROR_RETRY_LOOP,
         CONTEXT_LOSS_AFTER_COMPACTION,
@@ -118,6 +124,12 @@ _OBSERVABLE_PATTERNS: dict[str, tuple[str, ...]] = {
     ),
     "unspecified": tuple(PATTERNS),
 }
+# Patterns whose evidence is the symptom itself rather than a correlate of it.
+# A silent turn end is the run stopping without a reply, observed directly, so
+# when it is supported it leads over a pattern that only co-occurs with the
+# failure, whatever the counts; the remaining tie-break is the count of
+# evidence for each.
+DIRECT_EVIDENCE_PATTERNS: tuple[str, ...] = (TURN_ENDED_WITHOUT_REPLY,)
 STATUSES: tuple[str, ...] = ("supported", "unresolved", "ruled_out")
 CONFIDENCES: tuple[str, ...] = ("none", "low", "medium", "high")
 RESOLUTIONS: tuple[str, ...] = ("unresolved", "single_candidate")
@@ -127,6 +139,7 @@ RECOVERY_ACTIONS: dict[str, str] = {
     TOOL_ERROR_RETRY_LOOP: "change_arguments_before_next_retry",
     CONTEXT_LOSS_AFTER_COMPACTION: "restate_goal_after_compaction",
     UNWATCHED_BACKGROUND_WORK: "poll_or_notify_background_process",
+    TURN_ENDED_WITHOUT_REPLY: "read_host_turn_exit_reason",
     OUTSIDE_RECORDED_EVIDENCE: "collect_discriminating_evidence",
 }
 RECOVERY_ACTION_STEPS: dict[str, str] = {
@@ -140,6 +153,10 @@ RECOVERY_ACTION_STEPS: dict[str, str] = {
     "poll_or_notify_background_process": (
         "Poll the cited background process, or start it again with completion notification, before the run "
         "waits on its result."
+    ),
+    "read_host_turn_exit_reason": (
+        "Change nothing in the run yet: read the host's agent.log `Turn ended: reason=` line at the cited turn's "
+        "timestamp to learn why the turn stopped without a reply, then decide whether to resend the last request."
     ),
     "collect_discriminating_evidence": (
         "Change nothing in the run yet: replay the cited turn range or supply the host evidence the decisive "
@@ -477,7 +494,7 @@ def build_agent_failure_pattern_hypothesis(capture: Mapping[str, Any], report: M
         )
     open_ = [item for item in hypotheses if item["status"] != "ruled_out"]
     supported = [item for item in hypotheses if item["status"] == "supported"]
-    leading = max(supported, key=lambda item: len(item["evidence_for"]), default=None)
+    leading = max(supported, key=_leading_rank, default=None)
     artifact = {
         "schema_version": AGENT_FAILURE_PATTERN_HYPOTHESIS_SCHEMA_VERSION,
         "session_id": capture["identity"]["session_id"],
@@ -492,6 +509,11 @@ def build_agent_failure_pattern_hypothesis(capture: Mapping[str, Any], report: M
     if errors:
         raise AgentDebugIncidentError("agent_failure_pattern_hypothesis/v1 failed validation: " + "; ".join(errors))
     return artifact
+
+
+def _leading_rank(hypothesis: Mapping[str, Any]) -> tuple[bool, int]:
+    """Direct evidence of the symptom first, then the count of evidence for; ``max`` keeps the first of a tie."""
+    return hypothesis["pattern"] in DIRECT_EVIDENCE_PATTERNS, len(hypothesis["evidence_for"])
 
 
 def _evidence(
@@ -523,6 +545,8 @@ def _evidence(
             target.append(f"finding:{boundary['finding_id']}")
     elif pattern == UNWATCHED_BACKGROUND_WORK:
         evidence_for.extend(f"finding:{item['finding_id']}" for item in by_kind[BACKGROUND_WITHOUT_NOTIFY])
+    elif pattern == TURN_ENDED_WITHOUT_REPLY:
+        evidence_for.extend(f"finding:{item['finding_id']}" for item in by_kind[SILENT_TURN_END])
     if not by_kind[absence_kind] and absence_kind in checked and complete:
         evidence_against.append(f"absence:{absence_kind}")
     return evidence_for, evidence_against, unavailable
@@ -532,7 +556,9 @@ def agent_failure_pattern_hypothesis_errors(artifact: Mapping[str, Any], capture
     """Every reason the hypothesis artifact is not valid against its capture.
 
     Refused: fewer than two hypotheses; an unknown pattern, status, or
-    confidence; a reference to a finding the capture did not observe; an
+    confidence; a reference to a finding the capture did not observe; a
+    leading hypothesis that passes over a supported one with direct evidence
+    of the symptom; an
     absence the capture cannot vouch for (the kind was unchecked, the reading
     was incomplete, or the kind has findings); a supported hypothesis with no
     evidence for it; a ruled-out one without an absence; ``high`` confidence
@@ -600,6 +626,13 @@ def agent_failure_pattern_hypothesis_errors(artifact: Mapping[str, Any], capture
         item.get("hypothesis_id") == leading and item.get("status") == "supported" for item in hypotheses
     ):
         errors.append("leading_hypothesis must name a supported hypothesis")
+    direct = [
+        item.get("hypothesis_id")
+        for item in hypotheses
+        if item.get("status") == "supported" and item.get("pattern") in DIRECT_EVIDENCE_PATTERNS
+    ]
+    if direct and leading not in direct:
+        errors.append("leading_hypothesis must be a supported hypothesis with direct evidence of the symptom")
     return errors
 
 

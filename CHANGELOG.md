@@ -6,6 +6,17 @@ All notable changes will be documented here.
 
 ![Sprite Forge patch notes](https://raw.githubusercontent.com/rlaope/oh-my-hermes/main/assets/omh-sprite-forge-patch-notes.png)
 
+- **`agent-debug` sees a turn that ended without a reply.** A new finding,
+  `silent_turn_end`, cites a turn whose last tool result was followed by an
+  empty assistant row and then nothing: no reply, no further call, until the
+  next user message. It cites the tool row and the empty row, the call, and
+  the result's exit code (130 for an interrupted command). When one is found,
+  the incident leads with `turn_ended_without_reply` ahead of correlations
+  such as a compaction or an unwatched background process, because the
+  silent end is the symptom itself, and proposes reading the host's agent.log
+  `Turn ended: reason=` line for that timestamp before changing anything.
+  Both state.db and `--session-record` are read; without `tool_calls` the kind
+  is listed unavailable.
 - **The `/theme` picker scrolls on a short terminal.** Where the slot held
   fewer rows than there are launch looks, the arrows still reached the
   looks past it, but they were never drawn (on a 16-row terminal, ember; on a 24-row one, kanagawa-wave).
@@ -21,6 +32,17 @@ All notable changes will be documented here.
   launch look: a rule above and below on a dark sumi-ink ground (Kanagawa
   Lotus on a light terminal), with an ocean swell for its living wallpaper.
   Contributed by Dan Rio (#2436).
+- **A failed CI or merge watcher no longer leaves the session silently
+  stopped.** When a watcher you armed exits non-zero, its notice opens a turn;
+  that turn now starts with a short directive: if the work it watched is still
+  the session's to finish, do it and arm the next wait, otherwise say plainly
+  that the session has stopped and what you have to decide. If the turn ends
+  with nothing armed anyway (no notifying background process, background
+  delegation or scheduled follow-up job), the reply ends with one sentence in
+  its own language saying nothing will wake the session again. Both halves
+  read only records: the host's row kind and notice header, and the turn's own
+  tool results. A killed watcher, a zero exit and a person's own message get
+  nothing.
 
 - **A steer reads as the prompt it is.** A steer you send during a turn
   shows as a prompt row (`❯ <text>`), as Claude Code shows one, in place of
