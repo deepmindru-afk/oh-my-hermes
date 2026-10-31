@@ -703,6 +703,25 @@ were counted a second time by a separate script.
 Verdict: **gate failed** on the pre-registered probe clause for Haiku 4.5 `off`. Every other clause
 passed on every config. This run does not put the change up for merge.
 
+#### Amendment 1 (owner decision, 2026-10-31): one re-measure of the full-context probe
+
+Written and pushed before its first run. Only the probe is measured again, once. The 528-run
+result above stands as recorded and is not re-run.
+
+- **Arms.** `base` is the OMH bundle at origin/main `d4132ca1d`, which was merged into the branch
+  by a new commit first (`856b508c4`). `br` is the bundle at that merge. The compact `omh_context`
+  change itself is unchanged, so the two arms still differ only by it.
+- **Prompts and keys.** The same 5 prompts and answer keys as above, scored the same way.
+- **Volume.** 3 runs per prompt per cell, so 15 runs per arm per cell. There are 8 cells: 4 models
+  times `tool_search` `auto` and `off`. Each run is one `hermes --oneshot` in a fresh empty
+  directory, through fresh profiles set up as before. The arm order alternates run by run.
+- **Clause, per cell.** Branch correct >= base correct - 1, out of 15. And branch correct >= 9 of
+  15.
+- **Also reported.** For each run, whether it called `omh_context`, `omh_capabilities`, both, or
+  neither (directly or through the `tool_search` bridge).
+- **Rule.** This run decides. If every cell passes, the change becomes a merge candidate. If any
+  cell fails, the change is recorded here as rejected.
+
 ### 2026-10-30 round-end consistency check in `pre_verify`: off vs on, five measurements
 
 Measurements 1 to 4 failed their gates. The owner then relaxed the token clause to 1.4x
