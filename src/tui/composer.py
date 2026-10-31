@@ -75,6 +75,32 @@ token as its label and reports the images in order (`ComposerAction.images`);
 history keeps the labels, so a recalled prompt is plain text and holds no
 image. Masked input takes no token.
 
+Vim mode (`vim`, Hermes' `display.vim_mode`; the app turns it on for the main
+composer only) adds modal editing. The composer starts in INSERT, where every
+key does what it does without vim mode except Esc, which goes to NORMAL (the
+caret steps back one cluster, as Vim's does) and reports nothing; so does a
+legacy Alt chord other than Alt+B and Alt+F, whose bytes are also Esc and the
+key in one read: it goes to NORMAL and its key is read there. In NORMAL the
+caret sits on a character, never after a line's last one, and a printable
+character is a command, never text: motions `h l 0 ^ $ w b e`, `j k` (one
+row, as Up and Down, history at the first and last row), `gg G` (the first
+or last line, or line N with a count); `i a I A o O` go to INSERT; `x X D C s
+S r<char> dd cc yy p P`, an operator `d c y` with a motion `h l 0 ^ $ w b e`
+(`dw` and `cw` stop at the end of the line, `cw` on a word is `ce`), `u` and
+Ctrl+R (undo, redo). A count before a command or a motion repeats it (`3w`,
+`2dd`, `d2w`, `3x`, `3p`); inserting commands and `0 ^ $` take none. `w b e`
+move by words between blanks (Vim's `W B E`). A deletion, a change and a yank
+keep what they took for `p` and `P` (after and before the caret, or below and
+above the line for whole lines), its paste chips and images with it. A paste
+chip and an image token are one character to every motion and deletion. Any
+other character does nothing, and so does a key that arrives while a command
+is half typed (`d` then Enter): it drops the half-typed command. Backspace is
+`h` and Delete `x`; every other key (arrows, Home/End, Enter, Tab, Ctrl
+chords, a paste, which inserts at the caret) does what it does in INSERT,
+except that Enter always submits there, a backslash before the caret or not. A
+change (`c`, `s`, `o`) and what is typed after it are one undo step. A
+submit starts the next prompt in INSERT. Masked input is never modal.
+
 History is held oldest first, at most `HISTORY_CAP` entries; a submit
 appends unless the text is blank or repeats the newest entry, or
 `records_history` is off (the app turns it off while the composer answers a
@@ -87,7 +113,7 @@ shown as bullets by `repr` too.
 from __future__ import annotations
 
 from bisect import bisect_right
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass, field
 import unicodedata
 
@@ -130,6 +156,15 @@ IMAGE_LABEL = "[Image #{number}]"
 _TOKEN_FIRST, _TOKEN_LAST = 0x100000, 0x10FFFD
 UNDO_CHARS = frozenset("_-")  # with Ctrl
 REDO_CHAR = "y"  # with Ctrl
+# Vim mode: the editing mode's names, as the info line and Hermes' own status bar say them.
+VIM_INSERT = "INSERT"
+VIM_NORMAL = "NORMAL"
+VIM_REDO_CHAR = "r"  # with Ctrl, in NORMAL
+VIM_COUNT_CAP = 9999  # a count larger than this is this
+_VIM_OPERATORS = "dcy"
+_VIM_MOTIONS = "hl0^$wbe"
+_DIGITS = "0123456789"
+_BLANKS = (" ", TAB_CHAR)
 
 NONE = "none"
 SUBMIT = "submit"
@@ -149,6 +184,9 @@ class ComposerAction:
 
 
 NOTHING = ComposerAction(NONE)
+# An undo or a redo in NORMAL: it keeps its own steps, so `handle` records none for it. Told apart from NOTHING by
+# identity.
+_TOOK_STEP = ComposerAction(NONE)
 
 # Readline's Alt+B and Alt+F, legacy or reported; the legacy bytes are also what stock macOS Terminal.app sends for
 # Option+Left and Option+Right.
@@ -307,6 +345,54 @@ def _word_end(units: Sequence[str], index: int) -> int:
     return index
 
 
+def _next_word(units: Sequence[str], index: int) -> int:
+    """Vim's `W`: the start of the next word, across lines; the end of the text after the last."""
+    while index < len(units) and not units[index].isspace():
+        index += 1
+    while index < len(units) and units[index].isspace():
+        index += 1
+    return index
+
+
+def _end_of_word(units: Sequence[str], index: int) -> int:
+    """Vim's `E`: the last unit of the word after `index` (of this one when `index` is not its last)."""
+    index += 1
+    while index < len(units) and units[index].isspace():
+        index += 1
+    while index + 1 < len(units) and not units[index + 1].isspace():
+        index += 1
+    return min(index, len(units) - 1)
+
+
+def _line_of(units: Sequence[str], index: int) -> tuple[int, int]:
+    """The logical line `index` is on: the index of its first unit and of the newline that ends it (or the end)."""
+    start = end = index
+    while start > 0 and units[start - 1] != NEWLINE:
+        start -= 1
+    while end < len(units) and units[end] != NEWLINE:
+        end += 1
+    return start, end
+
+
+def _first_blank_free(units: Sequence[str], start: int, end: int) -> int:
+    """Vim's `^`: the first unit of the line `start`..`end` that is no space or tab; its last when all are."""
+    index = start
+    while index < end and units[index] in _BLANKS:
+        index += 1
+    return index if index < end else max(end - 1, start)
+
+
+@dataclass(frozen=True)
+class _Register:
+    """What a NORMAL deletion, change or yank took, for `p` and `P`: the text, its chips and images, and whether it
+    was whole lines."""
+
+    text: str
+    pastes: dict[str, str]
+    images: dict[str, tuple[str, object]]
+    linewise: bool
+
+
 _Snapshot = tuple[str, int, dict[str, str], dict[str, tuple[str, object]]]
 
 
@@ -322,6 +408,16 @@ class Composer:
     pastes: dict[str, str] = field(default_factory=dict, repr=False, compare=False)  # chip label -> its text
     # image token (its character in the text) -> its label and the image the app gave it
     images: dict[str, tuple[str, object]] = field(default_factory=dict, repr=False, compare=False)
+    vim: bool = field(default=False, compare=False)  # modal editing (`set_vim`); `normal` says which mode
+    normal: bool = field(default=False, init=False, compare=False)
+    # A NORMAL command typed so far: its count, its operator (`d c y`) and the count after that, and a `g` or an `r`
+    # waiting for the key that completes it.
+    _count: str = field(default="", init=False, repr=False, compare=False)
+    _operator: str = field(default="", init=False, repr=False, compare=False)
+    _op_count: str = field(default="", init=False, repr=False, compare=False)
+    _prefix: str = field(default="", init=False, repr=False, compare=False)
+    _register: _Register | None = field(default=None, init=False, repr=False, compare=False)
+    _changing: bool = field(default=False, init=False, repr=False, compare=False)  # a change went to INSERT
     _paste_count: int = field(default=0, init=False, repr=False, compare=False)
     _token_count: int = field(default=0, init=False, repr=False, compare=False)
     _draft: str = field(default="", init=False, repr=False, compare=False)
@@ -461,6 +557,7 @@ class Composer:
         trail = "" if self.text[self.caret : self.caret + 1].isspace() else " "
         self._replace(self.caret, self.caret, lead + token + trail)
         self._step(before, typed=False)
+        self._clamp_normal()
         return True
 
     def _insert_paste(self, text: str) -> None:
@@ -473,16 +570,23 @@ class Composer:
         if self.masked or not (lines > PASTE_CHIP_LINES or len(cleaned) > PASTE_CHIP_CHARS):
             self._insert(text)
             return
+        label = self._chip_label(cleaned)
+        self.pastes[label] = cleaned
+        self._replace(self.caret, self.caret, label)
+
+    def _chip_label(self, cleaned: str, taken: Collection[str] = ()) -> str:
+        """A label for a chip holding `cleaned` whose number no label in the text has, nor any in `pastes` or
+        `taken`."""
+        lines = len(cleaned.rstrip(NEWLINE).split(NEWLINE))
         label = ""
-        while not label or label in self.text:
+        while not label or label in self.text or label in self.pastes or label in taken:
             self._paste_count += 1
             label = (
                 PASTE_CHIP.format(number=self._paste_count, lines=lines)
                 if lines > 1
                 else PASTE_CHIP_ONE_LINE.format(number=self._paste_count, chars=len(cleaned))
             )
-        self.pastes[label] = cleaned
-        self._replace(self.caret, self.caret, label)
+        return label
 
     def _insert(self, text: str) -> None:
         cleaned = _clean(text, self.masked)
@@ -496,6 +600,7 @@ class Composer:
         before = self._state()
         self._replace(start, end, self._tokens_for(_clean(text, self.masked), images))
         self._step(before, typed=False)
+        self._clamp_normal()
 
     def restore(self, shown: str, chips: Sequence[tuple[str, str]], images: Sequence[tuple[str, object]] = ()) -> None:
         """Put back, at the caret, a text a submit showed as `shown`: its `chips` (label, text) are chips again, and
@@ -504,6 +609,7 @@ class Composer:
         self.pastes.update(chips)
         self._replace(self.caret, self.caret, self._tokens_for(_clean(shown, self.masked), images))
         self._step(before, typed=False)
+        self._clamp_normal()
 
     def _state(self) -> _Snapshot:
         return self.text, self.caret, dict(self.pastes), dict(self.images)
@@ -554,22 +660,381 @@ class Composer:
 
     def handle(self, event: Key | Paste) -> ComposerAction:
         if isinstance(event, Key) and event.name == CHAR and event.ctrl and not event.alt:
-            if event.char in UNDO_CHARS:
-                self._take_step(self._undo, self._redo)
-                return NOTHING
-            if event.char == REDO_CHAR:
-                self._take_step(self._redo, self._undo)
+            redo = event.char == REDO_CHAR or (self.normal and event.char == VIM_REDO_CHAR)
+            if event.char in UNDO_CHARS or redo:
+                self._drop_pending()
+                self._take_step(self._redo, self._undo) if redo else self._take_step(self._undo, self._redo)
+                self._clamp_normal()
                 return NOTHING
         before = self._state()
-        action = self._handle(event)
+        modal = self._modal(event) if self.vim and not self.masked else None
+        if modal is _TOOK_STEP:
+            self._clamp_normal()
+            return NOTHING
+        action = self._handle(event) if modal is None else modal
         if action.kind == SUBMIT:
             self._undo.clear()
             self._redo.clear()
             self._typing_at = None
+            self.normal = False  # the next prompt starts in INSERT
+            self._drop_pending()
         else:
-            typed = isinstance(event, Key) and event.name == CHAR and not event.ctrl and not event.alt
+            typed = modal is None and isinstance(event, Key) and event.name == CHAR and not event.ctrl and not event.alt
             self._step(before, typed)
+            if self._changing and before[0] != self.text:
+                self._typing_at = self.caret  # what is typed next joins the change's undo step
+        self._changing = False
+        self._clamp_normal()
         return action
+
+    # -- vim mode ---------------------------------------------------------------
+
+    def set_vim(self, on: bool) -> None:
+        """Modal editing on or off; either way the composer is in INSERT with no command half typed."""
+        self.vim = on
+        self.normal = False
+        self._drop_pending()
+
+    @property
+    def vim_label(self) -> str:
+        """`VIM_INSERT` or `VIM_NORMAL` while vim mode is on, else ""."""
+        if not self.vim or self.masked:
+            return ""
+        return VIM_NORMAL if self.normal else VIM_INSERT
+
+    @property
+    def pending(self) -> bool:
+        """Whether a NORMAL command is half typed (a count, an operator, a `g` or an `r`), which Esc drops."""
+        return bool(self._count or self._operator or self._op_count or self._prefix)
+
+    def _drop_pending(self) -> None:
+        self._count = self._operator = self._op_count = self._prefix = ""
+
+    def _modal(self, event: Key | Paste) -> ComposerAction | None:
+        """Vim mode's part of `event`; None leaves it to the composer's own keys (INSERT's, or one NORMAL shares)."""
+        if not isinstance(event, Key):
+            self._drop_pending()
+            return None  # a paste inserts at the caret, in either mode
+        # The legacy bytes of an Alt chord are also Esc and the key in one read; Alt+B and Alt+F stay word moves.
+        legacy_alt = (
+            event.name == CHAR and event.alt and not event.ctrl and not event.protocol
+            and event.char not in ALT_WORD_MOVES
+        )
+        if not self.normal:
+            if event.name == ESCAPE:
+                self._enter_normal()
+                return NOTHING
+            if legacy_alt:
+                self._enter_normal()
+                return self._normal_char(event.char)
+            return None
+        if event.name == CHAR and ((not event.ctrl and not event.alt) or legacy_alt):
+            return self._normal_char(event.char)
+        if event.name in (BACKSPACE, DELETE) and not (event.ctrl or event.alt or event.shift):
+            return self._normal_char("h" if event.name == BACKSPACE else "x")
+        if self.pending:
+            self._drop_pending()  # a key that is no part of the command drops it, and does nothing else
+            return NOTHING
+        return None
+
+    def _enter_normal(self) -> None:
+        """INSERT to NORMAL: the caret steps back onto the character before it, unless it starts a line."""
+        self.normal = True
+        self._drop_pending()
+        self._typing_at = None
+        units, bounds, index = self._atoms()
+        if index > 0 and units[index - 1] != NEWLINE:
+            self.caret = bounds[index - 1]
+
+    def _enter_insert(self, change: bool = False) -> None:
+        self.normal = False
+        self._drop_pending()
+        self._typing_at = None
+        self._changing = change
+
+    def _clamp_normal(self) -> None:
+        """In NORMAL the caret is on a character: never after a line's last one (an empty line keeps it), never
+        inside a paste chip."""
+        if not self.normal:
+            return
+        units, bounds, index = self._atoms()
+        if (index == len(units) or units[index] == NEWLINE) and index > 0 and units[index - 1] != NEWLINE:
+            index -= 1
+        self.caret = bounds[index]
+
+    def _atoms(self) -> tuple[list[str], list[int], int]:
+        """`_units` with every paste chip one unit: what NORMAL's motions and deletions step over whole."""
+        units, bounds, _index = self._units()
+        if self.pastes:
+            spans = self._chip_spans()
+            merged: list[str] = []
+            edges = [0]
+            for unit, start, end in zip(units, bounds, bounds[1:]):
+                if merged and any(chip_start < start < chip_end for chip_start, chip_end in spans):
+                    merged[-1] += unit
+                    edges[-1] = end
+                else:
+                    merged.append(unit)
+                    edges.append(end)
+            units, bounds = merged, edges
+        return units, bounds, _cluster_index(bounds, self.caret)
+
+    def _take_count(self) -> int | None:
+        """The count typed for the command being completed (one before an operator times one after it); None
+        without one."""
+        if not (self._count or self._op_count):
+            return None
+        count = int(self._count or "1") * int(self._op_count or "1")
+        self._count = self._op_count = ""
+        return min(count, VIM_COUNT_CAP)
+
+    def _normal_char(self, char: str) -> ComposerAction:
+        """A character typed in NORMAL: part of a command, or the key that completes one."""
+        prefix, self._prefix = self._prefix, ""
+        if prefix == "r":
+            self._replace_chars(char, self._take_count() or 1)
+            return NOTHING
+        if prefix == "g":
+            count, operator = self._take_count(), self._operator
+            self._drop_pending()
+            if char == "g" and not operator:
+                self._goto_line(count or 1)
+            return NOTHING
+        if char in _DIGITS and (char != "0" or (self._op_count if self._operator else self._count)):
+            if self._operator:
+                self._op_count = str(min(int(self._op_count + char), VIM_COUNT_CAP))
+            else:
+                self._count = str(min(int(self._count + char), VIM_COUNT_CAP))
+            return NOTHING
+        if char == "g" or (char == "r" and not self._operator):
+            self._prefix = char
+            return NOTHING
+        if char in _VIM_OPERATORS and not self._operator:
+            self._operator = char
+            return NOTHING
+        count = self._take_count()
+        operator, self._operator = self._operator, ""
+        if operator:
+            self._operate(operator, char, count or 1)
+            return NOTHING
+        return self._command(char, count)
+
+    def _command(self, char: str, count: int | None) -> ComposerAction:
+        """A NORMAL command that is no operator: a motion, a key that goes to INSERT, an edit, an undo."""
+        times = count or 1
+        units, bounds, index = self._atoms()
+        start, end = _line_of(units, index)
+        if char in _VIM_MOTIONS or char in "jkG":
+            self._move(char, count)
+        elif char == "i":
+            self._enter_insert()
+        elif char in "aA":
+            if char == "A":
+                self.caret = bounds[end]
+            elif index < end:
+                self.caret = bounds[index + 1]
+            self._enter_insert()
+        elif char == "I":
+            self.caret = bounds[_first_blank_free(units, start, end)]
+            self._enter_insert()
+        elif char in "oO":
+            at = bounds[end] if char == "o" else bounds[start]
+            self._replace(at, at, NEWLINE)
+            self.caret = at + 1 if char == "o" else at
+            self._enter_insert(change=True)
+        elif char in "xXs":
+            self._operate("c" if char == "s" else "d", "h" if char == "X" else "l", times)
+        elif char in "DC":
+            self._operate(char.lower(), "$", 1)
+        elif char == "S":
+            self._operate("c", "c", times)
+        elif char in "pP":
+            self._put(char == "p", times)
+        elif char == "u":
+            for _ in range(times):
+                self._take_step(self._undo, self._redo)
+            return _TOOK_STEP
+        return NOTHING  # any other character does nothing
+
+    def _move(self, char: str, count: int | None) -> None:
+        times = count or 1
+        units, bounds, index = self._atoms()
+        start, end = _line_of(units, index)
+        if char in "jk":
+            for _ in range(times):
+                entry = self.history_index
+                self._vertical(1 if char == "j" else -1)
+                if self.history_index != entry:
+                    break  # into the history: one entry, whatever the count
+            return
+        if char == "G":
+            self._goto_line(count or len(units) + 1)  # past the last line is the last
+            return
+        target = index
+        if char == "h":
+            target = max(index - times, start)
+        elif char == "l":
+            target = min(index + times, max(end - 1, start))
+        elif char == "0":
+            target = start
+        elif char == "^":
+            target = _first_blank_free(units, start, end)
+        elif char == "$":
+            target = end
+        else:
+            step = {"w": _next_word, "b": _word_start, "e": _end_of_word}[char]
+            for _ in range(times):
+                target = max(step(units, target), 0)
+        self.caret = bounds[min(target, len(units))]
+
+    def _goto_line(self, number: int) -> None:
+        """The caret to line `number` (1 the first; past the last, the last), on its first character not blank."""
+        units, bounds, _index = self._atoms()
+        starts = [0, *(at + 1 for at, unit in enumerate(units) if unit == NEWLINE)]
+        start = starts[min(max(number, 1), len(starts)) - 1]
+        _start, end = _line_of(units, start)
+        self.caret = bounds[_first_blank_free(units, start, end)]
+
+    def _motion_span(self, motion: str, times: int, operator: str) -> tuple[int, int] | None:
+        """The units an operator with `motion` acts on, (first, after last); None for a motion it takes none with."""
+        units, _bounds, index = self._atoms()
+        start, end = _line_of(units, index)
+        if motion == "h":
+            return max(index - times, start), index
+        if motion == "l":
+            return index, min(index + times, end)
+        if motion == "0":
+            return start, index
+        if motion == "^":
+            target = _first_blank_free(units, start, end)
+            return min(index, target), max(index, target)
+        if motion == "$":
+            return index, end
+        if motion == "b":
+            target = index
+            for _ in range(times):
+                target = _word_start(units, target)
+            return target, index
+        if not units:
+            return index, index  # `cw` on an empty composer still goes to INSERT
+        on_word = index < len(units) and not units[index].isspace()
+        if motion == "e" or (motion == "w" and operator == "c" and on_word):
+            # `cw` on a word is `ce`, Vim's own exception: it changes up to the word's end, not the blanks after it.
+            target = index if motion == "w" else _end_of_word(units, index)
+            if motion == "w":
+                while target + 1 < len(units) and not units[target + 1].isspace():
+                    target += 1
+            for _ in range(times - 1):
+                target = _end_of_word(units, target)
+            return index, target + 1
+        if motion == "w":
+            target = index
+            for _ in range(times):
+                target = _next_word(units, target)
+            return index, (min(target, end) if index < end else target)  # `dw` stops at the end of the line
+        return None
+
+    def _operate(self, operator: str, motion: str, times: int) -> None:
+        """`d`, `c` or `y` over `motion` (`times` of it), or over `times` whole lines when `motion` is the operator."""
+        if motion == operator:
+            self._lines(operator, times)
+            return
+        span = self._motion_span(motion, times, operator)
+        if span is None:
+            return
+        _units, bounds, _index = self._atoms()
+        start, end = bounds[span[0]], bounds[span[1]]
+        if start < end:
+            self._yank(start, end, linewise=False)
+        if operator == "y":
+            self.caret = start
+        elif start < end or operator == "c":
+            self._replace(start, end)
+            if operator == "c":
+                self._enter_insert(change=True)
+
+    def _lines(self, operator: str, times: int) -> None:
+        """`dd`, `cc` (`S`) or `yy`: `times` lines from the caret's."""
+        units, bounds, index = self._atoms()
+        start, end = _line_of(units, index)
+        for _ in range(times - 1):
+            if end >= len(units):
+                break
+            end = _line_of(units, end + 1)[1]
+        self._yank(bounds[start], bounds[end], linewise=True)
+        if operator == "y":
+            return
+        if operator == "c":
+            self._replace(bounds[start], bounds[end])
+            self._enter_insert(change=True)
+            return
+        if end < len(units):
+            self._replace(bounds[start], bounds[end + 1])  # with the newline after them
+        else:
+            self._replace(bounds[start - 1] if start > 0 else bounds[start], bounds[end])  # the last: the one before
+        units, bounds, index = self._atoms()
+        start, end = _line_of(units, index)
+        self.caret = bounds[_first_blank_free(units, start, end)]
+
+    def _yank(self, start: int, end: int, linewise: bool) -> None:
+        text = self.text[start:end]
+        self._register = _Register(
+            text,
+            {label: pasted for label, pasted in self.pastes.items() if label in text},
+            {token: image for token, image in self.images.items() if token in text},
+            linewise,
+        )
+
+    def _put(self, after: bool, times: int) -> None:
+        """`p` (after the caret, or below the line) or `P` (before it, or above): what the last deletion, change or
+        yank took, `times` over; each copy of an image is a token of its own, for the same image."""
+        register = self._register
+        if register is None:
+            return
+        # A chip whose label a chip of other text now has (the labels count from 1 again once the composer
+        # empties) is put under a label of its own.
+        text = register.text
+        for label, pasted in register.pastes.items():
+            if self.pastes.get(label, pasted) != pasted or (label in self.text and label not in self.pastes):
+                new_label = self._chip_label(pasted, taken=register.pastes)
+                text = text.replace(label, new_label)
+                label = new_label
+            self.pastes[label] = pasted
+        copies: list[str] = []
+        for _ in range(times):
+            fresh: dict[int, str] = {}
+            for token, image in register.images.items():
+                fresh[ord(token)] = new = self._new_token()
+                self.images[new] = image
+            copies.append(text.translate(fresh))
+        units, bounds, index = self._atoms()
+        start, end = _line_of(units, index)
+        if register.linewise:
+            block = NEWLINE.join(copies)
+            at = bounds[end] if after else bounds[start]
+            self._replace(at, at, NEWLINE + block if after else block + NEWLINE)
+            self.caret = at + 1 if after else at
+            units, bounds, index = self._atoms()
+            line_start, line_end = _line_of(units, index)
+            self.caret = bounds[_first_blank_free(units, line_start, line_end)]
+            return
+        at = bounds[index + 1] if after and index < end else bounds[index]
+        self._replace(at, at, "".join(copies))
+        units, bounds, index = self._atoms()
+        if index > 0:
+            self.caret = bounds[index - 1]  # on the last character put
+
+    def _replace_chars(self, char: str, times: int) -> None:
+        """`r<char>`: the `times` characters from the caret's become `char`; nothing when the line has fewer."""
+        cleaned = _clean(char, self.masked)
+        units, bounds, index = self._atoms()
+        _start, end = _line_of(units, index)
+        if not cleaned or NEWLINE in cleaned or index + times > end:
+            return
+        self._replace(bounds[index], bounds[index + times], cleaned * times)
+        units, bounds, index = self._atoms()
+        if index > 0:
+            self.caret = bounds[index - 1]
 
     def _handle(self, event: Key | Paste) -> ComposerAction:
         if isinstance(event, Paste):
@@ -577,7 +1042,8 @@ class Composer:
             return NOTHING
         if event.name == ENTER:
             adds_line = event.alt or event.shift
-            if not adds_line and not self.masked and self.text[self.caret - 1 : self.caret] == "\\":
+            continues = not self.masked and not self.normal and self.text[self.caret - 1 : self.caret] == "\\"
+            if not adds_line and continues:  # in NORMAL, Enter always sends
                 self._replace(self.caret - 1, self.caret, NEWLINE)
                 return NOTHING
             if adds_line:
