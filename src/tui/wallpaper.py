@@ -35,7 +35,8 @@ sakura blossom clusters over a faint pink aura with petals falling; aurora
 ribbons of scattered tiles whose tops wave; ember a flame flickering through
 three frames in a warm glow, with embers rising; gold a sun in a breathing
 glow, sparkles for rays, and motes; violet pastel jellyfish drifting, their
-bells pulsing; graphite a cloud raining into a puddle whose ripples spread.
+bells pulsing; graphite a cloud raining into a puddle whose ripples spread;
+kanagawa-wave an ocean swell of two rolling bands, sea spray rising off it.
 The motifs sit low on the right (`BAND`, `RIGHT`), where the launch card and
 a working session's rows leave the screen blank.
 
@@ -590,7 +591,7 @@ def _kanagawa_wave(canvas: _Canvas, palette: LogoPalette, seconds: float) -> Non
     wave_from = cols * RIGHT
     wave_wide = cols * (1 - RIGHT)
 
-    for layer in (0, 1):
+    for layer in (1, 0):  # the higher, farther band first, so the nearer one rolls over it
         period = 7.0 + layer * 3.0
         phase = seconds / period + layer * 0.4
         colour_idx = (layer * 2) % len(stops)
@@ -608,14 +609,14 @@ def _kanagawa_wave(canvas: _Canvas, palette: LogoPalette, seconds: float) -> Non
                 if crest <= y <= bottom:
                     depth = (y - crest) / max(bottom - crest, 1.0)
                     fade = (1.0 - depth * 0.6) * (0.4 + 0.6 * rel_x)
-                    if _noise(tile_y * 4099 + tile_x + layer * 1337, 43) > 0.45 + 0.5 * fade:
+                    if _noise(tile_y * 4099 + tile_x + layer * 1337, 121) > 0.45 + 0.5 * fade:
                         continue
                     toned = canvas.tone(colour, fade)
                     for dy in range(AURA_TILE):
                         for dx in range(AURA_TILE):
                             canvas.dot(y + dy, x + dx, toned)
 
-    spray_colour = _pastel(stops[-1])
+    spray_colour = _pastel(stops[0])  # foam: the swell's first hue, not the palette's red
     count = _count(cols, canvas.rows, 240)
     for index in range(count):
         mote_x = wave_from + wave_wide * (0.2 + 0.8 * _noise(index, 3))
@@ -635,7 +636,7 @@ def _kanagawa_wave(canvas: _Canvas, palette: LogoPalette, seconds: float) -> Non
             canvas.dot(mote_y, mote_x, toned)
 
     _sparkles(canvas, bottom - tall * 0.35, cols * (0.5 + RIGHT / 2), tall * 0.4, wave_wide * 0.8, 6,
-              stops[1 % len(stops)], seconds, 91)
+              stops[1], seconds, 122)
 
 
 SCENES: dict[str, Callable[[_Canvas, LogoPalette, float], None]] = {

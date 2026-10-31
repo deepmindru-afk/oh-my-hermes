@@ -256,6 +256,7 @@ LAUNCH_PALETTES: dict[str, tuple[LogoPalette, LogoPalette]] = {
                     faces=("#A96000", "#B44A00", "#B83300", "#B31609", "#A9001A", "#9A0027"), ground="#FCEDE5"),
     ),
     # Kanagawa Wave: indigo and spring teal sweeping into violet and wave red; rules chrome on sumi-ink and lotus white.
+    # Its Wave (dark) and Lotus (light) colours are rebelot/kanagawa.nvim's (MIT, Copyright (c) 2021 Tommaso Laurenzi).
     "kanagawa-wave": (
         LogoPalette("#7E9CD8", "#957FB8", "#54546D",
                     sweep=("#7AA89F", "#7E9CD8", "#957FB8", "#E46876"), ground="#1F1F28"),

@@ -2180,7 +2180,7 @@ class LocalCommandTests(AppTestCase):
         history = terminal.history()
         self.assertIn("Theme crimson applies to this session", history)
         said = " ".join(word for word in history.split() if word != "┃")  # it wraps on the echo's rail: no bar
-        self.assertIn("No theme or launch look named nope. Themes: sky, amber, crimson, mono, kanagawa-wave. "
+        self.assertIn("No theme or launch look named nope. Themes: sky, amber, crimson, mono, kanagawa. "
                       "Launch looks: spectrum, violet, gold, graphite, sakura, moonlit, aurora, ember, kanagawa-wave.", said)
 
     def test_help_lists_local_commands_the_hermes_catalog_by_category_and_keys_in_the_transcript(self) -> None:

@@ -21,7 +21,7 @@ or profile, or a snapshot this module did not write says loading… instead.
 Each launch look (`theme.LAUNCH_PRESETS`) has one of four layouts: a box per
 section (spectrum, aurora), one box of stacked sections (violet, sakura), one box
 in two columns (gold, ember) or a rule above and below with no side edges
-(graphite, moonlit). Every layout is fitted
+(graphite, moonlit, kanagawa-wave). Every layout is fitted
 to the rows it is given (`launch_card`): two rows of names per family, then one,
 then rows dropped from the last family up, then the last session, then the
 keys; the last form is the last session's one row, so a short terminal still

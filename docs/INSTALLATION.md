@@ -1516,7 +1516,7 @@ The OMH TUI opens with the theme `omh theme use` saved under the OMH home
 (see [TUI Themes](#tui-themes)); `/theme <name>` switches the open session only.
 
 A fresh session's launch draws the block logo, the banner's title and a
-launch card in one of eight launch looks: `spectrum` (the logo swept through
+launch card in one of nine launch looks: `spectrum` (the logo swept through
 the tool kind hues, a box per section, the default), `violet` (one box),
 `gold` (one box in two columns), `graphite` (grey and white with turquoise
 hyphens, a rule above and below), `sakura` (pastel pink, sky blue and cream,
@@ -3018,7 +3018,7 @@ same write.
 
 ### TUI Themes
 
-OMH ships four palettes for the OMH TUI. They are part of the package, so
+OMH ships five palettes for the OMH TUI. They are part of the package, so
 switching is instant and offline, and nothing is installed into Hermes.
 
 | Theme | Skin name | Look |
@@ -3027,7 +3027,7 @@ switching is instant and offline, and nothing is installed into Hermes.
 | `amber` | `omh-amber` | Amber gold on deep bronze. |
 | `crimson` | `omh-crimson` | Ember red-orange on deep crimson. |
 | `mono` | `omh-mono` | Neutral grayscale with white accents. |
-| `kanagawa-wave` | `omh-kanagawa-wave` | Kanagawa Wave: indigo, warm ivory, muted blue and violet. |
+| `kanagawa` | `omh-kanagawa` | Kanagawa Wave: indigo, warm ivory, muted blue and violet. |
 
 ```sh
 omh theme                    # arrow-key picker with a live colour preview

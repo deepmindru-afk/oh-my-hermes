@@ -1,8 +1,10 @@
-# Kanagawa Wave palette, adapted from rebelot/kanagawa.nvim (MIT).
-# Original palette: Tommaso Laurenzi, 2021.
+# Kanagawa Wave palette, adapted from rebelot/kanagawa.nvim
+# (https://github.com/rebelot/kanagawa.nvim), MIT License,
+# Copyright (c) 2021 Tommaso Laurenzi. The MIT terms:
+# https://github.com/rebelot/kanagawa.nvim/blob/master/LICENSE
 # Inherit terminal background and foreground; OMH renders against its reported surface.
-name: omh-kanagawa-wave
-description: Kanagawa Wave — indigo, warm ivory, muted blue and violet
+name: omh-kanagawa
+description: OH-MY-HERMES — Kanagawa Wave: indigo, warm ivory, muted blue and violet
 
 colors:
   banner_border: "#54546D"

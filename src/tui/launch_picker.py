@@ -84,7 +84,7 @@ class LaunchPicker:
         rows: list[Line] = [*shown, truncate_line((Span(TITLE, theme.heading),), width)]
         self.first_row = len(rows)
         widest = max((len(swatches.get(name, ())) for name in LAUNCH_PRESETS), default=0)  # one summary column
-        name_width = max(10, max(map(len, LAUNCH_PRESETS)) + 1)
+        name_width = max(map(len, LAUNCH_PRESETS)) + 2  # the longest name, then the gap the others had
         for index, name in enumerate(LAUNCH_PRESETS):
             highlighted = index == self.index
             mark = CURRENT_MARK if name == self.current else " "

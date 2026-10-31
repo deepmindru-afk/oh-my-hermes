@@ -56,10 +56,11 @@ SKIN_THEMES: tuple[SkinTheme, ...] = (
     SkinTheme("amber", "omh-amber", "omh-amber.yaml", "Amber gold on deep bronze."),
     SkinTheme("crimson", "omh-crimson", "omh-crimson.yaml", "Ember red-orange on deep crimson."),
     SkinTheme("mono", "omh-mono", "omh-mono.yaml", "Neutral grayscale with white accents."),
-    SkinTheme("kanagawa-wave", "omh-kanagawa-wave", "omh-kanagawa-wave.yaml",
-              "Kanagawa Wave: indigo, warm ivory, muted blue and violet."),
+    SkinTheme("kanagawa", "omh-kanagawa", "omh-kanagawa.yaml", "Kanagawa Wave: indigo, warm ivory, muted blue and violet."),
 )
 
+# The short-name column of `omh theme`'s list and picker: the longest name, so every summary starts in one column.
+SHORT_NAME_WIDTH = max(len(theme.short_name) for theme in SKIN_THEMES)
 _SKIN_FILENAMES: tuple[str, ...] = tuple(theme.filename for theme in SKIN_THEMES)
 
 # `default` is not a theme, it is a way of saying "the shipped default"; both

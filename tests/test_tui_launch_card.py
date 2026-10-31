@@ -28,6 +28,7 @@ from test_tui_app import FakePoller, ScriptedTerminal
 from test_tui_modes import SID, RecordingClient
 from test_tui_theme import contrast
 from omh.skin_pack import (
+    SKIN_THEMES,
     THEME_STORE_SCHEMA,
     default_theme,
     read_launch_choice,
@@ -170,6 +171,11 @@ class PaletteTests(unittest.TestCase):
         self.assertEqual(LAUNCH_PRESETS,
                          ("spectrum", "violet", "gold", "graphite", "sakura", "moonlit", "aurora", "ember", "kanagawa-wave"))
         self.assertEqual(set(LAUNCH_PALETTES), set(LAUNCH_PRESETS))
+
+    def test_no_theme_shares_a_name_with_a_look(self) -> None:
+        # `/theme <name>` tries the looks first: a theme named as a look could never be applied to the session.
+        names = {name for theme in SKIN_THEMES for name in (theme.short_name, theme.skin_name)}
+        self.assertEqual(names & set(LAUNCH_PRESETS), set())
 
 
 class SkillRowTests(unittest.TestCase):
@@ -554,7 +560,7 @@ class SwitchTests(unittest.TestCase):
         self.assertIn("── gpt-6.1-sol", "\n".join(run.screen()))
 
     def test_every_look_is_kept_by_name_saved_and_read_back_with_its_chrome(self) -> None:
-        # The eight looks (owner, 2026-10-29): `/theme <look>` keeps each, the saved `launch` key reads back as the same
+        # Every look (eight by the owner, 2026-10-29, then kanagawa-wave): `/theme <look>` keeps each, the saved `launch` key reads back as the same
         # look on the next launch, and the theme the app paints carries that look's rule and rail colours.
         for look in LAUNCH_PRESETS:
             with self.subTest(look=look):

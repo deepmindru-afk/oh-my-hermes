@@ -85,9 +85,9 @@ class SkinRegistryTests(unittest.TestCase):
         on_disk = {path.name for path in _SKINS_DIR.glob("*.yaml")}
         self.assertEqual({theme.filename for theme in SKIN_THEMES}, on_disk)
 
-    def test_the_shipped_set_is_the_four_named_themes(self) -> None:
-        self.assertEqual(available_skins(), ("omh", "omh-amber", "omh-crimson", "omh-mono", "omh-kanagawa-wave"))
-        self.assertEqual(theme_names(), ("sky", "amber", "crimson", "mono", "kanagawa-wave"))
+    def test_the_shipped_set_is_the_five_named_themes(self) -> None:
+        self.assertEqual(available_skins(), ("omh", "omh-amber", "omh-crimson", "omh-mono", "omh-kanagawa"))
+        self.assertEqual(theme_names(), ("sky", "amber", "crimson", "mono", "kanagawa"))
         self.assertEqual(SKIN_THEMES[0].skin_name, SKIN_NAME)
 
     def test_short_names_aliases_and_full_names_all_resolve(self) -> None:
