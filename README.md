@@ -58,14 +58,9 @@ omh setup
   You never call them; the router loads the right ones into the run as tool calls.
 
 - **LSP in the loop.**<br>
-  Definitions, references and renames come from the language server, not from text search.<br>
-  The model renames what the code means, not what the text matches: aliases, re-exports and shadowed names included.<br>
+  Definitions, references and renames come from the language server, not text search.<br>
+  Aliases, re-exports and shadowed names are renamed by meaning, not by matching text.<br>
   Off by default; enable `lsp_tools` in the OMH plugin settings.
-
-- **Callers an edit broke, named before the turn ends, opt-in.**<br>
-  When an edit changes a Python definition, OMH asks the language server about every file that imports it and hands back the new errors as `path:line` lines.<br>
-  Hermes checks only the file it wrote. Measured, the gain is on callers that reach a function through a renamed package re-export, which models without the check missed; they mostly fixed aliased and module-level callers already. `lsp_diagnostics` re-checks a file or glob.<br>
-  Off by default; turn on `impact_check` in the OMH plugin settings ([measurement](benchmarks/live-model-tools/v1/README.md)).
 
 - **Long-term memory you can trust.**<br>
   Nothing is remembered silently: each candidate is kept, refused or deferred with a written reason.<br>

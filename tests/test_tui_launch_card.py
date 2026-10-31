@@ -28,6 +28,7 @@ from test_tui_app import FakePoller, ScriptedTerminal
 from test_tui_modes import SID, RecordingClient
 from test_tui_theme import contrast
 from omh.skin_pack import (
+    SKIN_THEMES,
     THEME_STORE_SCHEMA,
     default_theme,
     read_launch_choice,
@@ -39,7 +40,7 @@ from omh.skin_pack import (
 )
 from omh.tui.app import CARD_KEPT, CARD_LIVE, CARD_NONE, CLEAR_SCREEN_AND_SCROLLBACK, LAUNCH_UNKNOWN_NOTICE, App
 from omh.tui.gateway import Event, Response
-from omh.tui.keys import BUTTON_LEFT, CHAR, DOWN, ENTER, ESCAPE, Key, Mouse
+from omh.tui.keys import BUTTON_LEFT, CHAR, DOWN, ENTER, ESCAPE, UP, Key, Mouse
 from omh.tui.launch_card import (
     SNAPSHOT_SCHEMA,
     Facts,
@@ -168,8 +169,13 @@ class PaletteTests(unittest.TestCase):
     def test_spectrum_is_the_default_and_the_first_look(self) -> None:
         self.assertEqual(DEFAULT_LAUNCH, "spectrum")
         self.assertEqual(LAUNCH_PRESETS,
-                         ("spectrum", "violet", "gold", "graphite", "sakura", "moonlit", "aurora", "ember"))
+                         ("spectrum", "violet", "gold", "graphite", "sakura", "moonlit", "aurora", "ember", "kanagawa-wave"))
         self.assertEqual(set(LAUNCH_PALETTES), set(LAUNCH_PRESETS))
+
+    def test_no_theme_shares_a_name_with_a_look(self) -> None:
+        # `/theme <name>` tries the looks first: a theme named as a look could never be applied to the session.
+        names = {name for theme in SKIN_THEMES for name in (theme.short_name, theme.skin_name)}
+        self.assertEqual(names & set(LAUNCH_PRESETS), set())
 
 
 class SkillRowTests(unittest.TestCase):
@@ -554,7 +560,7 @@ class SwitchTests(unittest.TestCase):
         self.assertIn("── gpt-6.1-sol", "\n".join(run.screen()))
 
     def test_every_look_is_kept_by_name_saved_and_read_back_with_its_chrome(self) -> None:
-        # The eight looks (owner, 2026-10-29): `/theme <look>` keeps each, the saved `launch` key reads back as the same
+        # Every look (eight by the owner, 2026-10-29, then kanagawa-wave): `/theme <look>` keeps each, the saved `launch` key reads back as the same
         # look on the next launch, and the theme the app paints carries that look's rule and rail colours.
         for look in LAUNCH_PRESETS:
             with self.subTest(look=look):
@@ -580,7 +586,34 @@ class SwitchTests(unittest.TestCase):
         run.press(*[Key(DOWN)] * len(LAUNCH_PRESETS))  # one past the last: the highlight stays on it
         self.assertEqual(run.app._shown_look(), LAUNCH_PRESETS[-1])
         run.press(Key(ENTER))
-        self.assertEqual(read_launch_choice(run.home), "ember")
+        self.assertEqual(read_launch_choice(run.home), LAUNCH_PRESETS[-1])
+
+    def test_on_a_short_terminal_the_list_scrolls_so_the_highlighted_look_shows_and_clicks_land(self) -> None:
+        # A slot shorter than the list (14 rows shows six looks): a look past it was reachable but never drawn.
+        def shown(screen: list[str]) -> list[str]:
+            return [name for name in LAUNCH_PRESETS if any(line.lstrip("❯● ").startswith(f"{name} ") for line in screen)]
+
+        run = Launched(rows=14)
+        run.info()
+        run.screen()
+        run.app._theme("")
+        room = len(shown(run.screen()))
+        self.assertLess(room, len(LAUNCH_PRESETS))
+        for name in LAUNCH_PRESETS:
+            with self.subTest(highlighted=name):
+                self.assertEqual(run.app._shown_look(), name)
+                self.assertIn(name, shown(run.screen()))
+                self.assertEqual(len(shown(run.screen())), room)
+            run.press(Key(DOWN))
+        screen = run.screen()
+        self.assertEqual(shown(screen), list(LAUNCH_PRESETS[-room:]))  # scrolled to the end, never past it
+        target = LAUNCH_PRESETS[-room]
+        row = next(index for index, line in enumerate(screen) if line.lstrip("❯● ").startswith(f"{target} "))
+        run.press(Mouse(BUTTON_LEFT, 4, row + 1))
+        self.assertEqual(run.app._shown_look(), target)  # a click on a scrolled row picks the look drawn there
+        self.assertEqual(shown(run.screen()), list(LAUNCH_PRESETS[-room:]))  # inside the list: it does not move
+        run.press(*[Key(UP)] * len(LAUNCH_PRESETS))
+        self.assertEqual(shown(run.screen()), list(LAUNCH_PRESETS[:room]))
 
     def test_a_click_on_a_look_moves_the_highlight_and_reports_are_on_only_while_it_is_open(self) -> None:
         run = Launched()
