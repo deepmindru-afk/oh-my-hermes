@@ -6,6 +6,10 @@ All notable changes will be documented here.
 
 ![Sprite Forge patch notes](https://raw.githubusercontent.com/rlaope/oh-my-hermes/main/assets/omh-sprite-forge-patch-notes.png)
 
+- **The exit card drops its `resume:` label.** Leaving the OMH TUI prints
+  the session's title and, after a blank line, `omh --resume <id>` alone,
+  ready to copy.
+
 - **`agent-debug` sees a turn that ended without a reply.** A new finding,
   `silent_turn_end`, cites a turn whose last tool result was followed by an
   empty assistant row and then nothing: no reply, no further call, until the
