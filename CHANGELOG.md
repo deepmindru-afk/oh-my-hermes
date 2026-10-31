@@ -6,6 +6,18 @@ All notable changes will be documented here.
 
 ![Sprite Forge patch notes](https://raw.githubusercontent.com/rlaope/oh-my-hermes/main/assets/omh-sprite-forge-patch-notes.png)
 
+- **`agent-debug` sees a turn that ended without a reply.** A new finding,
+  `silent_turn_end`, cites a turn whose last tool result was followed by an
+  empty assistant row and then nothing: no reply, no further call, until the
+  next user message. It cites the tool row and the empty row, the call, and
+  the result's exit code (130 for an interrupted command). When one is found,
+  the incident leads with `turn_ended_without_reply` ahead of correlations
+  such as a compaction or an unwatched background process, because the
+  silent end is the symptom itself, and proposes reading the host's agent.log
+  `Turn ended: reason=` line for that timestamp before changing anything.
+  Both state.db and `--session-record` are read; without `tool_calls` the kind
+  is listed unavailable.
+
 - **A steer reads as the prompt it is.** A steer you send during a turn
   shows as a prompt row (`❯ <text>`), as Claude Code shows one, in place of
   the dim `↪ steer queued by Hermes · <text>`. It stays dim right above the
