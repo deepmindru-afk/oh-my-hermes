@@ -35,7 +35,7 @@ from omh.tui.background import (
 )
 from omh.tui.bot_board import ON_POSIX, process_facts
 from omh.tui.keys import CHAR, ENTER, Key
-from omh.skin_pack import theme_for_name
+from omh.skin_pack import theme_for_name, theme_names
 from omh.tui.layout import MIN_COLS
 from omh.tui.panels import (
     DELEGATION_DEPTH, LINEAGE_READS, PARENT_READS, ROUTE_READS, HudPoller, HudSnapshot, delegated_from,
@@ -1406,7 +1406,7 @@ class StyleTests(unittest.TestCase):
                           f"{WORKING_GLYPHS[0]} background{clock}  +2 more"])
 
     def test_the_background_word_is_label_a_little_darker(self) -> None:
-        for name in ("sky", "amber", "crimson", "mono"):
+        for name in theme_names():
             skin = theme_for_name(name)
             for background in (None, DARK, "#000000"):
                 theme = build_theme(skin, background)

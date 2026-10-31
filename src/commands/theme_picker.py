@@ -25,7 +25,7 @@ import select
 import sys
 from typing import TextIO
 
-from ..skin_pack import SkinTheme, hex_to_rgb, skin_colors
+from ..skin_pack import SHORT_NAME_WIDTH, SkinTheme, hex_to_rgb, skin_colors
 from ..system.stdin_probe import stdin_is_tty
 
 try:  # pragma: no cover - exercised by platform, not by a branch test
@@ -226,7 +226,7 @@ def render_frame(
     for index, theme in enumerate(themes):
         pointer = ">" if index == cursor else " "
         active = "*" if theme.skin_name == active_skin else " "
-        row = f" {pointer} [{active}] {theme.short_name:<8} {theme.summary}"
+        row = f" {pointer} [{active}] {theme.short_name:<{SHORT_NAME_WIDTH}} {theme.summary}"
         if index == cursor and use_color:
             row = truecolor(row, skin_colors(theme.skin_name).get("ui_accent", ""), bold=True)
         lines.append(row)

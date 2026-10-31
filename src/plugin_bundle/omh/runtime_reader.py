@@ -112,6 +112,8 @@ from .iso_datetime import strict_fromisoformat
 STATUS_SCHEMA_VERSION = "omh_status/v1"
 HUD_SCHEMA_VERSION = "omh_hud/v1"
 HUD_PRESETS = {"minimal", "focused", "full"}
+# A run record is history; only a recent update suggests work is still going on.
+RUNTIME_ACTIVE_WINDOW_SECONDS = 1800
 # How long a fully-done plan keeps rendering after its last update.
 ALL_DONE_TODO_LINGER_SECONDS = 15 * 60
 TODO_DISPLAY_ITEM_LIMIT = 3
@@ -658,6 +660,9 @@ def _summarize_run(
         "ci_status": str(ci.get("status", "not_observed" if ci else "unknown")),
         "merge_observed": _bool_from_record(merge),
         "merge_status": str(merge.get("status", "not_observed" if merge else "unknown")),
+        # Recency (`_hud_runtime_summary`) reads these; without them every real run reads as history.
+        "created_at": str(run.get("created_at") or ""),
+        "updated_at": str(run.get("updated_at") or ""),
     }
     lifecycle = _journal_projection_for_run(run_dir, legacy, journal_events)
     _apply_lifecycle_to_run_summary(legacy, lifecycle)
@@ -1159,7 +1164,7 @@ def read_omh_hud(
         )
     payload["subagents"]["hidden_in_graph"] = _hidden_graph_lanes(unlisted, payload["delegation_graph"])
     payload["active"] = bool(
-        payload["runtime"]["workflow"] != "idle"
+        (payload["runtime"]["recent"] and payload["runtime"]["workflow"] != "idle")
         or payload["subagents"]["active"]
         # Lingering just-finished native rows keep the activity block visible.
         or payload["subagents"]["rows"]
@@ -2123,6 +2128,7 @@ def _hud_runtime_summary(status: dict[str, Any], latest_run: dict[str, Any]) -> 
     if not latest_run:
         return {
             "state_present": bool(status.get("runtime_state_present", False)),
+            "recent": False,
             "recent_run_count": run_count,
             "latest_run_id": "",
             "executor_target": "",
@@ -2131,8 +2137,11 @@ def _hud_runtime_summary(status: dict[str, Any], latest_run: dict[str, Any]) -> 
             "observation_status": "idle",
             "evidence_state": "idle",
         }
+    updated = _epoch_seconds(str(latest_run.get("updated_at") or latest_run.get("created_at") or ""))
+    recent = updated is not None and -60 <= time.time() - updated <= RUNTIME_ACTIVE_WINDOW_SECONDS
     return {
         "state_present": bool(status.get("runtime_state_present", False)),
+        "recent": recent,
         "recent_run_count": run_count,
         "latest_run_id": _hud_text(latest_run.get("run_id", ""), limit=80),
         "executor_target": _hud_text(latest_run.get("executor_target", ""), limit=80),
