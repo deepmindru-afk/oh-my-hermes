@@ -768,8 +768,12 @@ class HookManifestTests(unittest.TestCase):
             "OMH chose the parser module, find the bug in it",
             "OMH picked this function. Explain it line by line",
             "OMH chose these tests, then run them",
-            # #2440 follow-up: "find out" is a command unless it asks why or what happened.
+            # #2440 follow-up: "find out" before an object question is a command.
             "OMH picked the config. Find out which keys are unused",
+            "OMH chose the module, find out where it is imported",
+            "OMH picked the test file; find out whether it covers the parser",
+            "OMH chose this function, find out what calls it",
+            "OMH picked the API module; find out how many endpoints it exposes",
         )
         for message in commands:
             with self.subTest(message=message):
@@ -786,6 +790,11 @@ class HookManifestTests(unittest.TestCase):
             "OMH routed my typo to ultrawork, find out what happened",
             "OMH picked the wrong skill again; find out why",
             "OMH chose ultrawork for a typo, find out the reason",
+            # #2454 review: near-synonyms of a cause stay reports, not only the listed three.
+            "OMH picked the wrong skill again; find out the reasons",
+            "OMH chose ultrawork for a typo, find out how that happened",
+            "OMH picked the wrong skill, find out what caused it",
+            "OMH chose ultrawork for 'hi'; find out where that decision came from",
         )
         for message in reports:
             with self.subTest(message=message):

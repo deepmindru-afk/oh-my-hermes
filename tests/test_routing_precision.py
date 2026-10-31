@@ -239,7 +239,9 @@ class RoutingPrecisionTests(unittest.TestCase):
         # reports or meta questions keep workflow-learning. A later command keeps
         # release-cut, and two more reports keep workflow-learning. A command
         # after "then" keeps command-operator, and "list the reasons" is a report.
-        self.assertEqual(payload["summary"]["intervention_case_count"], 1219)
+        # "Find out what's wrong" and "find out what went wrong" after what OMH
+        # chose are reports and keep workflow-learning.
+        self.assertEqual(payload["summary"]["intervention_case_count"], 1221)
         self.assertEqual(
             payload["summary"]["intervention_passing_count"], payload["summary"]["intervention_case_count"]
         )

@@ -12260,6 +12260,29 @@ ROUTING_INTERVENTION_CASES: tuple[RoutingInterventionCase, ...] = (
         "workflow_learning",
         "workflow-learning",
     ),
+    # #2454 review: an earlier draft read "find out" as a command before any
+    # word but a cause it listed, and these two left workflow-learning: the
+    # first dispatched ultrawork, the second the oh-my-hermes router.
+    RoutingInterventionCase(
+        "omh-picked-ultrawork-find-out-whats-wrong-reaches-workflow-learning",
+        "OMH picked ultrawork for a one-line fix, find out what's wrong with the router, is a report on OMH's routing",
+        "OMH picked ultrawork for a one-line fix. Find out what's wrong with the router",
+        "dispatch",
+        "workflow-learning",
+        "audit_learning_readiness",
+        "workflow_learning",
+        "workflow-learning",
+    ),
+    RoutingInterventionCase(
+        "omh-routed-typo-find-out-what-went-wrong-reaches-workflow-learning",
+        "OMH routed a typo to ultrawork, find out what went wrong, is a report on OMH's routing",
+        "OMH routed my typo to ultrawork, find out what went wrong",
+        "dispatch",
+        "workflow-learning",
+        "audit_learning_readiness",
+        "workflow_learning",
+        "workflow-learning",
+    ),
     RoutingInterventionCase(
         "ask-omh-to-fix-and-watch-workflow-learning-stays-workflow-learning",
         "A repro that names workflow learning after an edit lead stays workflow learning",
