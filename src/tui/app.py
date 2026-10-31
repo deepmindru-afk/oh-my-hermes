@@ -5924,10 +5924,11 @@ class App(ModesMixin, AgentViewMixin):
         last row like the agent list's, with mouse reports on while it is open."""
         picker = self.launch_picker
         first = budget.slot_top + (picker.first_row if picker is not None else 1)
+        top = picker.top if picker is not None else 0  # the look on the first row shown, the list scrolled
         last = budget.total - 1
         self.clickable = {
-            last - (first + index): (Hit(0, cols, f"launch:{index}"),)
-            for index in range(len(LAUNCH_PRESETS)) if first + index < budget.slot_top + budget.slot
+            last - (first + index - top): (Hit(0, cols, f"launch:{index}"),)
+            for index in range(top, len(LAUNCH_PRESETS)) if first + index - top < budget.slot_top + budget.slot
         }
         self._set_mouse(bool(self.clickable) and self.region.last_row(rows) is not None)
 

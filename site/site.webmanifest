@@ -1,0 +1,14 @@
+{
+  "name": "Oh My Hermes",
+  "short_name": "OMH",
+  "description": "The coding harness with Hermes Agent wired into IDE.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "browser",
+  "background_color": "#0c0a12",
+  "theme_color": "#0c0a12",
+  "icons": [
+    { "src": "/assets/favicon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "/assets/favicon-512.png", "sizes": "512x512", "type": "image/png" }
+  ]
+}

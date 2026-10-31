@@ -21,6 +21,7 @@ import sys
 import threading
 import types
 import unittest
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest import mock
@@ -29,6 +30,7 @@ from _standalone_bundle import bundle_dir
 from omh.install.plugin_pack import install_plugin_bundle
 from omh.maintenance.doctor import DESKTOP_HALF_FILES, doctor_ok, run_doctor
 from omh.paths import resolve_paths
+from omh.plugin_bundle.omh import runtime_reader, subagent_graph
 from omh.plugin_bundle.omh.dashboard import plugin_api
 from _module_patch import patch_modules
 
@@ -69,14 +71,15 @@ SDK_SHIM = r"""
 export const PANES_AREA = 'panes'
 export const STATUSBAR_AREAS = { left: 'statusBar.left', right: 'statusBar.right' }
 export const Tip = ({ label, children }) => { globalThis.__omh.tips.push(label); return children }
-export const Badge = ({ children }) => children
+export const Badge = ({ children, variant }) => { globalThis.__omh.badges.push({ text: children, variant }); return children }
 export const PanelEmpty = ({ title, description }) => [title, description]
-export const StatusDot = () => null
+export const StatusDot = props => { globalThis.__omh.dots.push(props); return null }
 export const Skeleton = () => null
 export const GlyphSpinner = () => '⠋'
 export const host = {
   state: {
     gateway: { get: () => globalThis.__omh.gateway },
+    busy: { get: () => globalThis.__omh.busy },
     focusedStoredSessionId: { get: () => globalThis.__omh.stored },
     model: { get: () => globalThis.__omh.model },
     focusedUsage: { get: () => globalThis.__omh.usage }
@@ -117,7 +120,7 @@ import { pathToFileURL } from 'node:url'
 const [pluginPath, scenariosPath, formatterCasesPath] = process.argv.slice(2)
 globalThis.__omh = {
   gateway: 'open', stored: null, model: '', usage: null,
-  query: { data: undefined, error: null }, lastQuery: null, revealed: [], notified: [], tips: []
+  query: { data: undefined, error: null }, lastQuery: null, revealed: [], notified: [], tips: [], dots: [], badges: []
 }
 const styleEvents = []
 let styleCss = ''
@@ -142,8 +145,7 @@ const ctx = {
 }
 plugin.register(ctx)
 const styleEventsAfterRegister = [...styleEvents]
-// The route identity is drawn as nowrap fragments with break opportunities
-// between them; the report joins them back into the one string it names.
+// A route is one ellipsized cell; join its children into the identity it names.
 const isRoute = node => node.props && typeof node.props.className === 'string' && node.props.className.includes('omh-agent-route')
 const isSeparator = node => node.props && typeof node.props.className === 'string' && node.props.className.includes('omh-agent-sep')
 const text = node =>
@@ -174,6 +176,14 @@ const notesUnderLabel = (node, inside = false, out = []) => {
   if (inside && cls.includes('omh-pane-item-note')) out.push(text(node).join(''))
   return notesUnderLabel(node.props && node.props.children, inside || cls.includes('omh-pane-item-label'), out)
 }
+const structures = (node, out = []) => {
+  if (!node || typeof node !== 'object') return out
+  if (Array.isArray(node)) { node.forEach(child => structures(child, out)); return out }
+  const props = node.props || {}
+  if (props.className) out.push({ className: props.className, text: text(node).join(''), state: props['data-state'], done: props['data-done'], style: props.style,
+    cells: (Array.isArray(props.children) ? props.children : [props.children]).filter(child => child && child.props).map(child => ({ className: child.props.className, text: text(child).join('') })) })
+  return structures(props.children, out)
+}
 const findClick = node => {
   if (!node || typeof node !== 'object') return null
   if (Array.isArray(node)) { for (const child of node) { const hit = findClick(child); if (hit) return hit } return null }
@@ -181,9 +191,11 @@ const findClick = node => {
   return findClick(node.props && node.props.children)
 }
 const scenarios = JSON.parse(readFileSync(scenariosPath, 'utf8'))
+const koreanScenarios = ['catches_and_lanes', 'settled_lanes', 'maestro_and_board', 'gateway_closed', 'open_with_payload']
 const renders = {}
 for (const [name, scenario] of Object.entries(scenarios)) {
   globalThis.__omh.gateway = scenario.gateway
+  globalThis.__omh.busy = scenario.busy === true
   globalThis.__omh.stored = scenario.stored
   globalThis.__omh.model = scenario.model || ''
   globalThis.__omh.usage = scenario.usage || null
@@ -194,17 +206,21 @@ for (const [name, scenario] of Object.entries(scenarios)) {
   globalThis.__omh.lastQuery = null
   globalThis.__omh.revealed = []
   globalThis.__omh.tips = []
+  globalThis.__omh.dots = []
+  globalThis.__omh.badges = []
   restCalls.length = 0
   const byId = {}
   let clicked = []
   let alternates = []
   let strikeLeaks = []
+  let structure = []
   for (const c of contributions) {
     const tree = c.render()
     byId[c.id] = text(tree)
     if (c.id === 'hud') {
       alternates = collect(tree, props => props['data-alt'] === 'true')
       strikeLeaks = notesUnderLabel(tree)
+      structure = structures(tree)
     }
     if (c.id === 'status') {
       const onClick = findClick(tree)
@@ -226,25 +242,71 @@ for (const [name, scenario] of Object.entries(scenarios)) {
     tips: [...globalThis.__omh.tips],
     alternates,
     strikeLeaks,
+    structure,
+    dots: [...globalThis.__omh.dots],
+    badges: [...globalThis.__omh.badges],
+    summary: scenario.data ? mod.stateSummary(scenario.data) : null,
+    active: scenario.data && scenario.data.active,
+    runtime: scenario.data && scenario.data.runtime,
+    tally: scenario.data ? mod.agentTally(scenario.data) : null,
     statusDetail: (mod.statusItem({ gateway: scenario.gateway, data: scenario.data, error: globalThis.__omh.query.error }) || {}).detail || ''
   }
 }
 const formatterCases = JSON.parse(readFileSync(formatterCasesPath, 'utf8'))
 const formatters = {}
+const local = { koreanStates: states => states.map(state => [state, mod.stateWord(state, 'en'), mod.stateWord(state, 'ko')]) }
 for (const [name, cases] of Object.entries(formatterCases)) {
   formatters[name] = cases.map(args => {
-    const answer = mod[name](...args)
-    return answer && typeof answer === 'object' ? answer.text : answer
+    const answer = (local[name] || mod[name])(...args)
+    return answer && typeof answer === 'object' && Object.hasOwn(answer, 'text') ? answer.text : answer
   })
 }
+// Force one absent Korean message without inventing a production-only key.
+const savedKo = mod.KO.stateRunning
+delete mod.KO.stateRunning
+const englishFallback = mod.t('stateRunning', { count: 2 }, 'ko')
+mod.KO.stateRunning = savedKo
 for (const dispose of disposers) dispose()
 const report = {
   plugin: { id: plugin.id, name: plugin.name, description: plugin.description, defaultEnabled: plugin.defaultEnabled },
   contributions: contributions.map(c => ({ id: c.id, area: c.area, title: c.title, order: c.order, data: c.data })),
   renders,
   formatters,
+  englishFallback,
   style: { afterRegister: styleEventsAfterRegister, afterDispose: [...styleEvents], css: styleCss }
 }
+// The same pane on a host whose app language is Korean: a translator shaped
+// like the app's plugin i18n (`register` the bundles, `t` answers the active
+// locale, English, then the key). Runs after the style report is taken.
+const koContributions = []
+const koDisposers = []
+plugin.register({
+  ...ctx,
+  register: c => { koContributions.push(c); return () => {} },
+  registerMany: cs => { cs.forEach(c => koContributions.push(c)); return () => {} },
+  onDispose: fn => { koDisposers.push(fn) },
+  i18n: {
+    register(bundles) { this.bundles = bundles; return () => {} },
+    t(key, vars) {
+      const value = this.bundles.ko[key] ?? this.bundles.en[key] ?? key
+      return typeof value === 'function' ? value(vars) : value
+    },
+    onLocaleChange: () => () => {}
+  }
+})
+report.korean = {}
+for (const name of koreanScenarios) {
+  const scenario = scenarios[name]
+  globalThis.__omh.gateway = scenario.gateway
+  globalThis.__omh.busy = false
+  globalThis.__omh.stored = scenario.stored
+  globalThis.__omh.query = { data: scenario.data, error: null }
+  globalThis.__omh.tips = []
+  const byId = {}
+  for (const c of koContributions) byId[c.id] = text(c.render())
+  report.korean[name] = { byId, tips: [...globalThis.__omh.tips] }
+}
+for (const dispose of koDisposers) dispose()
 process.stdout.write(`${JSON.stringify(report)}\n`, () => process.exit(0))
 """
 
@@ -481,9 +543,85 @@ for _name, (_open, _peak) in SHOTS.items():
         },
     }
 
+# A graph-drawn native child is not counted again in the subagent summary.
+NATIVE_GRAPH = {
+    "status": "active", "source": "native", "name": "Pane refresh", "dag_open": True,
+    "nodes": [
+        {"id": "root", "kind": "root", "title": "main", "state": "running"},
+        {"id": "drawn", "kind": "lane", "title": "Graph-drawn child", "state": "running", "session_tail": RUNNING_ROW["task_id"], "model": "openai/gpt-5.6"},
+    ],
+    "edges": [{"from": "root", "to": "drawn"}],
+}
+CATCHES = [
+    {"seq": 0, "kind": "repeat_loop", "laps": 3, "period": 1},
+    {"seq": 1, "kind": "repeat_loop", "laps": 4, "period": 2},
+    {"seq": 2, "kind": "truncated_read", "offset": 120},
+    {"seq": 3, "kind": "plan_continued", "open_items": 1},
+    {"seq": 4, "kind": "plan_continued", "open_items": 2},
+    {"seq": 5, "kind": "unarmed_wait"},
+]
+SETTLED_GRAPH = {
+    **NATIVE_GRAPH, "dag_open": False,
+    "nodes": [
+        NATIVE_GRAPH["nodes"][0],
+        {"id": "done", "kind": "lane", "title": "Settled child", "state": "done"},
+        {"id": "failed", "kind": "lane", "title": "Failed child", "state": "failed"},
+    ],
+}
+for _name, _data in {
+    "graph_and_other": {
+        **ESTABLISHED_PAYLOAD, "delegation_graph": NATIVE_GRAPH,
+        "subagents": {"rows": [RUNNING_ROW, {**RUNNING_ROW, "task_id": "other"}], "hidden_rows": 2, "hidden_in_graph": 2},
+    },
+    "two_without_graph": {
+        **ESTABLISHED_PAYLOAD,
+        "subagents": {"rows": [RUNNING_ROW, {**RUNNING_ROW, "task_id": "other"}], "hidden_rows": 2, "hidden_in_graph": 2},
+    },
+    "catches_and_lanes": {**MAESTRO_PAYLOAD, "catches": CATCHES, "delegation_graph": NATIVE_GRAPH},
+    "settled_lanes": {**ESTABLISHED_PAYLOAD, "delegation_graph": SETTLED_GRAPH},
+    "inactive_lanes": {**ESTABLISHED_PAYLOAD, "delegation_graph": {**NATIVE_GRAPH, "status": "inactive"}},
+    "two_edges": {**MAESTRO_PAYLOAD, "graph": {**MAESTRO_PAYLOAD["graph"], "edges": [["a", "b"], ["b", "c"]], "edge_count": 2}},
+}.items():
+    SCENARIOS[_name] = {**SCENARIOS["open_with_payload"], "data": _data}
+SCENARIOS["busy"] = {**SCENARIOS["open_with_payload"], "busy": True}
+# A fresh run with nothing counted yet: live, so not grey.
+SCENARIOS["runtime_only"] = {
+    "gateway": "open",
+    "stored": None,
+    "data": {"active": True, "runtime": {"recent": True, "workflow": "fanout"}, "subagents": {"rows": []}, "todo": {"status": "absent"}},
+}
+SCENARIOS["global_idle"] = {**SCENARIOS["no_todo_declared"], "stored": None}
+
+# Every fanout status the reader accepts (`runtime_reader._FANOUT_GRAPH_STATUSES`)
+# and every stuck unit state (`subagent_graph._STUCK_UNIT_STATES`): finite
+# reader vocabulary, so each one has a word in every table.
+FANOUT_AND_STUCK_STATES = {
+    *runtime_reader._FANOUT_GRAPH_STATUSES,
+    *subagent_graph._STUCK_UNIT_STATES,
+}
+
 # The TUI examples from the widget's own grammar, one call each; the report
 # carries the answers in this order.
 FORMATTER_CASES = {
+    "pollInterval": [[True], [False]],
+    "rowFigures": [[{"state": "running", "tool_count": count}, 0] for count in (0, 1, 2)],
+    "stateWord": [["running"], ["blocked_by_dependency"], ["review"], ["some_new_state"], [""], ["failed", "ko"], ["review", "ko"]],
+    # Every fanout status the reader accepts and every stuck unit state, read in Korean.
+    "koreanStates": [[sorted(FANOUT_AND_STUCK_STATES)]],
+    "reasonWord": [["no_new_output"], ["prompt_at_end"], ["repeated_error: ENOENT x"], ["no_new_output", "ko"], ["prompt_at_end", "ko"], ["account_limit: 429 slow down", "ko"], ["something_else", "ko"]],
+    "scopeLabel": [["session-id"], [None]],
+    "humanState": [["blocked_by_dependency"], ["already_completed"], ["dry_run_planned"]],
+    "wordTone": [["running"], ["waiting"], ["failed"], ["done"], ["review"]],
+    "itemGlyph": [[{"state": "done"}], [{"state": "done", "blocked_reason": "not needed"}], [{"state": "active"}], [{"state": "pending"}]],
+    "itemState": [[{"state": "done", "blocked_reason": "not needed"}]],
+    "planProgress": [[MAESTRO_PAYLOAD["todo"]], [{"counts": {"total": 0}}]],
+    "chipList": [[ESTABLISHED_PAYLOAD], [MAESTRO_PAYLOAD]],
+    "catchSentence": [[entry] for entry in CATCHES] + [[{"kind": "repeat_loop", "laps": True, "period": 1}], [{"kind": "unknown"}]],
+    "catchRows": [[{"catches": [*CATCHES, {"seq": -1, "kind": "unarmed_wait"}, {"seq": 9, "kind": "unknown"}]}]],
+    "delegationView": [[{}], [{"delegation_graph": {**NATIVE_GRAPH, "status": "inactive"}}], [{"delegation_graph": SETTLED_GRAPH}]],
+    "t": [["graphTitle", {"ready": 1, "edges": 1}], ["graphTitle", {"ready": 1, "edges": 2}], ["stateIdle", {}, "ko"]],
+    "foldLabels": [[[{"state": "done"}] * 4, {"start": 3, "earlier": 3, "later": 1}]],
+    "agentTally": [[{**SCENARIOS["graph_and_other"]["data"], "subagents": {"rows": [RUNNING_ROW], "hidden_rows": 1, "hidden_in_graph": 9}}]],
     "tokenCountText": [[77000], [184800], [999950], [999], [0], [-1]],
     "elapsedText": [[12], [242], [7260], [None]],
     "costSegmentText": [
@@ -517,6 +655,29 @@ def _rewrite_specifiers(source: str, shim_urls: dict[str, str]) -> str:
         lambda m: f"{m.group(1)}{m.group(2)}{shim_urls.get(m.group(3), m.group(3))}{m.group(2)}",
         source,
     )
+
+
+def _reader_scenarios(root: Path) -> dict:
+    """Exercise the real store-to-REST path before sending its payload to node."""
+    hermes_home = root / "reader-hermes"
+    hermes_home.mkdir()
+    omh_home = root / "reader-omh"
+    run_dir = omh_home / "runtime" / "runs" / "reader-run"
+    run_dir.mkdir(parents=True)
+    scenarios = {}
+    now = datetime.now(timezone.utc)
+    with mock.patch.dict(os.environ, {"HERMES_HOME": str(hermes_home), "OMH_HOME": str(omh_home)}):
+        for name, age in (("reader_old", timedelta(days=2)), ("reader_fresh", timedelta())):
+            stamp = (now - age).isoformat()
+            (run_dir / "run.json").write_text(
+                json.dumps({"run_id": "reader-run", "skill": "fanout", "phase": "executing", "created_at": stamp, "updated_at": stamp}),
+                encoding="utf-8",
+            )
+            payload = plugin_api.hud_payload(hermes_home, "")
+            if "error" in payload:
+                raise AssertionError(payload["error"])
+            scenarios[name] = {"gateway": "open", "stored": None, "data": payload}
+    return scenarios
 
 
 def _plugin_yaml_name() -> str:
@@ -673,6 +834,7 @@ class DesktopPluginFileTests(unittest.TestCase):
         # The loader blob-imports the file as-is; a `<` anywhere is the one
         # character JSX needs, and the module is written without it.
         self.assertNotIn("<", self.source)
+        self.assertNotIn(">", self.source)
 
     def test_the_renderer_reads_the_backend_route_and_the_manifest_names_match(self) -> None:
         self.assertIn("/hud", self.source)
@@ -741,7 +903,7 @@ class DesktopPluginNodeTests(unittest.TestCase):
             harness = root / "harness.mjs"
             harness.write_text(HARNESS, encoding="utf-8")
             scenarios = root / "scenarios.json"
-            scenarios.write_text(json.dumps(SCENARIOS), encoding="utf-8")
+            scenarios.write_text(json.dumps({**SCENARIOS, **_reader_scenarios(root)}), encoding="utf-8")
             formatter_cases = root / "formatters.json"
             formatter_cases.write_text(json.dumps(FORMATTER_CASES), encoding="utf-8")
             completed = subprocess.run(
@@ -799,144 +961,40 @@ class DesktopPluginNodeTests(unittest.TestCase):
 
     def test_the_pane_draws_the_plan_and_the_agent_rows_structurally(self) -> None:
         pane = self._pane("open_with_payload")
-        self.assertEqual(
-            pane,
-            [
-                "⚚ OMH",
-                "v2.0.5",
-                "2 agents · 1 running · 1 done",
-                "deepseek-v4.1-flash-ultrafast",
-                "ctx 12%",
-                "45.2k tok",
-                "$0.012",
-                "2 tools · 4m 2s",
-                "yolo off",
-                "89.3k tokens",
-                "PLAN",
-                "Desktop check",
-                "1/3",
-                "Research",
-                "1/1",
-                "✓",
-                "Read the pane spec",
-                "Build",
-                "0/2",
-                "●",
-                "Draw the structured pane",
-                "○",
-                "Screenshot the result",
-                "waiting: needs the app",
-                "AGENTS",
-                "2",
-                "kind",
-                "id",
-                "task",
-                "route",
-                "state",
-                "elapsed",
-                "tokens",
-                "cost",
-                "⠋",
-                "sub",
-                "a1b2c3d4",
-                "Implement the parser at …/utils/duration.py",
-                "inherit(claude-opus-5:high)",
-                "running",
-                "4m 2s",
-                "12.3k tok",
-                "~$0.0431",
-                "✓",
-                "sub",
-                "e5f6a7b8",
-                "Write tests for parse_duration",
-                "category:architect(claude-fable-5-1:xhigh)",
-                "done",
-                "2h 01m",
-                "77.0k tok",
-                "$0.0123",
-            ],
-        )
-        # The legacy text lines are never on screen: the pane is built from
-        # the structured blocks, so their wording cannot leak through.
+        self.assertEqual(pane, [
+            "OMH", "1 running", "this session", "2 tools · 4m 2s",
+            "PLAN", "Desktop check", "1/3", "Research", "1/1", "✓", "Read the pane spec",
+            "Build", "0/2", "●", "Draw the structured pane", "○", "Screenshot the result",
+            "waiting: needs the app", "2 subagents · 1 running",
+        ])
+        # Structured blocks replace both the legacy lines and Desktop's native rows.
         for line in ESTABLISHED_PAYLOAD["display"]["widget_lines"] + ESTABLISHED_PAYLOAD["display"]["todo_lines"]:
             self.assertNotIn(line, pane)
+        self.assertNotIn("AGENTS", pane)
+        self.assertNotIn("a1b2c3d4", pane)
+        self.assertNotIn("e5f6a7b8", pane)
 
     def test_agent_rows_keep_the_secondary_figures_in_the_tooltip(self) -> None:
         render = self._drive()["renders"]["open_with_payload"]
-        pane = render["byId"]["hud"]
-        # Rate, cache and turn are never drawn on the row; the tooltip on the
-        # title carries the full sentence, the route and those figures.
-        for figure in ("85 tok/s", "cache 72%", "turn 3 (12 tools)", "turn 2 (5 tools)"):
-            self.assertNotIn(figure, pane)
-        self.assertIn(
-            "Implement the parser at /Users/dev/projects/oh-my-hermes/src/utils/duration.py · inherit(claude-opus-5:high) · 85 tok/s · cache 72% · turn 3 (12 tools)",
-            render["tips"],
-        )
-        self.assertIn("Write tests for parse_duration · category:architect(claude-fable-5-1:xhigh) · turn 2 (5 tools)", render["tips"])
-        # Every second row is marked for the wide grid's alternating band.
-        self.assertEqual(
-            render["alternates"],
-            ["✓sube5f6a7b8Write tests for parse_durationcategory:architect(claude-fable-5-1:xhigh)done2h 01m77.0k tok$0.0123"],
-        )
+        self.assertIn("2 subagents · 1 running", render["byId"]["hud"])
+        self.assertIn("Each subagent is listed in Hermes Desktop's Agents panel.", render["tips"])
+        self.assertEqual(render["alternates"], [])
+        self.assertFalse(any("omh-agent-title" in node["className"] for node in render["structure"]))
+        # Native row details belong to Desktop; OMH's route rows retain their figures in a Tip.
+        route = self._drive()["renders"]["maestro_and_board"]
+        self.assertIn("Refactor the router · (codex/maestro gpt-5.6) · 0 tok · $0.0000 (included)", route["tips"])
+        self.assertNotIn("$0.0000 (included)", route["byId"]["hud"])
 
     def test_the_pane_draws_maestro_board_dag_and_a_finished_plan(self) -> None:
         pane = self._pane("maestro_and_board")
-        self.assertEqual(
-            pane,
-            [
-                "⚚ OMH",
-                "v2.0.5",
-                "[global]",
-                "1 agent · 1 blocked",
-                "gpt-5.6",
-                "repeat x3 blocked",
-                "board 2q 1r 0b",
-                "dispatcher not observed",
-                "yolo on",
-                "PLAN",
-                "Ship the pane",
-                "✓ 1/2 (1 skipped)",
-                "✓",
-                "Build it",
-                "✓",
-                "Benchmark it",
-                "skipped: no bench harness",
-                "AGENTS",
-                "4",
-                "kind",
-                "id",
-                "task",
-                "route",
-                "state",
-                "elapsed",
-                "tokens",
-                "cost",
-                "⠋",
-                "main",
-                "run-42",
-                "Refactor the router",
-                "(codex/maestro gpt-5.6)",
-                "running",
-                "30s",
-                "0 tok",
-                "$0.0000 (included)",
-                "▲",
-                "bot",
-                "kb-7",
-                "Triage the flaky suite",
-                "kanban/unassigned(gpt-5.6:medium)",
-                "review",
-                "1m 1s",
-                "+2 more",
-                "[global] DAG · 1 ready · 1 edges",
-                "[+]",
-                "a · completed",
-                "[R]",
-                "b · running",
-                "[!]",
-                "c · blocked_by_dependency · blocked_by b",
-            ],
-        )
+        self.assertEqual(pane, [
+            "OMH", "1 running", "this session", "repeat x3 blocked", "board 2 queued, 1 running",
+            "board dispatcher not seen", "yolo on", "PLAN", "Ship the pane", "✓ 1/2 (1 skipped)",
+            "✓", "Build it", "–", "Benchmark it", "skipped: no bench harness", "ROUTES", "2",
+            "⠋", "Refactor the router", "run-42", "(codex/maestro gpt-5.6)", "running", "30s",
+            "▲", "Triage the flaky suite", "kb-7", "kanban/unassigned(gpt-5.6:medium)", "review", "1m 1s",
+            "+2 more", "DAG", "1 ready · 1 edge", "✓", "a", "completed", "●", "b", "running", "○", "c", "waiting on b",
+        ])
 
     def test_the_parallel_shot_chip_shows_only_a_count_of_two_or_more(self) -> None:
         # The TUI header's rule (`panels._shot_badge`): calls that never overlapped were no parallel shot.
@@ -959,66 +1017,58 @@ class DesktopPluginNodeTests(unittest.TestCase):
 
     def test_the_status_item_is_compact_and_reveals_the_pane_on_click(self) -> None:
         report = self._drive()["renders"]
-        self.assertEqual(report["open_with_payload"]["byId"]["status"], ["⚚", "2 agents", "1 running", "1/3"])
+        self.assertEqual(report["open_with_payload"]["byId"]["status"], ["OMH", "1 running", "plan 1/3"])
         self.assertEqual(report["open_with_payload"]["revealed"], ["omh:hud"])
-        self.assertEqual(
-            report["open_with_payload"]["statusDetail"],
-            "2 agents · 1 running · 1 done · plan Desktop check 1/3 · [omh] v2.0.5 | plugin:ready | target:single",
-        )
-        self.assertEqual(report["maestro_and_board"]["byId"]["status"], ["⚚", "1 agent", "1 blocked", "✓ 1/2"])
-        self.assertEqual(report["no_todo_declared"]["byId"]["status"], ["⚚", "ready"])
-        # Nothing in the bar before the first answer, like the Kanban count.
+        self.assertEqual(report["open_with_payload"]["statusDetail"], "OMH 2.0.5 · 1 running · 1 done · plan Desktop check 1/3")
+        self.assertEqual(report["maestro_and_board"]["byId"]["status"], ["OMH", "1 running", "1 blocked"])
+        self.assertEqual(report["no_todo_declared"]["byId"]["status"], ["OMH", "idle"])
         self.assertEqual(report["loading"]["byId"]["status"], [])
         self.assertEqual(report["gateway_closed"]["byId"]["status"], [])
+        for render in report.values():
+            self.assertLessEqual(len(render["byId"]["status"]), 3)
 
     def test_a_plan_todo_list_holds_keeps_only_its_recorded_reason(self) -> None:
         pane = self._pane("native_held_waiting")
         start = pane.index("PLAN")
-        end = pane.index("AGENTS")
-        self.assertEqual(pane[start:end], ["PLAN", "in todo_list", "1 waiting", "○", "Screenshot the result", "waiting: needs the app"])
+        end = pane.index("2 subagents · 1 running")
+        self.assertEqual(pane[start:end], ["PLAN", "in Hermes todos", "1 waiting", "○", "Screenshot the result", "waiting: needs the app"])
         self.assertNotIn("Draw the structured pane", pane)
-        # The same items under omh_todo still draw in full.
         self.assertIn("Draw the structured pane", self._pane("open_with_payload"))
+        self.assertEqual(self._status("native_held_waiting"), ["OMH", "1 running"])
 
     def test_a_plan_todo_list_holds_with_nothing_omh_only_has_no_plan_section(self) -> None:
         pane = self._pane("native_held_quiet")
         self.assertNotIn("PLAN", pane)
         self.assertNotIn("Read the pane spec", pane)
-        self.assertIn("AGENTS", pane)
+        self.assertIn("2 subagents · 1 running", pane)
+        self.assertEqual(self._status("native_held_quiet"), ["OMH", "1 running"])
 
     def test_an_undeclared_todo_is_said_rather_than_invented(self) -> None:
-        pane = self._pane("no_todo_declared")
-        self.assertEqual(
-            pane,
-            ["⚚ OMH", "v2.0.5", "ready", "gpt-5.6", "PLAN", "No plan for this session", "omh_todo declares one when a workflow starts."],
-        )
+        self.assertEqual(self._pane("no_todo_declared"), [
+            "OMH", "idle", "this session", "PLAN", "No plan yet", "A workflow adds one when it starts.",
+        ])
 
     def test_a_reader_error_record_is_shown_as_a_quiet_notice(self) -> None:
         render = self._drive()["renders"]["reader_error"]
-        self.assertEqual(render["byId"]["status"], ["⚚", "omh error"])
-        self.assertEqual(
-            render["byId"]["hud"],
-            ["⚚ OMH", "reader error", "no focused session", "omh backend: RuntimeBindingError: OMH home is not configured"],
-        )
+        self.assertEqual(render["byId"]["status"], ["OMH", "reader error"])
+        self.assertEqual(render["byId"]["hud"], [
+            "OMH", "reader error", "all sessions", "OMH backend: RuntimeBindingError: OMH home is not configured",
+        ])
         self.assertEqual(render["restCalls"], ["/hud"])
 
     def test_a_transport_error_degrades_to_backend_unavailable(self) -> None:
         render = self._drive()["renders"]["transport_error"]
-        self.assertEqual(render["byId"]["status"], ["⚚", "omh unavailable"])
-        self.assertEqual(
-            render["byId"]["hud"],
-            ["⚚ OMH", "unavailable", "no focused session", "omh backend: HTTP 404: Plugin not found"],
-        )
+        self.assertEqual(render["byId"]["status"], ["OMH", "unavailable"])
+        self.assertEqual(render["byId"]["hud"], ["OMH", "unavailable", "all sessions", "OMH backend: HTTP 404: Plugin not found"])
 
     def test_the_first_poll_renders_no_loading_text(self) -> None:
-        # DESIGN.md: never the literal "Loading…"; the body is skeletons,
-        # which carry no text, under the brand line.
-        self.assertEqual(self._pane("loading"), ["⚚ OMH", "model unknown"])
+        # Skeletons carry no text under the brand and scope line.
+        self.assertEqual(self._pane("loading"), ["OMH", "this session"])
 
     def test_polling_waits_for_an_open_gateway(self) -> None:
         render = self._drive()["renders"]["gateway_closed"]
         self.assertFalse(render["enabled"])
-        self.assertEqual(render["byId"]["hud"], ["⚚ OMH", "gateway connecting", "no focused session"])
+        self.assertEqual(render["byId"]["hud"], ["OMH", "gateway connecting", "all sessions"])
 
     def test_the_formatters_spell_figures_the_way_the_tui_widget_does(self) -> None:
         formatters = self._drive()["formatters"]
@@ -1039,8 +1089,219 @@ class DesktopPluginNodeTests(unittest.TestCase):
         )
         self.assertEqual(
             formatters["hudStateLabel"],
-            ["ready", "3 agents · 2 running · 1 blocked", "2 done", "4 agents · 3 running · 1 blocked · 1 done"],
+            ["idle", "2 running", "2 done", "3 running"],
         )
+
+
+    def test_idle_has_no_dot_and_scope_names_the_data_it_covers(self) -> None:
+        renders = self._drive()["renders"]
+        for name, scope in (("no_todo_declared", "this session"), ("global_idle", "all sessions")):
+            with self.subTest(name=name):
+                self.assertEqual(renders[name]["summary"], "idle")
+                self.assertEqual(renders[name]["dots"], [])
+                self.assertEqual(renders[name]["byId"]["hud"][:3], ["OMH", "idle", scope])
+        self.assertEqual(renders["open_with_payload"]["dots"], [{"tone": "good"}])
+        self.assertIn("oh-my-hermes 2.0.5", renders["no_todo_declared"]["tips"])
+        self.assertNotIn("v2.0.5", renders["no_todo_declared"]["byId"]["hud"])
+        self.assertEqual(self._drive()["formatters"]["scopeLabel"], ["this session", "all sessions"])
+
+    def test_real_reader_payload_keeps_historical_runs_idle_but_fresh_runs_active(self) -> None:
+        renders = self._drive()["renders"]
+        old = renders["reader_old"]
+        fresh = renders["reader_fresh"]
+        self.assertEqual(old["runtime"]["workflow"], "fanout")
+        self.assertIs(old["runtime"]["recent"], False)
+        self.assertIs(old["active"], False)
+        self.assertEqual(old["summary"], "idle")
+        self.assertEqual(old["byId"]["hud"][:3], ["OMH", "idle", "all sessions"])
+        self.assertEqual(old["byId"]["status"], ["OMH", "idle"])
+        self.assertEqual(old["dots"], [])
+        self.assertEqual(fresh["runtime"]["workflow"], "fanout")
+        self.assertIs(fresh["runtime"]["recent"], True)
+        self.assertIs(fresh["active"], True)
+        self.assertNotEqual(fresh["summary"], "idle")
+
+    def test_graph_drawn_native_rows_are_excluded_from_every_count(self) -> None:
+        # A row the delegation graph draws leaves the subagent line, and its
+        # lane is counted once in the header and status bar instead.
+        renders = self._drive()["renders"]
+        drawn = renders["graph_and_other"]
+        plain = renders["two_without_graph"]
+        for render, listed, running in ((drawn, 1, 2), (plain, 2, 2)):
+            with self.subTest(listed=listed):
+                tally = render["tally"]
+                self.assertEqual(len(tally["subagents"]), listed)
+                self.assertEqual(tally["running"], running)
+                self.assertEqual(tally["subagentsRunning"], listed)
+                self.assertEqual((tally["blocked"], tally["done"], tally["routes"]), (0, 0, []))
+                self.assertEqual(render["summary"], f"{running} running")
+                self.assertEqual(render["byId"]["hud"][:2], ["OMH", f"{running} running"])
+                self.assertEqual(render["byId"]["status"], ["OMH", f"{running} running", "plan 1/3"])
+        self.assertIn("1 subagent · 1 running", drawn["byId"]["hud"])
+        self.assertIn("2 subagents · 2 running · +2 more", plain["byId"]["hud"])
+        self.assertEqual(drawn["tally"]["hidden"], 0)
+        self.assertEqual(plain["tally"]["hidden"], 2)
+        self.assertEqual(self._drive()["formatters"]["agentTally"][0]["hidden"], 0)
+
+    def test_skipped_steps_have_their_own_glyph_state_and_worked_progress(self) -> None:
+        report = self._drive()
+        self.assertEqual(report["formatters"]["itemGlyph"], ["✓", "–", "●", "○"])
+        self.assertEqual(report["formatters"]["itemState"], ["skipped"])
+        self.assertEqual(report["formatters"]["planProgress"], [
+            {"worked": 1, "total": 2, "percent": 50, "allDone": True},
+            {"worked": 0, "total": 0, "percent": 0, "allDone": False},
+        ])
+        structure = report["renders"]["maestro_and_board"]["structure"]
+        skipped = [node for node in structure if node.get("state") == "skipped"]
+        self.assertEqual(len(skipped), 1)
+        self.assertEqual(skipped[0]["text"], "–Benchmark itskipped: no bench harness")
+        bars = [node for node in structure if node["className"] == "omh-pane-bar-fill"]
+        self.assertEqual([(node["style"], node["done"]) for node in bars], [({"width": "50%"}, "true")])
+        css = report["style"]["css"]
+        self.assertIn(".omh-pane-bar-fill[data-done=true]{background:var(--ui-text-quaternary)}", css)
+        self.assertIn(".omh-pane-item[data-state=skipped] .omh-pane-item-label{color:var(--ui-text-quaternary)}", css)
+        self.assertEqual(report["formatters"]["foldLabels"], [{"earlier": "✓ 3 done", "later": "… 1 later task"}])
+
+    def test_neutral_telemetry_is_muted_and_only_yolo_on_is_destructive(self) -> None:
+        chips, findings = self._drive()["formatters"]["chipList"]
+        self.assertFalse(any(chip["key"] == "yolo" for chip in chips))
+        self.assertEqual(next(chip for chip in chips if chip["key"] == "tools"), {
+            "key": "tools", "text": "2 tools · 4m 2s", "variant": "muted",
+        })
+        self.assertEqual(next(chip for chip in findings if chip["key"] == "yolo"), {
+            "key": "yolo", "text": "yolo on", "variant": "destructive",
+        })
+        self.assertEqual({chip["key"]: chip["variant"] for chip in findings}, {
+            "repeat": "warn", "board": "muted", "dispatcher": "warn", "yolo": "destructive",
+        })
+        self.assertIn({"text": "2 tools · 4m 2s", "variant": "muted"}, self._drive()["renders"]["open_with_payload"]["badges"])
+        self.assertNotIn("yolo off", self._pane("open_with_payload"))
+
+    def test_catches_use_the_tui_sentences_and_precede_the_plan(self) -> None:
+        from omh.tui.panels import CATCH_EMOJI, _catch_sentence
+
+        report = self._drive()
+        expected = [_catch_sentence(entry) for entry in CATCHES]
+        self.assertEqual(expected[0], "stopped a loop of 3 identical calls")
+        self.assertEqual(report["formatters"]["catchSentence"], [*expected, "", ""])
+        self.assertEqual(report["formatters"]["catchRows"], [[
+            {"seq": entry["seq"], "emoji": CATCH_EMOJI[entry["kind"]], "text": sentence}
+            for entry, sentence in zip(CATCHES, expected)
+        ]])
+        pane = self._pane("catches_and_lanes")
+        self.assertLess(pane.index("CATCHES"), pane.index("PLAN"))
+        self.assertLess(pane.index("PLAN"), pane.index("DELEGATION"))
+        self.assertLess(pane.index("DELEGATION"), pane.index("ROUTES"))
+        self.assertLess(pane.index("ROUTES"), pane.index("DAG"))
+        for sentence in expected:
+            self.assertIn(sentence, pane)
+        self.assertNotIn("CATCHES", self._pane("open_with_payload"))
+
+    def test_inactive_delegation_is_absent_and_settled_lanes_collapse_to_a_summary(self) -> None:
+        views = self._drive()["formatters"]["delegationView"]
+        self.assertEqual(views[:2], [None, None])
+        self.assertTrue(views[2]["settled"])
+        self.assertEqual(views[2]["summary"], "DAG · Pane refresh · done 1/2 · 1 failed")
+        self.assertNotIn("DELEGATION", self._pane("inactive_lanes"))
+        settled = self._pane("settled_lanes")
+        self.assertIn("DELEGATION", settled)
+        self.assertIn("DAG · Pane refresh · done 1/2 · 1 failed", settled)
+        self.assertNotIn("Settled child", settled)
+        self.assertNotIn("Failed child", settled)
+        self.assertIn("Pane refresh · 1 running", self._pane("catches_and_lanes"))
+        self.assertIn("Graph-drawn child", self._pane("catches_and_lanes"))
+
+    def test_route_and_state_are_separate_fixed_grid_cells(self) -> None:
+        report = self._drive()
+        subrows = [node for node in report["renders"]["maestro_and_board"]["structure"] if node["className"] == "omh-agent-sub"]
+        self.assertEqual(len(subrows), 2)
+        for row, state in zip(subrows, ("running", "review")):
+            self.assertEqual(len(row["cells"]), 3)
+            self.assertIn("omh-agent-route", row["cells"][0]["className"])
+            self.assertIn("omh-agent-state", row["cells"][1]["className"])
+            self.assertEqual(row["cells"][1]["text"], state)
+            self.assertIn("omh-agent-figure", row["cells"][2]["className"])
+        self.assertIn("omh-pane-tertiary", subrows[1]["cells"][1]["className"])
+        css = report["style"]["css"]
+        self.assertIn("grid-template-columns:minmax(0,1fr) 64px 52px", css)
+        self.assertIn(".omh-agent-route{min-width:0;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}", css)
+        self.assertIn(".omh-agent-state{overflow:hidden;white-space:nowrap;text-overflow:ellipsis}", css)
+        self.assertIn("kanban/unassigned(gpt-5.6:medium)", report["renders"]["maestro_and_board"]["tips"])
+
+    def test_edges_are_pluralized_and_dependency_waits_are_humanized(self) -> None:
+        report = self._drive()
+        self.assertEqual(report["formatters"]["humanState"], ["waiting", "done", "planned"])
+        self.assertEqual(report["formatters"]["t"][:2], ["1 ready · 1 edge", "1 ready · 2 edges"])
+        self.assertIn("1 ready · 1 edge", self._pane("maestro_and_board"))
+        self.assertIn("1 ready · 2 edges", self._pane("two_edges"))
+        self.assertIn("waiting on b", self._pane("maestro_and_board"))
+        self.assertNotIn("blocked_by_dependency", " ".join(self._pane("maestro_and_board")))
+        self.assertEqual(report["formatters"]["wordTone"], ["accent", "warn", "error", "muted", "tertiary"])
+        for token in ("--ui-cyan", "--ui-green", "--ui-success"):
+            self.assertNotIn(token, report["style"]["css"])
+
+    def test_a_live_run_with_nothing_counted_is_drawn_in_the_accent(self) -> None:
+        report = self._drive()
+        live = report["renders"]["runtime_only"]
+        self.assertEqual(live["byId"]["hud"][:2], ["OMH", "active"])
+        self.assertEqual(live["byId"]["status"], ["OMH", "active"])
+        state = next(node for node in live["structure"] if "omh-pane-state-text" in node["className"])
+        self.assertIn("omh-pane-accent", state["className"])
+        self.assertEqual([dot["tone"] for dot in live["dots"]], ["good"])
+        idle = report["renders"]["global_idle"]
+        state = next(node for node in idle["structure"] if "omh-pane-state-text" in node["className"])
+        self.assertIn("omh-pane-tertiary", state["className"])
+        self.assertEqual(idle["dots"], [])
+
+    def test_row_tool_counts_use_the_right_plural(self) -> None:
+        extras = [figures["extras"] for figures in self._drive()["formatters"]["rowFigures"]]
+        self.assertEqual(extras, [["0 tools"], ["1 tool"], ["2 tools"]])
+
+    def test_state_words_are_translated_but_tones_keep_the_canonical_word(self) -> None:
+        words = self._drive()["formatters"]["stateWord"]
+        self.assertEqual(words, ["running", "waiting", "review", "some new state", "", "실패", "검토"])
+
+    def test_every_reader_state_and_reason_has_a_korean_word(self) -> None:
+        rows = self._drive()["formatters"]["koreanStates"][0]
+        self.assertEqual({row[0] for row in rows}, FANOUT_AND_STUCK_STATES)
+        for state, english, korean in rows:
+            with self.subTest(state=state):
+                self.assertTrue(english)
+                self.assertNotIn("_", english)
+                self.assertNotEqual(korean, english)
+                self.assertNotRegex(korean, r"[A-Za-z]{3,}")
+        reasons = self._drive()["formatters"]["reasonWord"]
+        self.assertEqual(reasons[:3], ["no new output", "prompt at end", "repeated error: ENOENT x"])
+        self.assertEqual(reasons[3:], ["새 출력 없음", "끝에 입력 요청", "계정 한도: 429 slow down", "something else"])
+
+    def test_a_korean_host_reads_state_words_in_korean(self) -> None:
+        korean = self._drive()["korean"]
+        lanes = " ".join(korean["catches_and_lanes"]["byId"]["hud"])
+        self.assertIn("위임", lanes)
+        self.assertIn("Pane refresh · 1 실행 중", lanes)
+        self.assertNotIn("1 running", lanes)
+        board = korean["maestro_and_board"]["byId"]["hud"]
+        for english in ("running", "review", "completed", "failed"):
+            self.assertNotIn(english, board)
+        self.assertIn("검토", board)
+        self.assertIn("실행 중", board)
+        self.assertIn("완료", board)
+        self.assertIn("DAG · Pane refresh · 완료 1/2 · 1 실패", korean["settled_lanes"]["byId"]["hud"])
+        self.assertEqual(korean["gateway_closed"]["byId"]["hud"][:2], ["OMH", "게이트웨이 연결 중"])
+        tips = " ".join(korean["maestro_and_board"]["tips"])
+        self.assertIn("0 토큰", tips)
+        self.assertIn("$0.0000 (포함)", tips)
+        self.assertIn("kanban/미배정(gpt-5.6:medium)", tips)
+        self.assertNotIn(" tok", tips)
+        self.assertNotIn("included", tips)
+
+    def test_busy_polling_uses_two_seconds_and_missing_korean_keys_fall_back(self) -> None:
+        report = self._drive()
+        self.assertEqual(report["formatters"]["pollInterval"], [2000, 5000])
+        self.assertEqual(report["renders"]["busy"]["refetchInterval"], 2000)
+        self.assertEqual(report["renders"]["open_with_payload"]["refetchInterval"], 5000)
+        self.assertEqual(report["englishFallback"], "2 running")
+        self.assertEqual(report["formatters"]["t"][2], "유휴")
 
 
 class DoctorDesktopHalfTests(unittest.TestCase):
