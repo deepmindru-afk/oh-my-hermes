@@ -13,6 +13,106 @@ from _platform_support import requires_posix_permissions
 
 
 class HudCliTests(unittest.TestCase):
+    def test_hud_marks_a_run_updated_now_as_recent_and_active(self) -> None:
+        import time
+        from datetime import datetime, timezone
+        from omh.plugin_bundle.omh.runtime_reader import read_omh_hud
+
+        now = time.time()
+        updated_at = datetime.fromtimestamp(now, timezone.utc).isoformat().replace("+00:00", "Z")
+        tmp = TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        root = Path(tmp.name)
+        with patch("omh.plugin_bundle.omh.runtime_reader.time.time", return_value=now):
+            payload = read_omh_hud(
+                root / ".omh", root / ".hermes",
+                status={"runs": [{"run_id": "recent-run", "workflow": "fanout", "updated_at": updated_at}]},
+            )
+
+        self.assertIs(payload["runtime"]["recent"], True)
+        self.assertTrue(payload["active"])
+
+    def test_hud_does_not_treat_a_historical_run_as_active(self) -> None:
+        import time
+        from datetime import datetime, timezone
+        from omh.plugin_bundle.omh.runtime_reader import read_omh_hud
+
+        now = time.time()
+        updated_at = datetime.fromtimestamp(now - 2 * 24 * 60 * 60, timezone.utc).isoformat()
+        tmp = TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        root = Path(tmp.name)
+        with patch("omh.plugin_bundle.omh.runtime_reader.time.time", return_value=now):
+            payload = read_omh_hud(
+                root / ".omh", root / ".hermes",
+                status={"runs": [{"run_id": "historical-run", "workflow": "fanout", "updated_at": updated_at}]},
+            )
+
+        self.assertIs(payload["runtime"]["recent"], False)
+        self.assertEqual(payload["runtime"]["workflow"], "fanout")
+        self.assertEqual(payload["subagents"]["active"], 0)
+        self.assertEqual(payload["subagents"]["rows"], [])
+        self.assertEqual(payload["maestro"]["rows"], [])
+        self.assertFalse(payload["active"])
+
+    def test_hud_rejects_missing_or_invalid_run_timestamps(self) -> None:
+        import time
+        from datetime import datetime, timezone
+        from omh.plugin_bundle.omh.runtime_reader import read_omh_hud
+
+        now = time.time()
+        fresh = datetime.fromtimestamp(now, timezone.utc).isoformat()
+        tmp = TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        root = Path(tmp.name)
+        cases = {
+            "missing": {},
+            "null": {"updated_at": None},
+            "empty": {"updated_at": ""},
+            "garbage": {"updated_at": "not a timestamp"},
+            "garbage_does_not_fall_back": {"updated_at": "invalid", "created_at": fresh},
+            "numeric": {"updated_at": now},
+        }
+        with patch("omh.plugin_bundle.omh.runtime_reader.time.time", return_value=now):
+            for name, timestamps in cases.items():
+                with self.subTest(case=name):
+                    payload = read_omh_hud(
+                        root / ".omh", root / ".hermes",
+                        status={"runs": [{"run_id": "invalid-run", "workflow": "fanout", **timestamps}]},
+                    )
+                    self.assertIs(payload["runtime"]["recent"], False)
+                    self.assertFalse(payload["active"])
+            idle = read_omh_hud(root / ".omh", root / ".hermes", status={"runs": []})
+        self.assertIs(idle["runtime"]["recent"], False)
+        self.assertFalse(idle["active"])
+
+    def test_hud_runtime_recency_respects_the_window_and_created_at_fallback(self) -> None:
+        import time
+        from datetime import datetime, timezone
+        from omh.plugin_bundle.omh.runtime_reader import _hud_runtime_summary
+
+        now = int(time.time())
+
+        def stamp(offset: int) -> str:
+            return datetime.fromtimestamp(now + offset, timezone.utc).isoformat()
+
+        cases = {
+            "at_window": ({"updated_at": stamp(-1800)}, True),
+            "outside_window": ({"updated_at": stamp(-1801)}, False),
+            "at_future_tolerance": ({"updated_at": stamp(60)}, True),
+            "outside_future_tolerance": ({"updated_at": stamp(61)}, False),
+            "created_at_fallback": ({"created_at": stamp(0)}, True),
+            "null_updated_at_fallback": ({"updated_at": None, "created_at": stamp(0)}, True),
+            "updated_at_wins": ({"updated_at": stamp(-1801), "created_at": stamp(0)}, False),
+        }
+        with patch("omh.plugin_bundle.omh.runtime_reader.time.time", return_value=now):
+            for name, (timestamps, expected) in cases.items():
+                with self.subTest(case=name):
+                    run = {"run_id": "window-run", "workflow": "fanout", **timestamps}
+                    summary = _hud_runtime_summary({"runs": [run]}, run)
+                    self.assertIs(summary["recent"], expected)
+                    self.assertEqual(summary["workflow"], "fanout")
+
     def test_hud_projects_active_subagents_without_duplicate_host_fields(self) -> None:
         status = {
             "runtime_state_present": True,
