@@ -58,8 +58,8 @@ omh setup
   You never call them; the router loads the right ones into the run as tool calls.
 
 - **LSP in the loop.**<br>
-  Definitions, references and renames come from the language server, not from text search.<br>
-  The model renames what the code means, not what the text matches: aliases, re-exports and shadowed names included.<br>
+  Definitions, references and renames come from the language server, not text search.<br>
+  Aliases, re-exports and shadowed names are renamed by meaning, not by matching text.<br>
   Off by default; enable `lsp_tools` in the OMH plugin settings.
 
 - **Long-term memory you can trust.**<br>
