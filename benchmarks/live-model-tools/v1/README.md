@@ -1343,6 +1343,34 @@ No gateway was signalled. The eight `opta2-*` profiles were deleted after their 
 logs were kept. None had a `gateway.pid` or a bound backend process, and the shared gateway's
 pid did not change.
 
+#### Owner decision (2026-10-31)
+
+The re-measure rule registered above said the trigger is rejected if any clause fails. Clause 6's
+pooled strong-model median wall time failed at 0.995x against 0.95x. The owner overrode that
+rule and chose to merge the trigger.
+
+His reasons:
+- **Passes held in both runs.** They were 80 vs 80 in the first run and 81 vs 81 in the re-measure.
+  `C-DUPLICATE` was 12 vs 12 both times, and `mutation_outside_scope` was 0 vs 0 both times.
+- **Tokens fell.** Strong-model pooled median tokens were 0.679x of base in the first run and
+  0.750x in the re-measure.
+- **Each strong model's own median wall time fell in both runs:**
+
+  | Model | First run, base → new | Re-measure, base → new |
+  | --- | --- | --- |
+  | `claude-sonnet-5-5` | 35.0 → 29.9 s | 28.1 → 23.1 s |
+  | `gpt-6.1-sol` | 62.8 → 61.1 s | 61.4 → 59.2 s |
+
+- **The failed clause reflects how the runs were pooled.** Pooling two models whose wall times
+  form two separate groups puts the pooled median in the gap between them. In the re-measure,
+  the mean pooled strong-model wall time fell from 47.2 to 43.7 s while the pooled median moved
+  from 44.75 to 44.52 s.
+
+The first run's failed clause, final answer kept (61 vs 66), passed in the re-measure (62 vs 63).
+
+The recorded results and both pre-registrations above are unchanged. This note records a
+decision taken after the result, not a pass of the gate as registered.
+
 ### 2026-10-30 impact check: callers broken by an edit, off vs on (`impact_check` + `lsp_diagnostics`), gate passed
 
 One question, from oh-my-pi's workspace diagnostics: when an edit changes a definition, does

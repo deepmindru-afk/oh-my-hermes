@@ -83,8 +83,8 @@ check only for surfaces where ordinary code tests are insufficient:
 - dependency or build metadata changes require installation or import smoke
 - CI workflow changes require a syntax check or the workflow's local command
 
-A turn in the coding posture that edited a file with a source suffix also gets
-a round-end consistency check, once, at its first stop (`attempt == 0`). The
+A turn in the coding posture that edited a file with a source suffix can also
+get a round-end consistency check, once, at its first stop (`attempt == 0`). The
 coding posture means Hermes's `cli`, `tui`, `acp` or `desktop` surface in a
 code workspace, or `agent.coding_context: on`; the suffixes are listed in
 `_CODE_SUFFIXES` in `hooks/verify_hooks.py`.
@@ -150,8 +150,10 @@ nothing is stashed. The child's reply is its parent's tool result. The skip
 only matters under `agent.coding_context: on`, because otherwise Hermes gives
 non-interactive platforms no coding posture.
 
-The cost is one extra round of the turn. Measured costs and gains are in the
-2026-10-30 section of `benchmarks/live-model-tools/v1/README.md`.
+The cost is one extra round of the turn whenever the check fires. Measured
+costs and gains are in the 2026-10-30 sections of
+`benchmarks/live-model-tools/v1/README.md`: the always-on check, and the
+trigger that limits it to edits with a copy or a reference elsewhere.
 `agent.max_verify_nudges: 0` turns this off together with every other
 `pre_verify` nudge.
 

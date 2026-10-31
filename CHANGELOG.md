@@ -20,17 +20,34 @@ All notable changes will be documented here.
   launch look's `Native`, moved toward black on a light background as far as
   body-text contrast takes.
 
-- **A coding turn ends with one consistency check.** When a turn in the
-  coding posture edited source code, OMH continues it once at its first stop.
-  It asks the model to look for other copies or call sites of the logic it
-  changed that have to change with it, and to fix them, without re-running
-  tests for the check. That is one extra round on those turns: about 1.37x
-  the median tokens on the bench corpus, in exchange for fixing a second copy
-  of the changed logic far more often (76 vs 38 of 90 runs, pooled over five
-  measurements). If nothing more changed, the model replies with the single
-  line `OMH: no further changes.`, and OMH puts the answer it had already
-  given back in that line's place, so `--oneshot`, API and delegating callers
-  get that answer unchanged. Hermes's own CLI shows the restored answer a
+- **A coding turn ends with one consistency check, when the edit has a copy
+  or a reference elsewhere.** When a turn in the coding posture edited source
+  code, OMH can continue it once at its first stop. It asks the model to look
+  for other copies or call sites of the logic it changed that have to change
+  with it, and to fix them, without re-running tests for the check. That is one
+  extra round, so for Python edits it fires only when it can pay off. It
+  fires when:
+
+  - a changed definition is also defined in another file;
+  - a removed or renamed name is still used in another file;
+  - a function whose signature changed is named in another file;
+  - a replaced line appears in another file.
+
+  The files the turn did not edit are compared with what it changed, using the
+  pre-edit text kept at each edit. Other languages, and anything the comparison
+  cannot decide, get the check as before.
+
+  On the bench corpus the always-on check fixed a second copy of the changed
+  logic far more often: 76 vs 38 of 90 runs, pooled over five measurements. It
+  cost about 1.37x the median tokens. The trigger kept those fixes and stopped
+  the check on edits with no copy: 0 of 54 sessions against 54 of 54, with the
+  same passes. Strong models' median tokens fell to 0.68x and 0.75x of the
+  always-on check in two runs.
+
+  If nothing more changed, the model replies with the single line
+  `OMH: no further changes.`, and OMH puts the answer it had already given
+  back in that line's place, so `--oneshot`, API and delegating callers get
+  that answer unchanged. Hermes's own CLI shows the restored answer a
   second time; the OMH TUI keeps the one line. Delegated children never get
   the check. `agent.max_verify_nudges: 0` turns it off, together with OMH's
   other end-of-turn nudges.
