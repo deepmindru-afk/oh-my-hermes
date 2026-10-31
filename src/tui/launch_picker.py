@@ -38,6 +38,7 @@ SUMMARIES = {
     "moonlit": "moonlight yellow and silver over navy · rules, no side edges",
     "aurora": "emerald and teal into violet · a box per section",
     "ember": "amber through orange to crimson · one box in two columns",
+    "kanagawa-wave": "indigo, spring teal and violet over sumi-ink · rules, no side edges",
 }
 SWATCH = "■"
 
@@ -85,6 +86,7 @@ class LaunchPicker:
         rows: list[Line] = [*shown, truncate_line((Span(TITLE, theme.heading),), width)]
         self.first_row = len(rows)
         widest = max((len(swatches.get(name, ())) for name in LAUNCH_PRESETS), default=0)  # one summary column
+        name_width = max(map(len, LAUNCH_PRESETS)) + 2  # the longest name, then the gap the others had
         room = max(max_rows - len(rows), 0)
         # The list moves only when the highlight would leave it, and never past its last look.
         top = max(min(self.top, self.index), self.index - room + 1)
@@ -94,7 +96,7 @@ class LaunchPicker:
             highlighted = index == self.index
             mark = CURRENT_MARK if name == self.current else " "
             row: list[Span] = [pointer(highlighted, theme),
-                               Span(f"{mark} {name:<10}", theme.menu_current if highlighted else theme.menu)]
+                               Span(f"{mark} {name:<{name_width}}", theme.menu_current if highlighted else theme.menu)]
             row += [Span(SWATCH, swatch) for swatch in swatches.get(name, ())]
             row.append(Span(" " * (widest - len(swatches.get(name, ())))))
             row.append(Span(f"  {SUMMARIES[name]}", theme.text if highlighted else theme.muted))

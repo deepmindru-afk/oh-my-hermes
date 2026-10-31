@@ -35,7 +35,8 @@ sakura blossom clusters over a faint pink aura with petals falling; aurora
 ribbons of scattered tiles whose tops wave; ember a flame flickering through
 three frames in a warm glow, with embers rising; gold a sun in a breathing
 glow, sparkles for rays, and motes; violet pastel jellyfish drifting, their
-bells pulsing; graphite a cloud raining into a puddle whose ripples spread.
+bells pulsing; graphite a cloud raining into a puddle whose ripples spread;
+kanagawa-wave an ocean swell of two rolling bands, sea spray rising off it.
 The motifs sit low on the right (`BAND`, `RIGHT`), where the launch card and
 a working session's rows leave the screen blank.
 
@@ -580,9 +581,68 @@ def _graphite(canvas: _Canvas, palette: LogoPalette, seconds: float) -> None:
     _sparkles(canvas, (top + puddle) / 2, cloud_x, puddle - top, cloud_wide, 3, palette.spark or grey, seconds, 112)
 
 
+def _kanagawa_wave(canvas: _Canvas, palette: LogoPalette, seconds: float) -> None:
+    """An ambient ocean swell on the right: rolling wave bands with sea spray motes and crest sparkles."""
+    stops = _logo_stops(palette)
+    cols = canvas.cols
+    top, bottom = canvas.band()
+    tall = bottom - top
+    scale = canvas.scale()
+    wave_from = cols * RIGHT
+    wave_wide = cols * (1 - RIGHT)
+
+    for layer in (1, 0):  # the higher, farther band first, so the nearer one rolls over it
+        period = 7.0 + layer * 3.0
+        phase = seconds / period + layer * 0.4
+        colour_idx = (layer * 2) % len(stops)
+        colour = _pastel(stops[colour_idx])
+        layer_offset = layer * 4 * scale
+        for tile_y in range(top // AURA_TILE, bottom // AURA_TILE):
+            y = tile_y * AURA_TILE
+            for tile_x in range(int(wave_from) // AURA_TILE, cols // AURA_TILE):
+                x = tile_x * AURA_TILE
+                rel_x = (x - wave_from) / max(wave_wide, 1.0)
+                crest_shape = math.sin(math.pi * min(rel_x, 1.0)) * (0.5 + 0.3 * rel_x)
+                crest = (bottom - (tall * 0.35 * crest_shape) - layer_offset
+                         + math.sin(TAU * (rel_x * 1.5 - phase)) * 2.0 * scale)
+                crest = _clamp(crest, top + 2, bottom)
+                if crest <= y <= bottom:
+                    depth = (y - crest) / max(bottom - crest, 1.0)
+                    fade = (1.0 - depth * 0.6) * (0.4 + 0.6 * rel_x)
+                    if _noise(tile_y * 4099 + tile_x + layer * 1337, 121) > 0.45 + 0.5 * fade:
+                        continue
+                    toned = canvas.tone(colour, fade)
+                    for dy in range(AURA_TILE):
+                        for dx in range(AURA_TILE):
+                            canvas.dot(y + dy, x + dx, toned)
+
+    spray_colour = _pastel(stops[0])  # foam: the swell's first hue, not the palette's red
+    count = _count(cols, canvas.rows, 240)
+    for index in range(count):
+        mote_x = wave_from + wave_wide * (0.2 + 0.8 * _noise(index, 3))
+        rel_x = (mote_x - wave_from) / max(wave_wide, 1.0)
+        crest_shape = math.sin(math.pi * min(rel_x, 1.0)) * (0.5 + 0.3 * rel_x)
+        base_y = bottom - (tall * 0.35 * crest_shape)
+        speed = 0.5 + 0.5 * _noise(index, 7)
+        cycle = 4.0 / speed
+        time_offset = _noise(index, 5) * cycle
+        progress = ((seconds + time_offset) % cycle) / cycle
+        spray_h = tall * (0.25 + 0.35 * _noise(index, 11))
+        mote_y = base_y - progress * spray_h
+        mote_x += math.sin(TAU * (progress + _noise(index, 13))) * 2.0 * scale
+        if top <= mote_y <= bottom and 0 <= mote_x < cols:
+            share = progress
+            toned = canvas.tone(spray_colour, (1.0 - share) * 0.8)
+            canvas.dot(mote_y, mote_x, toned)
+
+    _sparkles(canvas, bottom - tall * 0.35, cols * (0.5 + RIGHT / 2), tall * 0.4, wave_wide * 0.8, 6,
+              stops[1], seconds, 122)
+
+
 SCENES: dict[str, Callable[[_Canvas, LogoPalette, float], None]] = {
     "violet": _violet, "gold": _gold, "graphite": _graphite,
     "sakura": _sakura, "moonlit": _moonlit, "aurora": _aurora, "ember": _ember,
+    "kanagawa-wave": _kanagawa_wave,
 }
 
 
