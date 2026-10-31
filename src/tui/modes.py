@@ -115,9 +115,21 @@ def mode_label(mode: str, theme: Theme, form: int = 0) -> Line:
     return {MODE_ACCEPT: accept, MODE_PLAN: plan}.get(mode, ())
 
 
-def chip_column(mode: str, theme: Theme) -> int:
+def editing_label(editing: str, mode: str, theme: Theme, form: int = 0) -> Line:
+    """The mode's label (`mode_label`), after vim mode's editing mode (`INSERT` or `NORMAL`, "" with vim mode off).
+
+    The editing mode has one form: it stays whole while the mode's label shortens.
+    """
+    own = mode_label(mode, theme, form)
+    if not editing:
+        return own
+    word: Line = (Span(editing, replace(theme.text, bold=True)),)
+    return (*word, Span(LABEL_SEPARATOR, theme.hint), *own) if own else word
+
+
+def chip_column(mode: str, theme: Theme, editing: str = "") -> int:
     """The info line cell the agent count starts on: after the mode's label and a separator, or the line's first."""
-    label = mode_label(mode, theme)
+    label = editing_label(editing, mode, theme)
     return line_width(label) + cell_width(LABEL_SEPARATOR) if label else 0
 
 
@@ -189,6 +201,7 @@ def info_line(
     branch: Sequence[Line] = (),
     background: Sequence[Line] = (),
     right_spare: int = 0,
+    editing: str = "",
 ) -> Line:
     """The one line under the composer. Its left side is `badge` (`[⚚ OMH Native]`), `branch` (the git branch),
     `background` (the background-process row: `background.running_forms`), the mode's label (accept, plan, a shell
@@ -222,6 +235,10 @@ def info_line(
     survives, in some form, and the count after it. Accept and plan say where
     Shift+Tab goes next (`cycle`; CYCLE_WORDS when not given). In the normal
     mode between turns the left side is the badge and the branch alone.
+
+    `editing` is vim mode's editing mode (`INSERT`, `NORMAL`; "" with vim mode
+    off), said first in the label (`editing_label`), so it lasts as long as
+    the label does and never shortens; in the normal mode it is the label.
     """
     forms = (say,) if isinstance(say, str) else say
     if any(forms):
@@ -232,7 +249,7 @@ def info_line(
         hints = default_hints(mode, cycle)
 
     def label_of(form: int) -> Line:
-        own = mode_label(mode, theme, form)
+        own = editing_label(editing, mode, theme, form)
         return (*own, Span(LABEL_SEPARATOR, theme.hint), *chip) if chip and own else chip or own
 
     def placed(texts: Sequence[str], label: Line) -> list[str]:
