@@ -10,15 +10,35 @@ from __future__ import annotations
 
 import re
 
+from ..plugin_bundle.omh.korean_request import korean_request
 from ..plugin_bundle.omh.request_lead import after_courtesy
 
 DIRECT_CODING_EDIT_VERBS = frozenset(
     {"add", "adjust", "build", "change", "delete", "edit", "fix", "implement", "make", "patch", "remove", "rename", "set", "tweak", "update"}
 )
+# The Korean requested verbs of a code edit, as `korean_request` reads them: a
+# 하다 verb's noun ("수정" from "수정해줘") or the stem before the ending ("고쳐"
+# from "고쳐줘"). The same verbs the direct code-edit guard in `policy` reads,
+# with 작성 (write) added: "테스트 작성해줘" asks for code.
+KOREAN_CODE_EDIT_PREDICATES = frozenset(
+    {"고쳐", "수정", "추가", "작성", "구현", "개선", "삭제", "제거", "변경", "바꿔", "넣어", "만들어"}
+)
 
 # The word before a verb that still makes it the command: "use X to fix",
 # "help me fix", or a second command joined by "and"/"then".
 _COMMAND_INTRODUCERS = frozenset({"to", "me", "and", "then"})
+# A request that hands the task to someone opens with one of these, then names
+# who, then the verb: "use OMH to fix", "have Hermes add", "ask OMH to update".
+_DELEGATING_LEADS = frozenset({"use", "have", "let", "ask", "get", "tell"})
+_WORD = re.compile(r"[a-z0-9#][a-z0-9#+.-]*")
+# Where a Korean message's clauses part: a comma, or an aside in parentheses
+# ("코드 고쳐줘 (OMH 세션)", "테스트 작성해줘, OMH 환경이야").
+_KOREAN_CLAUSE_BREAK = re.compile(r"[,，(（)）]")
+
+
+def ordered_words(text: str) -> list[str]:
+    """The words of folded `text`, in order: the tokenizer `command_words` reads."""
+    return _WORD.findall(text)
 
 
 # The words of a message from its command verb on, after the courtesy openers
@@ -27,9 +47,45 @@ _COMMAND_INTRODUCERS = frozenset({"to", "me", "and", "then"})
 # Used only to NARROW guards: an edit verb that is not the command verb does
 # not make a request an edit.
 def command_words(normalized_query: str) -> list[str]:
-    return re.findall(r"[a-z0-9#][a-z0-9#+.-]*", after_courtesy(normalized_query.strip()))
+    return ordered_words(after_courtesy(normalized_query.strip()))
 
 
 def commanded_words(words: list[str]) -> set[str]:
     """The command verb, a verb introduced as the task, or a second command joined by "and"/"then"."""
     return set(words[:1]) | {words[i] for i in range(1, len(words)) if words[i - 1] in _COMMAND_INTRODUCERS}
+
+
+def leads_with_code_edit(normalized_query: str) -> bool:
+    """The request OPENS with a code edit, in English or Korean.
+
+    English: the first command word is an edit verb ("fix ...", "OMH, add
+    ..."), or the request hands the edit over at its start ("use OMH to fix",
+    "have Hermes add", "help me fix"). An edit verb later in the sentence ("I
+    asked OMH to fix a test and it ...") is not the request's lead.
+    Korean: a clause ends on a code-edit request ("테스트 고쳐줘", "코드 수정해
+    주세요"), read by `korean_request`.
+    """
+    words = command_words(normalized_query)
+    if words:
+        if words[0] in DIRECT_CODING_EDIT_VERBS:
+            return True
+        if words[0] == "help":
+            rest = words[1:]
+            rest = rest[1:] if rest[:1] == ["me"] else rest
+            rest = rest[1:] if rest[:1] == ["to"] else rest
+            if rest[:1] and rest[0] in DIRECT_CODING_EDIT_VERBS:
+                return True
+        if words[0] in _DELEGATING_LEADS:
+            # Who the task goes to is at most three words ("OMH", "the OMH
+            # agent"); the verb follows it, after "to" or "and" or bare.
+            for index in range(1, min(len(words), 5)):
+                word = words[index]
+                if word in {"to", "and"}:
+                    return words[index + 1 : index + 2] != [] and words[index + 1] in DIRECT_CODING_EDIT_VERBS
+                if word in DIRECT_CODING_EDIT_VERBS:
+                    return True
+    return any(
+        (request := korean_request(clause)) is not None and request.predicate in KOREAN_CODE_EDIT_PREDICATES
+        for clause in _KOREAN_CLAUSE_BREAK.split(normalized_query)
+        if clause.strip()
+    )

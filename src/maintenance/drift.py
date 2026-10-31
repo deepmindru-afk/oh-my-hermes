@@ -953,7 +953,9 @@ def count_metrics() -> tuple[CountMetric, ...]:
             # OMH, add a unit test") stays off workflow-learning (+2).
             # Owner decision on #2440: two throwaway OMH test messages and the
             # user's own router picking an option stay off workflow-learning (+3).
-            expected=1311,
+            # #2440 review: two tasks on what OMH selected or picked, and a
+            # Korean login-API test request, stay off workflow-learning (+3).
+            expected=1314,
             # The one reviewed test pin. Every other test compares its payload
             # against build_routing_precision_demo() rather than a literal.
             sites=("tests/test_routing_precision.py",),
@@ -1512,7 +1514,11 @@ def count_metrics() -> tuple[CountMetric, ...]:
             # workflow names keep workflow-learning (+2).
             # Owner decision on #2440: the OMH router misreading a message and
             # choosing the wrong workflow reach workflow-learning (+2).
-            expected=1207,
+            # #2440 review: two CI-workflow edits through OMH are coding, OMH
+            # picking a workflow is a report, and four meta messages with a
+            # late edit verb, OMH vocabulary or a Korean log report keep
+            # workflow-learning (+7).
+            expected=1214,
             # The one reviewed test pin. Every other test compares its payload
             # against build_routing_precision_demo() rather than a literal.
             sites=("tests/test_routing_precision.py",),

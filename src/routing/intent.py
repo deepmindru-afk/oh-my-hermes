@@ -3,9 +3,10 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass
 from functools import lru_cache
 import re
+import unicodedata
 
 from ..skills.catalog_types import historical_skill_display_names, omh_skill_display_name
-from .command_verb import DIRECT_CODING_EDIT_VERBS, command_words, commanded_words
+from .command_verb import leads_with_code_edit, ordered_words
 from .display_names import canonical_display_mentions
 from .localization import normalized_phrase, routing_tokens
 from .reference_regions import executable_routing_text, reference_regions
@@ -82,12 +83,23 @@ _META_CUES = (
     "오해",
     "설명",
 )
-# Everyday English words among the meta cues match as whole words only:
-# inside "pytest", "terminal", "changelog", "catalog", "metadata" or the
-# compact "routermodel" they are not about OMH at all. The rest of
-# `_META_CUES` (OMH's own vocabulary, and the Korean cues) match as before.
+# Everyday words among the meta cues match as whole words only: inside
+# "pytest", "terminal", "changelog", "catalog", "metadata" or the compact
+# "routermodel" -- or 로그 inside 로그인, 블로그, 프로그램, 카탈로그 -- they are not
+# about OMH at all. A Korean everyday cue is its own word, with a particle or
+# copula after it (`_KOREAN_CUE_TAILS`) or a 하다 ending ("테스트해보자"). The
+# rest of `_META_CUES` name OMH's own vocabulary and match as before.
 _EVERYDAY_META_CUES = frozenset(
-    {"test", "testing", "fixture", "smoke test", "developer", "operator", "meta", "term", "log", "trigger", "hud"}
+    {
+        "test", "testing", "fixture", "smoke test", "developer", "operator", "meta", "term", "log", "trigger", "hud",
+        "테스트", "픽스처", "개발자", "운영자", "로그", "트리거", "설명",
+    }
+)
+_KOREAN_CUE_TAILS = frozenset(
+    {
+        "이", "가", "을", "를", "은", "는", "에", "에서", "로", "으로", "도", "만", "와", "과", "의", "랑", "이랑",
+        "까지", "부터", "야", "이야", "예요", "이에요", "입니다", "처럼", "보다", "들", "들이", "들을", "들은", "에게", "한테",
+    }
 )
 _FEEDBACK_CUES = (
     "why did",
@@ -121,18 +133,26 @@ _FEEDBACK_CUES = (
 )
 # Talk about OMH's own routing going wrong: OMH or its router as the subject of
 # a past-tense verb of choosing or reading ("OMH picked the wrong skill", "the
-# router misread my message", "OMH keeps routing my requests to ..."). Word
-# order is the cue, not the words: "use OMH to pick a skill" or "pick the router
-# config" has neither. A progressive verb counts only after a filler ("keeps",
-# "still"), so "OMH routing table" stays a noun phrase. "router" is OMH's only
-# in a message that names OMH: "our router picked the cheapest shipping option"
-# is the user's own router.
+# OMH router misread my message", "OMH keeps routing my requests to ...").
+# Word order is the cue, not the words, and the subject must open its clause:
+# at the start, after "the", or after an opinion lead ("I think", "looks
+# like"). "Copy the skills OMH selected" puts OMH inside a noun phrase, so the
+# selection is the task's object, not a report. A progressive verb counts only
+# after a filler ("keeps", "still"), so "OMH routing table" stays a noun
+# phrase. "router" is OMH's only in a message that names OMH: "our router
+# picked the cheapest shipping option" is the user's own router.
 _OMH_BEHAVIOUR_SUBJECTS = frozenset({"omh", "oh-my-hermes", "router"})
 _OMH_BEHAVIOUR_PAST_VERBS = frozenset(
     {"picked", "chose", "chosen", "selected", "routed", "misrouted", "misread", "misunderstood", "misclassified", "mistook"}
 )
 _OMH_BEHAVIOUR_PROGRESSIVE_VERBS = frozenset({"picking", "choosing", "selecting", "routing", "misreading"})
 _OMH_BEHAVIOUR_FILLERS = frozenset({"just", "again", "has", "had", "always", "keeps", "kept", "still", "wrongly"})
+_OMH_BEHAVIOUR_OPINION_LEADS = (
+    ("i", "think"), ("i", "feel", "like"), ("i", "guess"), ("i", "noticed"),
+    ("it", "seems"), ("seems", "like"), ("looks", "like"), ("apparently",),
+)
+# Where a clause starts: sentence punctuation, or a joining conjunction.
+_CLAUSE_BREAK = re.compile(r"[.;:!?,]+|(?<![a-z0-9])(?:and|but|so|because)(?![a-z0-9])")
 _PLANNING_CUES = (
     "plan",
     "proposal",
@@ -362,12 +382,13 @@ def classify_workflow_intent(message: str) -> WorkflowIntent:
     negated_execution_cues = _compact_tuple(
         (*_matched_cues(_NEGATED_EXECUTION_CUES, matching_normalized, matching_compact), *_structural_negated_execution_cues(matching_normalized))
     )
-    # A message whose command verb is a code edit asks for work, so it is not
-    # talk about OMH: in "use OMH to fix the failing test" the test is what the
-    # edit acts on. Meta discussion that names such a verb says so ("not asking
-    # to implement") and keeps its cues.
-    if not negated_execution_cues and _commands_code_edit(matching_normalized):
-        meta_cues = ()
+    # A request that opens with a code edit asks for work: in "use OMH to fix
+    # the failing test" the test is what the edit acts on, so the everyday
+    # words lose their meta reading. Only the lead counts ("I asked OMH to fix
+    # a test and it ..." is a report), only the everyday words go (OMH's own
+    # vocabulary stays), and a negation ("not asking to implement") keeps all.
+    if not negated_execution_cues and leads_with_code_edit(matching_normalized):
+        meta_cues = tuple(cue for cue in meta_cues if cue not in _EVERYDAY_META_CUES)
     execution_cues = _suppress_negated_execution_cues(
         _matched_cues(_EXECUTION_CUES, matching_normalized, matching_compact),
         negated_execution_cues,
@@ -626,33 +647,44 @@ def _bounded_english_cue_pattern(normalized_cue: str) -> re.Pattern[str] | None:
     return re.compile(pattern)
 
 
-def _commands_code_edit(normalized: str) -> bool:
-    """The request's command verb is a code-edit verb: "fix ...", "use OMH to add ...", "OMH, update ..."."""
-    return bool(DIRECT_CODING_EDIT_VERBS & commanded_words(command_words(normalized)))
-
-
 def _reports_omh_behaviour(normalized: str) -> bool:
-    """OMH or its router did the choosing ("OMH picked ...", "the router misread ...").
+    """OMH or its router, opening a clause, did the choosing ("OMH picked ...", "the OMH router misread ...").
 
     Not when the request itself opens with a code edit ("fix the bug where the
-    router picked the wrong locale"): that names the router as code to change.
+    OMH router picked the wrong locale"): that names the router as code.
     """
-    words = re.findall(r"[a-z0-9][a-z0-9'-]*", normalized)
-    subjects = _OMH_BEHAVIOUR_SUBJECTS
-    if not {word.removesuffix("'s") for word in words} & _PRODUCT_NAME_CONTEXT:
-        subjects = subjects - {"router"}
-    for index, word in enumerate(words[:-1]):
-        if word.removesuffix("'s") not in subjects:
-            continue
-        following = words[index + 1]
-        if following in _OMH_BEHAVIOUR_FILLERS and index + 2 < len(words):
-            if words[index + 2] in _OMH_BEHAVIOUR_PAST_VERBS | _OMH_BEHAVIOUR_PROGRESSIVE_VERBS:
-                break
-        elif following in _OMH_BEHAVIOUR_PAST_VERBS:
+    names_omh = bool(set(ordered_words(normalized)) & _PRODUCT_NAME_CONTEXT)
+    if not names_omh or leads_with_code_edit(normalized):
+        return False
+    return any(_clause_reports_omh_behaviour(ordered_words(clause)) for clause in _CLAUSE_BREAK.split(normalized))
+
+
+def _clause_reports_omh_behaviour(words: list[str]) -> bool:
+    index = 0
+    for lead in _OMH_BEHAVIOUR_OPINION_LEADS:
+        if tuple(words[: len(lead)]) == lead:
+            index = len(lead)
             break
+    if words[index : index + 1] == ["that"]:
+        index += 1
+    if words[index : index + 1] == ["the"]:
+        index += 1
+    if words[index : index + 1] and words[index] in _PRODUCT_NAME_CONTEXT:
+        index += 1
+        if words[index : index + 1] == ["s"]:  # "OMH's", split at the apostrophe
+            index += 1
+        if words[index : index + 1] == ["router"]:
+            index += 1
+    elif words[index : index + 1] == ["router"]:
+        index += 1
     else:
         return False
-    return not set(command_words(normalized)[:1]) & DIRECT_CODING_EDIT_VERBS
+    following = words[index : index + 1]
+    if following and following[0] in _OMH_BEHAVIOUR_FILLERS:
+        return words[index + 1 : index + 2] != [] and (
+            words[index + 1] in _OMH_BEHAVIOUR_PAST_VERBS | _OMH_BEHAVIOUR_PROGRESSIVE_VERBS
+        )
+    return bool(following) and following[0] in _OMH_BEHAVIOUR_PAST_VERBS
 
 
 def is_workflow_meta_or_feedback(message: str) -> bool:
@@ -754,14 +786,27 @@ def _symbolic_negated_execution(normalized: str) -> bool:
 
 def _matched_meta_cues(normalized: str, compact: str) -> tuple[str, ...]:
     matches: list[str] = []
+    korean_words: list[str] | None = None
     for cue, normalized_cue in _normalized_cues(_META_CUES):
-        if cue in _EVERYDAY_META_CUES:
+        if cue in _EVERYDAY_META_CUES and cue.isascii():
             found = _contains_bounded_english_cue(normalized, normalized_cue)
+        elif cue in _EVERYDAY_META_CUES:
+            if korean_words is None:
+                korean_words = re.findall(r"[^\W_]+", unicodedata.normalize("NFC", normalized))
+            found = any(_korean_word_is_cue(word, cue) for word in korean_words)
         else:
             found = normalized_cue in normalized or normalized_cue.replace(" ", "") in compact
         if found:
             matches.append(cue)
     return tuple(matches)
+
+
+def _korean_word_is_cue(word: str, cue: str) -> bool:
+    """`word` is the Korean cue itself, with at most a particle, a copula, or a 하다 ending after it."""
+    if not word.startswith(cue):
+        return False
+    tail = word[len(cue):]
+    return not tail or tail in _KOREAN_CUE_TAILS or tail.startswith(("하", "해", "했"))
 
 
 def _matched_cues(cues: tuple[str, ...], normalized: str, compact: str) -> tuple[str, ...]:

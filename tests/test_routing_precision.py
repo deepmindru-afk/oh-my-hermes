@@ -87,8 +87,9 @@ class RoutingPrecisionTests(unittest.TestCase):
         # The show-reel recall follow-up adds six closed-shape controls, and its
         # review round four more.
         # Two coding requests that name OMH as the tool stay off workflow-learning,
-        # and so do two throwaway OMH test messages and the user's own router.
-        self.assertEqual(payload["summary"]["case_count"], 1311)
+        # and so do two throwaway OMH test messages and the user's own router,
+        # two tasks on what OMH selected or picked, and a Korean test request.
+        self.assertEqual(payload["summary"]["case_count"], 1314)
         self.assertEqual(payload["summary"]["passing_count"], payload["summary"]["case_count"])
         self.assertEqual(payload["summary"]["negative_case_count"], payload["summary"]["case_count"])
         self.assertEqual(payload["summary"]["negative_passing_count"], payload["summary"]["case_count"])
@@ -165,7 +166,9 @@ class RoutingPrecisionTests(unittest.TestCase):
         self.assertEqual(payload["summary"]["direct_answer_count"], 355)
         # show-reel's README-link control is answered as a file lookup (+1).
         # "Use OMH to fix the failing test in billing.py" names a file: a file lookup (+1).
-        self.assertEqual(payload["summary"]["file_lookup_count"], 12)
+        # Copying the skills OMH selected and summarizing the files it picked
+        # are file tasks (+2).
+        self.assertEqual(payload["summary"]["file_lookup_count"], 14)
         self.assertEqual(payload["summary"]["overroute_count"], 0)
         self.assertEqual(payload["summary"]["catalog_picker_count"], 0)
         self.assertEqual(payload["summary"]["generic_ack_count"], 0)
@@ -230,7 +233,9 @@ class RoutingPrecisionTests(unittest.TestCase):
         # The show-reel recall follow-up adds six recovered closed shapes.
         # Two OMH meta tests (route hint vocabulary, router on workflow names)
         # keep workflow-learning, and two reports on OMH's router reach it.
-        self.assertEqual(payload["summary"]["intervention_case_count"], 1207)
+        # Two CI-workflow edits through OMH dispatch the coding lane, and five
+        # reports or meta questions keep workflow-learning.
+        self.assertEqual(payload["summary"]["intervention_case_count"], 1214)
         self.assertEqual(
             payload["summary"]["intervention_passing_count"], payload["summary"]["intervention_case_count"]
         )

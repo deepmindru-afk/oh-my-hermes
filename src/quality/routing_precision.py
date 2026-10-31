@@ -9345,6 +9345,33 @@ ROUTING_PRECISION_CASES: tuple[RoutingPrecisionCase, ...] = (
         "",
         "workflow-learning",
     ),
+    # #2440 review: OMH inside a noun phrase ("the skills OMH selected") names
+    # the task's object, not a report on OMH's routing; and 로그 inside 로그인 is
+    # not the meta cue 로그, so a Korean coding request stays a coding request.
+    RoutingPrecisionCase(
+        "task-on-what-omh-selected-is-not-an-omh-behaviour-report",
+        "Copying the skills OMH selected is a file task, not a report on OMH's routing",
+        "Copy the skills OMH selected into skills.txt",
+        "answer_file_lookup",
+        "file_or_text",
+        "workflow-learning",
+    ),
+    RoutingPrecisionCase(
+        "summary-of-what-omh-picked-is-not-an-omh-behaviour-report",
+        "Summarizing the files OMH picked is a file task, not a report on OMH's routing",
+        "Summarize the files OMH picked for this refactor",
+        "answer_file_lookup",
+        "file_or_text",
+        "workflow-learning",
+    ),
+    RoutingPrecisionCase(
+        "korean-login-api-test-request-is-not-meta-discussion",
+        "A Korean request to write a login API test is a coding request, not workflow meta discussion",
+        "OMH, 로그인 API에 대한 통합 테스트 작성해줘",
+        "answer_clarification",
+        "",
+        "workflow-learning",
+    ),
 )
 
 
@@ -12023,6 +12050,84 @@ ROUTING_INTERVENTION_CASES: tuple[RoutingInterventionCase, ...] = (
         "dispatch",
         "workflow-learning",
         "record_missed_route",
+        "workflow_learning",
+        "workflow-learning",
+    ),
+    # #2440 review. On origin/main a code edit to a CI workflow read as talk
+    # about OMH workflows ("workflow" plus "test") and dispatched
+    # workflow-learning; it is a coding request.
+    RoutingInterventionCase(
+        "ci-workflow-edit-through-omh-is-coding",
+        "Using OMH to update a CI workflow so tests run is a coding request",
+        "Use OMH to update the CI workflow so the tests run on Node 22",
+        "dispatch",
+        "ultrawork",
+        "choose_executor",
+        "handoff",
+        "ultrawork",
+    ),
+    RoutingInterventionCase(
+        "github-workflow-step-fix-through-omh-is-coding",
+        "Using OMH to fix a GitHub workflow step that skips tests is a coding request",
+        "Use OMH to fix the GitHub workflow step that skips the smoke tests",
+        "dispatch",
+        "ultrawork",
+        "choose_executor",
+        "handoff",
+        "ultrawork",
+    ),
+    # On origin/main this dispatched the workflow it names; it reports OMH's
+    # own choice.
+    RoutingInterventionCase(
+        "omh-picked-a-workflow-why-reaches-workflow-learning",
+        "OMH picking deep-interview for a quick fix is a report on OMH's routing",
+        "OMH picked deep-interview when I only wanted a quick fix; why?",
+        "dispatch",
+        "workflow-learning",
+        "audit_learning_readiness",
+        "workflow_learning",
+        "workflow-learning",
+    ),
+    # An edit verb later in the sentence is not the request's lead, and OMH's
+    # own vocabulary is never cleared by one: these stay workflow-learning (an
+    # earlier draft of this change dispatched them to ultrawork).
+    RoutingInterventionCase(
+        "asked-omh-to-fix-and-it-opened-learning-stays-workflow-learning",
+        "Reporting that OMH opened workflow learning for a fix request stays workflow learning",
+        "I asked OMH to fix a test and it opened workflow learning instead",
+        "dispatch",
+        "workflow-learning",
+        "audit_learning_readiness",
+        "workflow_learning",
+        "workflow-learning",
+    ),
+    RoutingInterventionCase(
+        "route-hint-vocabulary-question-stays-workflow-learning",
+        "A question about the route hint vocabulary and trigger words stays workflow learning",
+        "Is the OMH route hint vocabulary and set of trigger words documented?",
+        "dispatch",
+        "workflow-learning",
+        "audit_learning_readiness",
+        "workflow_learning",
+        "workflow-learning",
+    ),
+    RoutingInterventionCase(
+        "developer-test-of-route-hint-wording-stays-workflow-learning",
+        "An OMH developer test of what the route hint tells users stays workflow learning",
+        "OMH developer test: does the route hint tell users to add a workflow?",
+        "dispatch",
+        "workflow-learning",
+        "audit_learning_readiness",
+        "workflow_learning",
+        "workflow-learning",
+    ),
+    RoutingInterventionCase(
+        "korean-router-misread-log-stays-workflow-learning",
+        "Korean report that the OMH router misread a log stays workflow learning",
+        "OMH 라우터가 로그를 잘못 읽은 것 같아",
+        "dispatch",
+        "workflow-learning",
+        "audit_learning_readiness",
         "workflow_learning",
         "workflow-learning",
     ),
