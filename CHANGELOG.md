@@ -6,6 +6,13 @@ All notable changes will be documented here.
 
 ![Sprite Forge patch notes](https://raw.githubusercontent.com/rlaope/oh-my-hermes/main/assets/omh-sprite-forge-patch-notes.png)
 
+- **The `/theme` picker scrolls on a short terminal.** Where the slot held
+  fewer rows than there are launch looks, the arrows still reached the
+  looks past it, but they were never drawn (on a 16-row terminal, ember).
+  The list now scrolls so the highlighted look always shows, moving only
+  when the highlight would leave it, and a click lands on the look drawn in
+  that row.
+
 - **A steer reads as the prompt it is.** A steer you send during a turn
   shows as a prompt row (`❯ <text>`), as Claude Code shows one, in place of
   the dim `↪ steer queued by Hermes · <text>`. It stays dim right above the

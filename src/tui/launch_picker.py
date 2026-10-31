@@ -6,7 +6,8 @@ previews the look under the highlight after every move, and on Enter keeps it
 
 Keys: Up/Down (or k/j, as in the pagers) move one row; Enter keeps the
 highlighted look; Esc or Ctrl+C closes. A click on a row moves the highlight
-there. Where the launch card is no longer on screen to show the look, the app
+there. Where the slot holds fewer rows than there are looks, the list scrolls so
+the highlighted one shows. Where the launch card is no longer on screen to show the look, the app
 puts a compact preview (`preview`) above the list.
 """
 
@@ -45,7 +46,8 @@ SWATCH = "■"
 class LaunchPicker:
     current: str  # the look in use as it opened: what Esc puts back
     index: int = 0
-    first_row: int = 1  # the last render's row of the first look, under the preview and the header
+    first_row: int = 1  # the last render's row of the first look it showed, under the preview and the header
+    top: int = 0  # the last render's first look shown: the list scrolls when the slot is shorter than it
 
     def __post_init__(self) -> None:
         self.index = LAUNCH_PRESETS.index(self.current) if self.current in LAUNCH_PRESETS else 0
@@ -78,12 +80,17 @@ class LaunchPicker:
     def lines(self, width: int, theme: Theme, max_rows: int, swatches: Mapping[str, Sequence[Style]],
               preview: Sequence[Line] = ()) -> list[Line]:
         """`preview` (when the rest still fits under it), a header row, then a row per look (its name, its colours,
-        what it is), as many as `max_rows` holds."""
+        what it is), as many as `max_rows` holds, scrolled so the highlighted one shows."""
         shown = list(preview) if len(preview) + 1 + len(LAUNCH_PRESETS) <= max_rows else []
         rows: list[Line] = [*shown, truncate_line((Span(TITLE, theme.heading),), width)]
         self.first_row = len(rows)
         widest = max((len(swatches.get(name, ())) for name in LAUNCH_PRESETS), default=0)  # one summary column
-        for index, name in enumerate(LAUNCH_PRESETS):
+        room = max(max_rows - len(rows), 0)
+        # The list moves only when the highlight would leave it, and never past its last look.
+        top = max(min(self.top, self.index), self.index - room + 1)
+        self.top = min(max(top, 0), max(len(LAUNCH_PRESETS) - room, 0))
+        for index in range(self.top, min(self.top + room, len(LAUNCH_PRESETS))):
+            name = LAUNCH_PRESETS[index]
             highlighted = index == self.index
             mark = CURRENT_MARK if name == self.current else " "
             row: list[Span] = [pointer(highlighted, theme),
