@@ -586,6 +586,18 @@ class ScanBoundsTest(_Workspace):
                 changed = self.edit(f"{top}/invoice.py", "ROUND_HALF_EVEN)\n\n\n", "ROUND_HALF_UP)\n\n\n")
                 self.assertEqual(self.verdict(changed)[:2], (False, "no_copy_or_reference"))
 
+    def test_a_build_tree_with_no_python_in_its_first_two_levels_is_not_walked(self):
+        # #2454 review: a CMake or JS `build/` was walked once the `__init__.py` rule went, and its
+        # entries could run the index out of budget, a fire origin/main never paid.
+        self.write("src/app/units.py", TO_CENTS)
+        self.write("build/CMakeCache.txt", "x")
+        for index in range(20):
+            self.write(f"build/CMakeFiles/obj{index}.o", "x")
+        self.write("build/src/generated/receipt.py", RECEIPT)  # three levels down: still output
+        changed = self.edit("src/app/units.py", "100", "1000")
+        with mock.patch.object(ct, "MAX_SCAN_ENTRIES", 15):
+            self.assertEqual(self.verdict(changed)[:2], (False, "no_copy_or_reference"))
+
     def test_an_oversized_unedited_python_file_fires_and_an_oversized_config_does_not(self):
         self.write("src/app/units.py", TO_CENTS)
         self.write("src/app/big.py", "#" * 256)
