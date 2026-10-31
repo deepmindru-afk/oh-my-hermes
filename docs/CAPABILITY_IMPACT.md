@@ -136,7 +136,9 @@ signals cannot see: a function body that changes behaviour without changing its
 signature, and a reference that exists only in prose. Prose files (`.md`,
 `.rst`, `.txt`) are not searched, because docs and changelogs name old APIs on
 purpose. The walk skips hidden directories, version-control and virtualenv
-directories, caches, `node_modules`, `build` and `dist`. A session on a
+directories, caches and `node_modules`. It also skips `build` and `dist`
+directories, at any depth, that hold no `__init__.py`: those are build output.
+A package named `build` or `dist` is scanned. A session on a
 platform that never gets the check (a delegated child) takes no index.
 Oversized config files are skipped rather than fired on, because they are
 lockfiles and data dumps.

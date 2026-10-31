@@ -13,9 +13,11 @@ deterministically and from the disk alone, whether such a thing exists:
      delegated child's edit) is marked as having no turn-start text.
    - No index is taken for a session whose platform never gets the check (``note_turn_posture``, from
      ``pre_llm_call``), or for a root whose last index ran over budget within ``OVER_BUDGET_SECONDS``.
-   - Residual: Hermes can skip a plugin's ``pre_tool_call`` (a hook timeout or a call still running).
-     A skipped first call is covered, since the stop then has no index and fires. A skipped later
-     ``sed`` call on a file that is snapshotted afterwards is not seen.
+   - Residual: Hermes blocks a tool call whose ``pre_tool_call`` times out, so no call this hook
+     missed that way runs, and an index missed at one call is taken at the next. The one gap is a
+     host-internal exception in ``_dispatch_pre_tool_call_hooks``, which never blocks the call. If it
+     hits the turn's first tool call and that tool changes a Python file, the index is taken at the
+     next call, after the change, and the change is not seen.
 2. ``round_end_trigger`` (``pre_verify``, attempt 0):
    - It re-indexes the workspace to find every Python file the turn changed, by any tool.
    - It diffs each kept snapshot against the disk, and finds the definitions the changed lines touch
@@ -79,9 +81,11 @@ _DEADLINE_EVERY: Final = 64
 # A root whose index ran over budget is not walked again for this long, in this process: later turns
 # fire the check without paying for a walk that will not finish.
 OVER_BUDGET_SECONDS: Final = 300.0
-# Pruned like `lsp_nav` (VCS, virtualenvs, caches, hidden directories), plus build outputs, which hold
-# copies of the source that are not the source.
-_SKIP_DIRS: Final = lsp_nav._SKIP_DIRS | frozenset({"build", "dist"})
+# Pruned like `lsp_nav` (VCS, virtualenvs, caches, hidden directories). Build outputs hold copies of
+# the source that are not the source, but a package may be named `build` or `dist` too, so those two are
+# pruned only when they hold no `__init__.py` (`_build_output`).
+_SKIP_DIRS: Final = lsp_nav._SKIP_DIRS
+_BUILD_OUTPUT_DIRS: Final = frozenset({"build", "dist"})
 # A replaced line shorter than this (after collapsing whitespace) is too common to call a copy.
 MIN_COPY_LINE_CHARS: Final = 30
 _MAX_SESSIONS: Final = 64
@@ -397,7 +401,8 @@ def _walk(root: str, suffixes: tuple[str, ...], deadline: float):
     for dirpath, dirnames, filenames in os.walk(root):
         if time.monotonic() >= deadline:
             raise _Budget("deadline")
-        dirnames[:] = sorted(d for d in dirnames if d not in _SKIP_DIRS and not d.startswith("."))
+        dirnames[:] = sorted(d for d in dirnames if d not in _SKIP_DIRS and not d.startswith(".")
+                             and not _build_output(dirpath, d))
         for name in dirnames:
             linked = os.path.join(dirpath, name)
             if os.path.islink(linked) and not inside(os.path.realpath(linked), root):
@@ -418,6 +423,11 @@ def _walk(root: str, suffixes: tuple[str, ...], deadline: float):
                 continue
             if os.path.isfile(path):
                 yield path
+
+
+def _build_output(dirpath: str, name: str) -> bool:
+    """A `build` or `dist` directory that is not a package: a build tool's output, not source."""
+    return name in _BUILD_OUTPUT_DIRS and not os.path.isfile(os.path.join(dirpath, name, "__init__.py"))
 
 
 def _index(root: str, deadline: float) -> dict[str, tuple[int, int]]:
@@ -447,11 +457,8 @@ def _definitions(tree: ast.AST) -> dict[str, list[tuple[int, int, ast.AST]]]:
                     visit(node.body, prefix + node.name + ".")
             elif isinstance(node, (ast.Assign, ast.AnnAssign)):
                 targets = node.targets if isinstance(node, ast.Assign) else [node.target]
-                for target in targets:
-                    names = target.elts if isinstance(target, (ast.Tuple, ast.List)) else [target]
-                    for item in names:
-                        if isinstance(item, ast.Name):
-                            found.setdefault(prefix + item.id, []).append((start, end, node))
+                for name in (item for target in targets for item in _target_names(target)):
+                    found.setdefault(prefix + name, []).append((start, end, node))
             elif isinstance(node, (ast.If, ast.Try, ast.With, ast.AsyncWith)) or type(node).__name__ == "TryStar":
                 for field in _BLOCK_FIELDS:
                     visit(getattr(node, field, None) or [], prefix)
@@ -460,6 +467,18 @@ def _definitions(tree: ast.AST) -> dict[str, list[tuple[int, int, ast.AST]]]:
 
     visit(getattr(tree, "body", []), "")
     return found
+
+
+def _target_names(target: ast.AST) -> list[str]:
+    """Every name an assignment target binds: plain names, starred names, and nested tuples or lists.
+    Attribute and subscript targets bind no module- or class-level name."""
+    if isinstance(target, ast.Name):
+        return [target.id]
+    if isinstance(target, ast.Starred):
+        return _target_names(target.value)
+    if isinstance(target, (ast.Tuple, ast.List)):
+        return [name for item in target.elts for name in _target_names(item)]
+    return []
 
 
 def _import_spans(tree: ast.AST) -> list[tuple[int, int, ast.AST]]:

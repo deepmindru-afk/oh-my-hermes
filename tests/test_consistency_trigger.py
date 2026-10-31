@@ -435,6 +435,23 @@ class BlockAndAttributionTest(_Workspace):
         changed = self.edit("src/app/m.py", "MIN, HIGH = 1, 2\n", "MIN, HIGH = 1, 2\nA, B = 3, 4\n")
         self.assertFalse(self.verdict(changed).fire)
 
+    def test_starred_and_nested_targets_define_their_names(self):
+        cases = (("FIRST, *REST_ITEMS = [1, 2, 3]\n", "*REST_ITEMS", "*TAIL_ITEMS", "REST_ITEMS"),
+                 ("A, (B_VAL, C_VAL) = 1, (2, 3)\n", "(B_VAL, C_VAL)", "(B_NEW, C_VAL)", "B_VAL"),
+                 ("[X_ONE, [Y_TWO]] = [1, [2]]\n", "Y_TWO]]", "Y_NEW]]", "Y_TWO"))
+        for module, old, new, name in cases:
+            with self.subTest(name):
+                ct.reset()
+                self.write("src/app/m.py", module)
+                self.write("src/app/use.py", f"from app.m import {name}\n")
+                changed = self.edit("src/app/m.py", old, new)
+                self.assertEqual(self.verdict(changed), ct.Verdict(True, "renamed", f"{name} in src/app/use.py"))
+
+    def test_attribute_and_subscript_targets_bind_no_name(self):
+        self.write("src/app/m.py", "import types\n\nCFG = types.SimpleNamespace()\nCFG.level = 1\n")
+        changed = self.edit("src/app/m.py", "CFG.level = 1", "CFG.level = 2")
+        self.assertEqual(self.verdict(changed), ct.Verdict(True, "unattributed", "src/app/m.py"))
+
     def test_comment_only_and_import_changes_are_attributed(self):
         self.write("src/app/m.py", "import os\n\n# a note\n\n\ndef run():\n    return 1\n")
         changed = self.edit("src/app/m.py", "# a note", "# a better note")
@@ -498,6 +515,31 @@ class ScanBoundsTest(_Workspace):
         self.write("dist/app/receipt.py", RECEIPT)
         changed = self.edit("src/app/invoice.py", "ROUND_HALF_EVEN)\n\n\n", "ROUND_HALF_UP)\n\n\n")
         self.assertEqual(self.verdict(changed)[:2], (False, "no_copy_or_reference"))
+        ct.reset()
+        self.write("src/app/nested/build/lib/receipt.py", RECEIPT)  # nested build output, no __init__.py
+        changed = self.edit("src/app/invoice.py", "ROUND_HALF_UP)\n\n\n", "ROUND_HALF_DOWN)\n\n\n")
+        self.assertFalse(self.verdict(changed).fire)
+
+    def test_a_package_named_build_or_dist_is_scanned(self):
+        for package in ("build", "dist"):
+            with self.subTest(package):
+                ct.reset()
+                top, name = f"app_{package}", f"make_{package}"
+                self.write(f"{top}/m.py", f"def {name}(a):\n    return a\n")
+                self.write(f"{top}/{package}/__init__.py", "")
+                self.write(f"{top}/{package}/steps.py", f"from {top}.m import {name}\n{name}(1)\n")
+                changed = self.edit(f"{top}/m.py", f"def {name}(a):", f"def renamed_{package}(a):")
+                self.assertEqual(self.verdict(changed),
+                                 ct.Verdict(True, "renamed", f"{name} in {top}/{package}/steps.py"))
+
+    def test_a_sed_inside_a_build_package_is_seen(self):
+        self.write("app/m.py", "def other():\n    return 1\n")
+        self.write("app/build/__init__.py", "")
+        self.write("app/build/steps.py", "def old_step():\n    return 1\n")
+        ct.snapshot_before_edit({"tool_name": "terminal", "session_id": SESSION, "turn_id": self.turn}, {"command": "sed"})
+        self.write("app/build/steps.py", "def newer_step():\n    return 1\n")
+        changed = self.edit("app/m.py", "return 1", "return 2")
+        self.assertEqual(self.verdict(changed), ct.Verdict(True, "opaque_edit", "app/build/steps.py"))
 
     def test_an_oversized_unedited_python_file_fires_and_an_oversized_config_does_not(self):
         self.write("src/app/units.py", TO_CENTS)

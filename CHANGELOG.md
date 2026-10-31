@@ -89,7 +89,10 @@ All notable changes will be documented here.
 
   There is no other fallback. A change the four signals cannot see is skipped:
   a function body that changes behaviour without changing its signature,
-  and a reference that exists only in prose such as docs.
+  and a reference that exists only in prose such as docs. The search skips
+  hidden, version-control, virtualenv, cache and `node_modules` directories,
+  and `build` or `dist` directories with no `__init__.py` (build output; a
+  package of that name is searched).
 
   On the bench corpus the always-on check fixed a second copy of the changed
   logic far more often: 76 vs 38 of 90 runs, pooled over five measurements. It
