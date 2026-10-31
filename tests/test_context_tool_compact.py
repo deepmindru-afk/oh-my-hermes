@@ -144,7 +144,10 @@ class ContextToolCompactTests(unittest.TestCase):
 
     def test_every_matched_hint_carries_its_lane_card_as_expand_says(self) -> None:
         result = json.loads(omh_context_handler({"message": MULTI_CUE_MESSAGE, "limit": 10}))
-        self.assertIn("workflow_context_card", result["expand"])
+        # The second clause is the claim this test checks; "workflow_context_card" alone also
+        # matches the first clause's "workflow_context_cards".
+        self.assertIn("carries the workflow_context_card of its matched workflow's lane", result["expand"])
+        self.assertNotIn("family's", result["expand"])
         hints = result["route_hint"]["hints"]
         self.assertGreater(len(hints), 1)
         for hint in hints:
