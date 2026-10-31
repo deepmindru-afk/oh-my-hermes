@@ -237,7 +237,8 @@ def exit_card_lines(db_path: str | Path | None, session_id: str, profile: str | 
     """What `omh` prints for `session_id` as the TUI closes: the card, `NOTHING_SAID_LINE`, or nothing.
 
     The card is the session's title and, after a blank line, the `omh` way
-    back: `resume: omh --resume <id>`, with the id whole so it can be copied,
+    back, the command alone (`omh --resume <id>`; owner, 2026-10-31: no
+    `resume:` label), with the id whole so it can be copied,
     then a blank line so the shell prompt does not sit right under it. The id
     always resolves, where a title lookup can land on another session.
 
@@ -256,6 +257,6 @@ def exit_card_lines(db_path: str | Path | None, session_id: str, profile: str | 
     return [
         f"omh · {title if title and title.isprintable() else UNTITLED}",
         "",
-        "  resume: " + resume_command_line(session_id, profile),
+        "  " + resume_command_line(session_id, profile),
         "",
     ]
