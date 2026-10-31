@@ -722,6 +722,34 @@ result above stands as recorded and is not re-run.
 - **Rule.** This run decides. If every cell passes, the change becomes a merge candidate. If any
   cell fails, the change is recorded here as rejected.
 
+#### Amendment 1 result: every cell passes; the change is a merge candidate
+
+240 runs, 2026-10-31 12:44-12:52 KST, every run exiting 0. Base was `d4132ca1d` and the branch
+`856b508c4`. Every answer was re-graded from the saved answers by a separate scorer using the
+pre-registered keys, and it agreed with the driver on all 240.
+
+The "Calls" columns give how many runs called each tool, in the order `omh_context` only /
+`omh_capabilities` only / both / neither.
+
+| Cell | Correct base | Correct br | Clause (br >= base - 1, br >= 9) | Calls base | Calls br | Misses base | Misses br |
+| --- | ---: | ---: | --- | --- | --- | --- | --- |
+| GPT-6 Luna `auto` | 12/15 | 12/15 | pass | 9 / 3 / 3 / 0 | 3 / 3 / 9 / 0 | `image_route` 3 | `image_route` 3 |
+| GPT-6 Luna `off` | 12/15 | 12/15 | pass | 10 / 5 / 0 / 0 | 3 / 6 / 6 / 0 | `image_route` 3 | `image_route` 3 |
+| GPT-6.1 Sol `auto` | 15/15 | 15/15 | pass | 9 / 0 / 6 / 0 | 3 / 0 / 12 / 0 | - | - |
+| GPT-6.1 Sol `off` | 15/15 | 15/15 | pass | 15 / 0 / 0 / 0 | 3 / 0 / 12 / 0 | - | - |
+| Haiku 4.5 `auto` | 9/15 | 11/15 | pass | 3 / 10 / 0 / 2 | 2 / 7 / 5 / 1 | `first_shape` 1, `image_route` 3, `user_examples` 2 | `image_route` 3, `source_examples` 1 |
+| Haiku 4.5 `off` | 9/15 | 10/15 | pass | 1 / 7 / 4 / 3 | 0 / 5 / 7 / 3 | `first_shape` 1, `image_route` 3, `source_examples` 2 | `first_shape` 2, `image_route` 3 |
+| Sonnet 5.5 `auto` | 12/15 | 12/15 | pass | 5 / 0 / 7 / 3 | 0 / 0 / 12 / 3 | `image_route` 3 | `image_route` 3 |
+| Sonnet 5.5 `off` | 12/15 | 12/15 | pass | 0 / 0 / 12 / 3 | 0 / 2 / 10 / 3 | `image_route` 3 | `image_route` 3 |
+
+- **Both tools.** On the branch, runs that called both tools rose from 32 to 73 of 120. That is the
+  model following `expand` from the compact view to `omh_capabilities`.
+- **`image_route`.** It missed on every run outside GPT-6.1 Sol, in both arms, as in the first
+  run.
+
+Verdict, per amendment 1: **pass**. In the 528-run result above, the only clause that failed was
+the probe cell this amendment re-measured, so the change is put up for merge.
+
 ### 2026-10-30 round-end consistency check in `pre_verify`: off vs on, five measurements
 
 Measurements 1 to 4 failed their gates. The owner then relaxed the token clause to 1.4x
