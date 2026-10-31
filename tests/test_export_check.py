@@ -244,6 +244,24 @@ class StaleImportTest(_Workspace):
         self.write("pkgtests/test_c.py", "from conftest import root_fixture\n")
         self.assertEqual(self.note("pkgtests/test_c.py"), "")
 
+    def test_a_namespace_package_module_reads_the_root_module_too(self):
+        # #2454 review: a directory without `__init__.py` is also a PEP 420 namespace package, whose
+        # `from config import KEY` reads src/config.py. With two candidates, a name is stale only
+        # when both lack it.
+        self.write("pyproject.toml", "")
+        self.write("src/config.py", "KEY = 1\n")
+        self.write("src/ns/config.py", "OTHER = 1\n")
+        self.write("src/ns/mod.py", "from config import KEY\n")
+        self.assertEqual(self.note("src/ns/mod.py"), "")
+        self.write("utils.py", "def helper():\n    pass\n")
+        self.write("app/utils.py", "def other():\n    pass\n")
+        self.write("app/main.py", "from utils import helper\n")
+        self.write("scripts/utils.py", "from utils import helper\n")  # the sibling is the importer itself
+        self.assertEqual(self.note("app/main.py", "scripts/utils.py"), "")
+        self.write("src/ns/stale.py", "from config import GONE\n")
+        self.assertIn("src/ns/stale.py:1: `from config import GONE`: src/ns/config.py no longer defines `GONE`",
+                      self.note("src/ns/stale.py"))
+
     def test_a_path_on_another_windows_drive_is_shown_whole(self):
         # #2439 review: `os.path.relpath` raises ValueError across Windows drives, and the broad
         # except dropped the whole note. The impact note's `workspace_relative` had the same exposure.
@@ -253,11 +271,19 @@ class StaleImportTest(_Workspace):
         def other_drive(target, start=None):
             raise ValueError("path is on mount 'D:', start on mount 'C:'")
 
-        with patch.object(export_check.os.path, "relpath", other_drive):
+        def drive(value):
+            return ("D:" if value == path else "C:", value)
+
+        with patch.object(export_check.os.path, "relpath", other_drive), \
+                patch.object(export_check.os.path, "splitdrive", drive):
             note = self.note("pkg/mod.py")
             self.assertEqual(lsp_nav_tool.workspace_relative(path, str(self.root)), Path(path).as_posix())
         self.assertIn(f"{Path(path).as_posix()}:1: `__all__` lists `gone`", note)
         self.assertIs(impact_check.workspace_relative, lsp_nav_tool.workspace_relative)
+        # Any other ValueError is not this fallback's: it still raises.
+        with patch.object(export_check.os.path, "relpath", other_drive):
+            with self.assertRaises(ValueError):
+                lsp_nav_tool.workspace_relative(path, str(self.root))
 
     def test_a_package_directory_wins_over_a_same_named_module(self):
         self.write("src/x.py", "")

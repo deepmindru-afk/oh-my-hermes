@@ -9,9 +9,10 @@ nothing by default, so the model stops with the stale entry in place. ``round_en
   ``__init__.py``, ships as a submodule);
 - a top-level ``from module import name`` whose module is a workspace file that no longer binds
   ``name``. An absolute import is resolved only from the project root (the nearest ancestor holding
-  a project marker) or a ``src/`` directly under it, and a same-named module beside an importer that
-  is not in a package wins over that (a script's or a pytest test module's own ``sys.path`` entry);
-  a standard-library name is never resolved.
+  a project marker) or a ``src/`` directly under it. When a same-named module also sits beside an
+  importer that is not in a package (a script's or a pytest test module's own ``sys.path`` entry,
+  or a namespace package's sibling), the name is stale only when both lack it. A standard-library
+  name is never resolved.
 
 Always on: it reads the edited files and the workspace modules their imports resolve to, never runs a
 language server or a process, stops at a deadline sized like the impact check's share of the host
@@ -163,21 +164,26 @@ class _Check:
     def missing_imports(self, node: ast.ImportFrom, importer: str) -> list[tuple[int, str]]:
         """``(line, finding)`` per imported name the target no longer binds; each alias's own line,
         so a parenthesized import names the line pyright names."""
-        target = _module_file(node, importer)
-        if target is None:
+        targets = _module_files(node, importer)
+        if not targets:
             return []
-        tree = self.tree(target)
-        if tree is None:
-            return []
-        try:
-            bound = _bound_names(tree)
-        except _Unknown:
-            return []
+        known: list[tuple[str, set[str]]] = []
+        for target in targets:
+            tree = self.tree(target)
+            if tree is None:
+                return []
+            try:
+                known.append((target, _bound_names(tree)))
+            except _Unknown:
+                return []
         source = "." * node.level + (node.module or "")
+        # Two candidates (a sibling and the root's module of one name) disagree on which file the
+        # import reads, so a name is stale only when neither has it; the row names the first.
         return [(getattr(alias, "lineno", node.lineno),
-                 f"`from {source} import {alias.name}`: {self.display(target)} no longer defines `{alias.name}`")
+                 f"`from {source} import {alias.name}`: {self.display(targets[0])} no longer defines `{alias.name}`")
                 for alias in node.names
-                if alias.name != "*" and alias.name not in bound and not _is_submodule(target, alias.name)]
+                if alias.name != "*" and all(alias.name not in bound and not _is_submodule(target, alias.name)
+                                             for target, bound in known)]
 
     def tree(self, path: str) -> ast.Module | None:
         """``path`` parsed once per check; None when it is too large, unreadable or does not parse."""
@@ -203,37 +209,44 @@ class _Check:
         return PurePath(path).as_posix()
 
 
-def _module_file(node: ast.ImportFrom, importer: str) -> str | None:
-    """The workspace ``.py`` file ``node`` imports names out of, or None when it is not one."""
+def _module_files(node: ast.ImportFrom, importer: str) -> tuple[str, ...]:
+    """The workspace ``.py`` files ``node`` may import names out of: none when it is not a workspace
+    module, one, or a sibling of the importer and the root's module of the same name
+    (`_sibling_module`), the import's reader depending on how the importer is run."""
     parts = node.module.split(".") if node.module else []
     if node.level:
         base = os.path.dirname(importer)
         for _ in range(node.level - 1):
             base = os.path.dirname(base)
-        return _existing_module(os.path.join(base, *parts)) if parts else _existing_module(base, package_only=True)
+        found = _existing_module(os.path.join(base, *parts)) if parts else _existing_module(base, package_only=True)
+        return (found,) if found is not None else ()
     # An absolute import is resolved only where the project's own packages live: the project root
     # (the nearest ancestor holding a project marker) or a `src/` directly under it. Anything else --
     # an installed package that shares a directory's name, a plugin's own folder -- is not this
     # reader's to judge. A standard-library name is the standard library's.
     if not parts or parts[0] in sys.stdlib_module_names:
-        return None
+        return ()
     project = _project_root(importer)
     if project is None:
-        return None
+        return ()
     for base in (project, os.path.join(project, "src")):
         found = _existing_module(os.path.join(base, *parts))
         if found is not None:
-            return _sibling_module(importer, parts) or found
-    return None
+            sibling = _sibling_module(importer, parts)
+            return (sibling, found) if sibling is not None and sibling != found else (found,)
+    return ()
 
 
 def _sibling_module(importer: str, parts: list[str]) -> str | None:
     """The module ``parts`` names beside ``importer`` when its directory is not a package: Python puts
     a script's own directory first on ``sys.path``, and pytest's default ``prepend`` mode inserts a
     test module's directory when it holds no ``__init__.py``. So `from conftest import x` in
-    `tests/test_a.py` reads `tests/conftest.py`, not the root's. It is consulted only once the root
-    rule has found a module, to pick between two workspace modules of one name: on its own, a
-    sibling named like an installed package (`scripts/setuptools.py`) is not this reader's to judge."""
+    `tests/test_a.py` reads `tests/conftest.py`, not the root's. But a directory without
+    ``__init__.py`` is also a PEP 420 namespace package, whose modules import the root's
+    (`src/ns/mod.py`'s `from config import KEY` reads `src/config.py`), so the sibling is a second
+    candidate, never a replacement: a name is stale only when both lack it. It is consulted only
+    once the root rule has found a module: on its own, a sibling named like an installed package
+    (`scripts/setuptools.py`) is not this reader's to judge."""
     directory = os.path.dirname(importer)
     if os.path.isfile(os.path.join(directory, "__init__.py")):
         return None

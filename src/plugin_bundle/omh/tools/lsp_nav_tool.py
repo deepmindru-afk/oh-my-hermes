@@ -419,6 +419,8 @@ def workspace_relative(path: str, root: str) -> str:
     try:
         return PurePath(os.path.relpath(path, root)).as_posix()
     except ValueError:
+        if os.path.splitdrive(path)[0].lower() == os.path.splitdrive(root)[0].lower():
+            raise
         return PurePath(path).as_posix()
 
 

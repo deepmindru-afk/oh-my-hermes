@@ -1948,9 +1948,11 @@ Second review follow-up (2026-10-31, `omh/omp-round-review-followups`):
 
 - `from conftest import x` in `tests/test_a.py` was resolved to the root's `conftest.py`. When the
   root rule finds a module and the importer's own directory is not a package, a module of the same
-  name beside the importer now wins, as a script's `sys.path[0]` and pytest's `prepend` mode pick
-  it. On its own, a sibling is still not read: the review's probe pins `scripts/setuptools.py`
-  beside `scripts/build.py` as silent.
+  name beside the importer is a second candidate: a script's `sys.path[0]` and pytest's `prepend`
+  mode read it, a PEP 420 namespace-package module reads the root's (`src/ns/mod.py`'s
+  `from config import KEY` reads `src/config.py`). A name is reported only when both lack it. On
+  its own, a sibling is still not read: the review's probe pins `scripts/setuptools.py` beside
+  `scripts/build.py` as silent.
 - A root module named like an installed package (`requests.py`) is still resolved. The hook runs
   in Hermes's interpreter, not the project's, so a skip keyed on site-packages would hide a row on
   one machine and not another. Where the root is on `sys.path` (a root `conftest.py` under pytest,
