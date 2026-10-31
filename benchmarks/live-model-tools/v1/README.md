@@ -658,6 +658,51 @@ The gate, per config:
 Results are recomputed from the raw records and `state.db` snapshots, not the driver log. A failed
 clause is recorded here and the change does not merge on it.
 
+#### Result: gate failed on one probe cell; the change does not merge on this run
+
+528 runs: branch `8be0a4355` against base origin/main `f545685dc`, 2026-10-31 10:32-11:30 KST,
+with no retries and no timeouts. Then 80 probe runs, each config's probes starting after its lane
+finished. Recomputed from the records and the `state.db` / meter snapshots. Passes and call rates
+were counted a second time by a separate script.
+
+| Config | Pass base | Pass br | `omh_context` sessions base / br | Failing calling sessions | Re-fetch sessions | Tokens/call, calling sessions base -> br | Drop (95% CI) | Probe base / br | Verdict |
+| --- | ---: | ---: | --- | --- | --- | --- | --- | --- | --- |
+| GPT-6 Luna `auto` | 30 | 32 | 0 / 0 | 0 / 0 | 0 / 0 | - | n/a | 4 / 4 | pass |
+| GPT-6 Luna `off` | 33 | 33 | 25 / 26 | 0 / 0 | 1 / 0 | 28,888 -> 23,821 | +5,067 (+4,532, +5,585) | 3 / 4 | pass |
+| GPT-6.1 Sol `auto` | 30 | 30 | 0 / 0 | 0 / 0 | 0 / 0 | - | n/a | 5 / 5 | pass |
+| GPT-6.1 Sol `off` | 30 | 30 | 0 / 0 | 0 / 0 | 0 / 0 | - | n/a | 5 / 5 | pass |
+| Haiku 4.5 `auto` | 32 | 31 | 0 / 0 | 0 / 0 | 0 / 0 | - | n/a | 5 / 4 | pass |
+| Haiku 4.5 `off` | 32 | 31 | 0 / 0 | 0 / 0 | 0 / 0 | - | n/a | 4 / **2** | **fail** |
+| Sonnet 5.5 `auto` | 33 | 33 | 0 / 0 | 0 / 0 | 0 / 0 | - | n/a | 4 / 4 | pass |
+| Sonnet 5.5 `off` | 33 | 33 | 0 / 0 | 0 / 0 | 0 / 0 | - | n/a | 4 / 4 | pass |
+
+- **Token clause.** Only GPT-6 Luna `off` was evaluable: GPT-6.1 Sol never called `omh_context` in
+  a coding session under either setting. Luna's drop of 5,067 per call clears the 2,000 threshold.
+  - The Codex-counted result fell from 9,216 to 3,788 tokens.
+  - Over all 33 sessions, the per-call mean fell from 26,918 to 23,192.
+  - First-call tokens were equal in every config, because the schema did not change.
+  - Median wall time did not move: Luna `off` went from 45.1 s to 45.9 s.
+- **Call rates.** GPT-6 Luna `off` called the tool in 25 of 33 base sessions and 26 of 33 branch
+  sessions. Every other config called it in 0 of 33, in both arms.
+- **The failing probe cell.** On Haiku 4.5 `off` the branch scored 2/5 against base's 4/5; the
+  clause needs 3.
+  - Neither branch miss (`source_examples`, `user_examples`) called `omh_context`. Haiku went to
+    `omh_capabilities` with a section filter, found no "Plan and decide" section, and then either
+    stopped or answered from another card. That tool's schema and the `omh_context` schema are
+    byte-identical between arms.
+  - On base, Haiku's `source_examples` answer came from the full `omh_context` result, which it
+    called last. The compact view no longer carries that section.
+- **The four catalog probes overall** (every probe except `image_route`, 64 runs). Every branch run
+  that called `omh_context` answered correctly (24/24); 20 of those followed `expand` to
+  `omh_capabilities`. All the misses came from runs that never called it: 2 on the branch, 1 on
+  base.
+- **`image_route`.** It passed in both arms on GPT-6.1 Sol under both settings, and on base only
+  for Haiku 4.5 `auto`. Every other run missed it. The `pre_llm_call` route hint for that prompt
+  names `failure-signal-audit`, and most answers followed it.
+
+Verdict: **gate failed** on the pre-registered probe clause for Haiku 4.5 `off`. Every other clause
+passed on every config. This run does not put the change up for merge.
+
 ### 2026-10-30 round-end consistency check in `pre_verify`: off vs on, five measurements
 
 Measurements 1 to 4 failed their gates. The owner then relaxed the token clause to 1.4x
