@@ -574,6 +574,90 @@ Results describe this pinned corpus, OMH version, Hermes version, provider,
 model id and conditions only. They do not establish universal model
 superiority.
 
+### 2026-10-31 compact `omh_context` result: base vs branch
+
+The `omh_context` tool result rides every later model call of its session. In the 2026-10-30
+per-call runs (`OPT-C`, three runs of the head-to-head's 11 templates), GPT-6 Luna with
+`tools.tool_search` off called it as its first tool in 20-33 of 33 sessions; no Claude session
+and no `tool_search: auto` session called it. Every calling session went on with `search_files`,
+`read_file` or `terminal`; apart from 7 repeat `omh_context` calls, none called another OMH tool
+afterwards (209 calls over the three runs' snapshots). Per model call, the sessions
+that called it cost 26-29k tokens against 18-20k in those that did not.
+
+What the result consisted of (one recorded call, 36,374 characters of sorted JSON; mean over the
+209 calls 39,725): `generic_tool_checkpoint` 11,025, of which its 14 routes are 10,454;
+`capability_families` 8,967; `workflow_context_cards` 6,765; `lanes` 3,749; `route_hint` 837
+(3,479 with two matched hints); `workflow_cues` 1,426; `tool_hints` 1,385; `prompt_context`
+about 2,700 when asked for (48 of 209 calls); the rest under 600 each. `omh_capabilities`
+action=summary returns `capability_families` and `workflow_context_cards` byte for byte.
+
+The branch returns a compact view from the tool only (the CLI, the wrapper contract and the hooks
+keep the full brief). It drops those two sections, keeps each checkpoint route's `tool_family`,
+`primary_workflow` and `primary_next_action`, and adds a one-line `expand` naming where the
+dropped parts are; a matched route hint still carries its own fallback and not-evidence lists.
+The tool's schema is byte-identical to base. Replayed on the 209 recorded calls: 40,162 -> 15,956
+characters on average, o200k 9,332 -> 3,824 tokens (cut 5,508).
+
+The setup, fixed here before the first live run:
+
+- Arms: `base` (OMH bundle at origin/main `f545685dc`) and `br` (bundle at the branch head).
+  The two profiles of a config differ only in the bundle and the OMH home.
+- Panel (subscription routes only): `gpt-6-luna` and `gpt-6.1-sol` through Hermes
+  `openai-codex`; `claude-haiku-4-5-20251001` and `claude-sonnet-5-5` through CPA
+  (`claude-proxy`). Effort `medium`.
+- Configs: each model with `tools.tool_search` at the Hermes default (`auto`) and `off`: eight
+  configs.
+- Templates: the head-to-head's 11 (`I-SIGNATURE`, `I-RETURN-SHAPE`, `I-KWARG`, `I-CONTROL`,
+  `C-DUPLICATE`, `C-SCOPE-TRAP`, `C-DECOY`, `E-RENAME`, `E-BUGFIX`, `L-RENAME-ALIAS`,
+  `L-RENAME-SHADOW`), new seeds 262139, 287117, 314159: 33 instances per config per arm.
+  `I-CONTROL` is the negative control (no caller breaks).
+- Both arms otherwise as the OPT-C runs: the head-to-head's `omh` arm (`--edit-surface impact`,
+  toolsets `file,terminal,omh-lsp`, `impact_check` and `lsp_tools` on, no edit directive,
+  `--git-init-workspace`, `--test-env`), `agent.max_turns: 120`, `agent.run_budget_seconds: 600`,
+  pyright pinned by absolute command, the bench-only `optc_meter` observer in both arms.
+  Per instance both arms run back to back on identical fresh workspaces, order alternating.
+  Retries only for `rate_limited` / `provider_error` / `model_unavailable` /
+  `authentication_failed` (or a client the gateway refused within seconds), on the same route.
+
+The gate, per config:
+
+- Must hold (passes): `br` passes at least `base` - 1 runs.
+- Must hold (follow-up): the tool exists so the model knows OMH's routes before it reaches for
+  generic tools, then gets on with the request. In the bench that is: (a) among sessions that
+  call `omh_context`, `br` has at most one more failing session than `base`; (b) `br` sessions
+  that call `omh_context` and then call `omh_capabilities` or `omh_context` again (fetching what
+  the compact view dropped) are at most `base`'s count + 2.
+- Must hold (full-context probe): 5 prompts where the dropped context is what is asked for, one
+  run each per model, arm and config, through `hermes --oneshot` in an empty directory. An answer
+  passes when, lower-cased with `_` and `-` read as spaces, it contains every key:
+  1. "Using OMH's own context tools, list each OMH capability family and the role that owns it." —
+     `planner`, `researcher`, `memory keeper`, `operator`, `handoff guide`, `tracker`.
+  2. "Using OMH's own context tools, quote the first response shape OMH prescribes on its 'Intent
+     to plan' workflow context card." — `name the ambiguity`.
+  3. "Using OMH's own context tools, give verbatim the example source flows OMH lists for its 'Plan
+     and decide' capability family." — `loopability check`, `reading path`.
+  4. "Using omh_context on my request 'make an image card for this PR', tell me which OMH workflow
+     comes first, its next action, its fallback action, and what is not evidence yet." —
+     `img summary`, `prepare visual prompt card`, `choose image generator`, `image generation`.
+  5. "Using OMH's own context tools, which user examples does OMH give on its 'Automation and
+     status' workflow context card?" — `every morning send a digest`.
+
+  Per model and config, `br` passes at least `base` - 1 of the 5.
+- Must improve (GPT models): on each GPT config where both arms have at least 5 sessions that call
+  `omh_context`, the mean input tokens per model call over those sessions (input + cache read +
+  cache write, summed, divided by their API calls, from each profile's `state.db`) falls by at
+  least 2,000. At least one GPT config must be evaluable. The amount, in Codex units: the replayed
+  cut of 5,508 o200k tokens is 3,427 at OPT-C's measured 2,800 Codex per 4,500 o200k; the result
+  is the first tool result, so it rides 92% of a calling session's calls (13.4 calls per session in
+  OPT-C), about 3,150 per call; 2,000 leaves room for session-length noise. Measured directly, the
+  Codex route counted the full result as 9,231 tokens (input growth over the call that returned
+  it, 148 OPT-C sessions), close to o200k, which would put the drop near 5,100.
+- Reported with it, not gating: call rates of `omh_context` per arm and config; tokens per call
+  over all sessions; first-call tokens; the Codex-counted result size per arm; median wall time.
+
+Results are recomputed from the raw records and `state.db` snapshots, not the driver log. A failed
+clause is recorded here and the change does not merge on it.
+
 ### 2026-10-30 round-end consistency check in `pre_verify`: off vs on, five measurements
 
 Measurements 1 to 4 failed their gates. The owner then relaxed the token clause to 1.4x
