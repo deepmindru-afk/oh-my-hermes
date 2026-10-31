@@ -48,6 +48,7 @@ from .session_attendance import note_session_platform
 from .verify_hooks import clear_round_end_answer
 from ..consistency_trigger import note_turn_posture
 from .nudge_budget import session_is_delegated
+from ..remote_wait_nudge import failed_wait_context
 from ..jev_consent import MESSAGING_ATTENDED_PLATFORMS
 from ..jev_consent import clear_turn as clear_jev_turn
 from ..jev_consent import note_turn as note_jev_turn
@@ -913,6 +914,21 @@ def pre_llm_call(**kwargs) -> dict[str, object] | None:
         board_card = _board_lanes_card(hermes_home, session_id)
         if board_card and _claim_board_card(session_id):
             context_parts.append(board_card)
+
+    # A turn a failed background process opened, with nothing else armed to
+    # wake the session after it (`remote_wait_nudge.failed_wait_context`).
+    # Not behind the awareness opt-out: like the unarmed-wait directive on a
+    # tool result, it is about this session stalling, not about OMH itself.
+    failed_wait = failed_wait_context(
+        user_message=kwargs.get("user_message"),
+        display_kind=turn_display_kind,
+        session_id=session_id,
+        turn_id=kwargs.get("turn_id"),
+        hermes_home=hermes_home,
+        delegated=delegated,
+    )
+    if failed_wait:
+        context_parts.append(failed_wait)
 
     try:
         try:
