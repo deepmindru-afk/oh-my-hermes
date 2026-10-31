@@ -856,6 +856,22 @@ All notable changes will be documented here.
   refusal says which and names that same repair, and `omh doctor` reports
   the bundle as stale (#2166, #2415).
 
+- **Memory recall works on long pastes, saved memories lead back to the
+  original words, and `hermes backup` includes OMH memory.** A message that
+  pastes a log or document next to a question used to rank memory against
+  the whole paste; the chat-turn recall query now keeps the person's own
+  words (other speakers' Discord channel backfill, host notices and loaded
+  skill bodies are left out, a replied-to message and the same speaker's
+  recent lines are kept) and cuts a long turn to its question, else its last
+  sentence, else its tail, at most 250 characters. CLI recall and coding-handoff packs keep their raw task text,
+  and the prefetch receipt records only the method and lengths. A capture
+  made through `omh_memory` now records its Hermes session, and
+  `omh_memory recall` rows carry an `origin` the model can open with
+  `session_search` to quote the person's message; it is read-only from
+  Hermes' `state.db`, and OMH still stores no transcript. The memory
+  provider's `backup_paths()` hands `<omh_home>/memory` to `hermes backup`,
+  and a restored `principal.key` is tightened back to 0600 on its next read.
+
 ## 4.0.3 - 2026-10-27
 
 - **`plan` and `ralplan` name the goal beyond the request, the raw material,
