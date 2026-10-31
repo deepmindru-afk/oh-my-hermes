@@ -32,6 +32,17 @@ All notable changes will be documented here.
   launch look: a rule above and below on a dark sumi-ink ground (Kanagawa
   Lotus on a light terminal), with an ocean swell for its living wallpaper.
   Contributed by Dan Rio (#2436).
+- **A failed CI or merge watcher no longer leaves the session silently
+  stopped.** When a watcher you armed exits non-zero, its notice opens a turn;
+  that turn now starts with a short directive: if the work it watched is still
+  the session's to finish, do it and arm the next wait, otherwise say plainly
+  that the session has stopped and what you have to decide. If the turn ends
+  with nothing armed anyway (no notifying background process, background
+  delegation or scheduled follow-up job), the reply ends with one sentence in
+  its own language saying nothing will wake the session again. Both halves
+  read only records: the host's row kind and notice header, and the turn's own
+  tool results. A killed watcher, a zero exit and a person's own message get
+  nothing.
 
 - **A steer reads as the prompt it is.** A steer you send during a turn
   shows as a prompt row (`❯ <text>`), as Claude Code shows one, in place of
