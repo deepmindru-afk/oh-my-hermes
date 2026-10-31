@@ -112,6 +112,7 @@ from .memory_prefetch_receipt import (
     prefetch_receipt_path,
 )
 from .memory_principals import principal_recall_decision
+from .memory_query_sanitizer import sanitize_memory_query
 from .memory_recall_selector import resolve_scope_allowlist
 from .memory_recall_support import _record_perspective_matches
 from .memory_session_digest import (
@@ -296,6 +297,7 @@ class OmhMemoryProvider(_MemoryProviderBase):
         # is how many memories it carries in full.
         self._pack = ""
         self._query = ""
+        self._query_sanitized = sanitize_memory_query("")
         self._pack_count = 0
         # True when blocks, a reference index, or records are in the pack. A
         # consolidation brief alone is a request, not recalled memory.
@@ -366,6 +368,19 @@ class OmhMemoryProvider(_MemoryProviderBase):
         except OSError:
             return False
 
+    def backup_paths(self) -> list[str]:
+        """Existing real OMH memory directory for Hermes backup, without initialization.
+
+        A restored ``principal.key`` initially has the restore's umask mode;
+        ``memory_principals._principal_key`` re-tightens it to 0600 on its next
+        read. This hook only lists paths and never creates or changes them.
+        """
+        try:
+            memory = self._omh_home / "memory"
+            return [str(memory.absolute())] if not memory.is_symlink() and memory.is_dir() else []
+        except (OSError, ValueError):
+            return []
+
     def initialize(self, session_id: str, **kwargs: Any) -> None:
         hermes_home = kwargs.get("hermes_home")
         if hermes_home is not None:
@@ -375,6 +390,7 @@ class OmhMemoryProvider(_MemoryProviderBase):
             self._hermes_home = supplied_home
             self._profile_home = supplied_home
         self._query = ""
+        self._query_sanitized = sanitize_memory_query("")
         self._pack, self._pack_count, self._pack_has_memory = "", 0, False
         self._served_pack, self._served_count, self._served_has_memory = "", 0, False
         self._prepared_receipt, self._served_receipt = None, None
@@ -484,10 +500,12 @@ class OmhMemoryProvider(_MemoryProviderBase):
                     self._principal_context = supplied
                     self._publish_lens(reset=False)
                     self._pack = self.render_pack()
-            if query and str(query) != self._query:
+            sanitized = sanitize_memory_query(str(query)) if query else None
+            if sanitized is not None and sanitized.clean != self._query:
                 # A host that hands prefetch a query it never gave on_turn_start
                 # still gets a pack ranked for what the user just said.
-                self._query = str(query)
+                self._query_sanitized = sanitized
+                self._query = sanitized.clean
                 self._pack = self.render_pack()
             self._served_pack, self._served_count = self._pack, self._pack_count
             self._served_has_memory = self._pack_has_memory
@@ -803,7 +821,8 @@ class OmhMemoryProvider(_MemoryProviderBase):
                     expected_session=self._session_id,
                     expected_turn=self._turn_ref,
                 )
-            self._query = str(query or "")
+            self._query_sanitized = sanitize_memory_query(str(query or ""))
+            self._query = self._query_sanitized.clean
             self._pack = self.render_pack(now=now)
 
     def recall_status(self) -> RecallStatus | None:
@@ -902,8 +921,8 @@ class OmhMemoryProvider(_MemoryProviderBase):
             self._prepared_reminder, self._reminder_recorded = None, False
             self._prepared_record_ids, self._served_recorded = (), False
             self._pack_digest_evaluated, self._pack_digest = False, ""
-            if message:
-                self._query = str(message)
+            self._query_sanitized = sanitize_memory_query(str(message or ""))
+            self._query = self._query_sanitized.clean
             if self._attended:
                 # The counters move before the render so a turn is counted
                 # whatever the render does, and a brief that falls due on this
@@ -1184,6 +1203,7 @@ class OmhMemoryProvider(_MemoryProviderBase):
             pack_chars=len(pack),
             surface_class=self._surface_class,
             tightened_by_foreign_lens=self._tightened_by_foreign_lens,
+            query_sanitized=self._query_sanitized,
         )
         # Last, so a render that raised leaves no ids beside the previous pack.
         self._prepared_record_ids = tuple(str(item["record_id"]) for item in prepared.section.rendered)
