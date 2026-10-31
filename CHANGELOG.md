@@ -15,6 +15,68 @@ All notable changes will be documented here.
   missing went from 8/12 to 12/12, with +3 of that from the note itself
   ([measurement](benchmarks/live-model-tools/v1/README.md)).
 
+- **Vim mode in the composer.** With Hermes' `display.vim_mode` on
+  (`hermes config set display.vim_mode true`, then start `omh` again), the
+  OMH TUI's composer edits modally, read from the active profile's config.
+  It starts in INSERT, where every key works as before except Esc, which
+  goes to NORMAL and closes the `/` or `@` menu, and does nothing else: it
+  no longer arms the clear or the rewind, cancels nothing and interrupts no
+  turn. In NORMAL a letter is a command, never text:
+  `h l 0 ^ $ w b e j k gg G`, `i a I A o O`, `x X dd D C cc S s r`, `d c y`
+  with a motion, `p P`, `u` and Ctrl+R, with counts, and Esc there does
+  what it always did, so Esc Esc still clears or rewinds; during a turn,
+  Esc on an empty composer arms the interrupt and a second Esc sends it.
+  Enter sends from either mode, and in NORMAL always sends, a `\` before
+  the caret included. Paste chips and image tokens
+  are one character to every command, `p` puts them back with their text
+  or image, and the info line says `INSERT` or `NORMAL`. Questions Hermes
+  asks, masked input, the tell row, pickers and the agent list keep their
+  own keys. The supported set and how it differs from Hermes' own Vi mode
+  are in the Installation guide. With the setting off or absent nothing
+  changes. Requested by Dan Rio (#2434).
+
+- **The exit card drops its `resume:` label.** Leaving the OMH TUI prints
+  the session's title and, after a blank line, `omh --resume <id>` alone,
+  ready to copy.
+
+- **`agent-debug` sees a turn that ended without a reply.** A new finding,
+  `silent_turn_end`, cites a turn whose last tool result was followed by an
+  empty assistant row and then nothing: no reply, no further call, until the
+  next user message. It cites the tool row and the empty row, the call, and
+  the result's exit code (130 for an interrupted command). When one is found,
+  the incident leads with `turn_ended_without_reply` ahead of correlations
+  such as a compaction or an unwatched background process, because the
+  silent end is the symptom itself, and proposes reading the host's agent.log
+  `Turn ended: reason=` line for that timestamp before changing anything.
+  Both state.db and `--session-record` are read; without `tool_calls` the kind
+  is listed unavailable.
+- **The `/theme` picker scrolls on a short terminal.** Where the slot held
+  fewer rows than there are launch looks, the arrows still reached the
+  looks past it, but they were never drawn (on a 16-row terminal, ember; on a 24-row one, kanagawa-wave).
+  The list now scrolls so the highlighted look always shows, moving only
+  when the highlight would leave it, and a click lands on the look drawn in
+  that row.
+
+- **A Kanagawa Wave theme and launch look.** `omh theme use kanagawa`
+  selects an indigo palette with warm ivory text and muted blue and violet
+  accents, adapted from rebelot/kanagawa.nvim (MIT, Copyright (c) 2021
+  Tommaso Laurenzi). Like the other four it sets no background, so the
+  terminal's own shows through. `/theme kanagawa-wave` selects the matching
+  launch look: a rule above and below on a dark sumi-ink ground (Kanagawa
+  Lotus on a light terminal), with an ocean swell for its living wallpaper.
+  Contributed by Dan Rio (#2436).
+- **A failed CI or merge watcher no longer leaves the session silently
+  stopped.** When a watcher you armed exits non-zero, its notice opens a turn;
+  that turn now starts with a short directive: if the work it watched is still
+  the session's to finish, do it and arm the next wait, otherwise say plainly
+  that the session has stopped and what you have to decide. If the turn ends
+  with nothing armed anyway (no notifying background process, background
+  delegation or scheduled follow-up job), the reply ends with one sentence in
+  its own language saying nothing will wake the session again. Both halves
+  read only records: the host's row kind and notice header, and the turn's own
+  tool results. A killed watcher, a zero exit and a person's own message get
+  nothing.
+
 - **A steer reads as the prompt it is.** A steer you send during a turn
   shows as a prompt row (`❯ <text>`), as Claude Code shows one, in place of
   the dim `↪ steer queued by Hermes · <text>`. It stays dim right above the
@@ -29,17 +91,55 @@ All notable changes will be documented here.
   launch look's `Native`, moved toward black on a light background as far as
   body-text contrast takes.
 
-- **A coding turn ends with one consistency check.** When a turn in the
-  coding posture edited source code, OMH continues it once at its first stop.
-  It asks the model to look for other copies or call sites of the logic it
-  changed that have to change with it, and to fix them, without re-running
-  tests for the check. That is one extra round on those turns: about 1.37x
-  the median tokens on the bench corpus, in exchange for fixing a second copy
-  of the changed logic far more often (76 vs 38 of 90 runs, pooled over five
-  measurements). If nothing more changed, the model replies with the single
-  line `OMH: no further changes.`, and OMH puts the answer it had already
-  given back in that line's place, so `--oneshot`, API and delegating callers
-  get that answer unchanged. Hermes's own CLI shows the restored answer a
+- **A coding turn ends with one consistency check, when the edit has a copy
+  or a reference elsewhere.** When a turn in the coding posture edited source
+  code, OMH can continue it once at its first stop. It asks the model to look
+  for other copies or call sites of the logic it changed that have to change
+  with it, and to fix them, without re-running tests for the check. That is one
+  extra round, so after a Python edit it is skipped when none of the four
+  signals below is found in the workspace's other Python and config files.
+  It fires when:
+
+  - a changed definition is also defined in another file;
+  - a removed or renamed name is still used in another Python or config
+    file;
+  - a function whose signature changed is named in another file, or a class
+    whose constructor, annotated fields or abstract methods changed;
+  - a replaced line appears in another file.
+
+  It also fires, as before, when that search cannot be made:
+
+  - a non-Python source file changed;
+  - a Python file changed with no pre-edit text kept for it: through `sed`,
+    `execute_code` or a delegated child, or past OMH's snapshot limits;
+  - a changed file does not parse or is too large;
+  - a change touches no definition, import or docstring;
+  - the workspace walk passes 5,000 entries or its time limit (a workspace
+    that ran over is not walked again for five minutes);
+  - a Python file or a directory in the workspace is a symlink that leaves it;
+  - an unedited Python file is too large or unreadable;
+  - any error.
+
+  There is no other fallback. A change the four signals cannot see is skipped:
+  a function body that changes behaviour without changing its signature,
+  and a reference that exists only in prose such as docs. The search skips
+  hidden, version-control, virtualenv, cache and `node_modules` directories,
+  and `build` or `dist` directories with no `__init__.py` (build output; a
+  package of that name is searched).
+
+  On the bench corpus the always-on check fixed a second copy of the changed
+  logic far more often: 76 vs 38 of 90 runs, pooled over five measurements. It
+  cost about 1.37x the median tokens. The trigger kept those fixes and stopped
+  the check on edits with no copy: 0 of 54 sessions against 54 of 54, with the
+  same passes. Strong models' median tokens fell to 0.68x and 0.75x of the
+  always-on check in two runs. One clause of the pre-registered gate failed in
+  each run; the owner overrode it. The decision is recorded in
+  [the bench README](benchmarks/live-model-tools/v1/README.md#owner-decision-2026-10-31).
+
+  If nothing more changed, the model replies with the single line
+  `OMH: no further changes.`, and OMH puts the answer it had already given
+  back in that line's place, so `--oneshot`, API and delegating callers get
+  that answer unchanged. Hermes's own CLI shows the restored answer a
   second time; the OMH TUI keeps the one line. Delegated children never get
   the check. `agent.max_verify_nudges: 0` turns it off, together with OMH's
   other end-of-turn nudges.
@@ -99,7 +199,7 @@ All notable changes will be documented here.
   its navy ground with OSC 11, and Otty took a set background only on the
   cells written after it, so the launch card showed holes of the terminal's
   own black. The default look, which draws no picture, now takes the
-  terminal's background as its ground; the other seven looks keep theirs.
+  terminal's background as its ground; the other looks keep theirs.
 
 - **The working glow is smaller.** The light that goes round the screen
   while a turn runs read too big and hid most of the top row's text as it
@@ -110,7 +210,7 @@ All notable changes will be documented here.
 
 - **The default look, spectrum, keeps its background colour and draws no
   picture.** Its pixel aura is gone: the wallpaper still sets spectrum's
-  ground, and the other seven looks keep their scenes. An idle screen on
+  ground, and the other looks keep their scenes. An idle screen on
   spectrum no longer wakes four times a second to paint nothing.
 
 - **The living wallpaper is pixel art, in the brand's pixel-aura style.**
@@ -852,6 +952,46 @@ All notable changes will be documented here.
   Hermes. When the recorded package is missing or another version, the
   refusal says which and names that same repair, and `omh doctor` reports
   the bundle as stale (#2166, #2415).
+
+- **Memory recall works on long pastes, saved memories lead back to the
+  original words, and `hermes backup` includes OMH memory.** A message that
+  pastes a log or document next to a question used to rank memory against
+  the whole paste; the chat-turn recall query now keeps the person's own
+  words (other speakers' Discord channel backfill, host notices and loaded
+  skill bodies are left out, a replied-to message and the same speaker's
+  recent lines are kept) and cuts a long turn to its question, else its last
+  sentence, else its tail, at most 250 characters. CLI recall and coding-handoff packs keep their raw task text,
+  and the prefetch receipt records only the method and lengths. A capture
+  made through `omh_memory` now records its Hermes session, and
+  `omh_memory recall` rows carry an `origin` the model can open with
+  `session_search` to quote the person's message; it is read-only from
+  Hermes' `state.db`, and OMH still stores no transcript. The memory
+  provider's `backup_paths()` hands `<omh_home>/memory` to `hermes backup`,
+  and a restored `principal.key` is tightened back to 0600 on its next read.
+
+- **The OMH pane in Hermes Desktop reads idle when nothing is running and
+  keeps the plan and status bar in agreement.** Old runs no longer keep it
+  looking busy. OMH catches and the delegation graph appear alongside the
+  plan, board and active fanout graph, while individual subagent rows stay
+  in Desktop's Agents panel. Calmer colours keep running work distinct from
+  waiting or finished work, and the pane follows Desktop's language when
+  Korean is selected.
+
+- **A dag-ulw node left open for hours says so.** `omh_dag status`, `ready`
+  and `settle` give every open node its age (`open_for_s`, from when it first
+  went out, so re-offering it does not reset it). One open past an hour is
+  listed in `stuck`, counted on the run's status line (`1 open past 1h (Docs
+  body 2h 10m)`), and named in `say` with what to check: no child took it,
+  its child still runs (`delegate_task action=list`, then settle failed and
+  repair when none is live), or it came back and was never settled. A run
+  whose wave never started or whose child went silent used to look the same
+  at two minutes and at eight hours. The marks are profile settings under
+  `plugins.entries.omh.settings`: `dag_stuck_after_s` (default 3600, 0 turns
+  the warning off), `dag_stale_after_s` (default 600) and
+  `dag_max_lost_reoffers` (default 3); a value that is not a number is named
+  in the result's `limits` and the default kept. OMH still starts no timer,
+  so the warning shows only when the parent calls the tool. Proposed by
+  @yqm-307 in #2427.
 
 ## 4.0.3 - 2026-10-27
 

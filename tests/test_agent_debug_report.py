@@ -26,6 +26,7 @@ from omh.quality.agent_debug_report import (
     CITATION_KEYS,
     FINDING_KINDS,
     AgentDebugReportError,
+    agent_debug_reference_errors,
     agent_debug_report_errors,
     build_agent_debug_report,
     format_agent_debug_report,
@@ -48,9 +49,9 @@ PYTEST_REORDERED = {"timeout": 60, "command": "pytest tests/SECRET_test.py"}
 PATCH = {"path": "src/app.py", "old_string": "SECRET old", "new_string": "SECRET new"}
 
 
-def _write_state_db(home: Path, *, full_schema: bool = True) -> Path:
+def _write_state_db(home: Path, *, full_schema: bool = True, rows: list[tuple] | None = None) -> Path:
     """Two sessions; ``full_schema=False`` drops ``tool_calls`` and ``_compressed_summary``,
-    the two columns an older Hermes build may not have."""
+    the two columns an older Hermes build may not have. ``rows`` replaces the message rows."""
     home.mkdir(parents=True, exist_ok=True)
     path = home / "state.db"
     connection = sqlite3.connect(path)
@@ -101,7 +102,7 @@ def _write_state_db(home: Path, *, full_schema: bool = True) -> Path:
                 # An empty tool_call_id cannot be cited as a call.
                 (22, SESSION, "tool", json.dumps({"exit_code": 2}), "", "terminal", 1022.0, None, 0),
                 (23, OTHER, "tool", json.dumps({"exit_code": 1}), "c1", "terminal", 951.0, None, 0),
-            ]
+            ] if rows is None else rows
             if full_schema:
                 connection.executemany("INSERT INTO messages VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)", rows)
             else:
@@ -161,7 +162,13 @@ class AgentDebugReportTests(unittest.TestCase):
         self.assertEqual(report["schema_version"], AGENT_DEBUG_REPORT_SCHEMA_VERSION)
         self.assertEqual(
             report["finding_counts"],
-            {"tool_error": 4, "identical_retry_after_error": 2, "background_without_notify": 1, "compaction_boundary": 1},
+            {
+                "tool_error": 4,
+                "identical_retry_after_error": 2,
+                "background_without_notify": 1,
+                "compaction_boundary": 1,
+                "silent_turn_end": 0,
+            },
         )
         # c1..c10 plus the empty-id row; c1's re-persisted row is the same call.
         self.assertEqual(report["counts"], {"tool_calls": 11, "tool_calls_without_id": 1, "tool_calls_with_arguments": 8})
@@ -183,7 +190,8 @@ class AgentDebugReportTests(unittest.TestCase):
         report = self._report(full_schema=False)
         self.assertEqual(report["checked_kinds"], ["tool_error", "background_without_notify"])
         self.assertEqual(
-            [item["kind"] for item in report["unavailable"]], ["identical_retry_after_error", "compaction_boundary"]
+            [item["kind"] for item in report["unavailable"]],
+            ["identical_retry_after_error", "compaction_boundary", "silent_turn_end"],
         )
         self.assertEqual(report["finding_counts"]["identical_retry_after_error"], 0)
         self.assertEqual(report["counts"]["tool_calls_with_arguments"], 0)
@@ -301,6 +309,149 @@ class AgentDebugReportValidatorTests(unittest.TestCase):
     def test_the_citation_shape_is_the_closed_key_set(self) -> None:
         for finding in self.report["findings"]:
             self.assertEqual(tuple(finding["citation"]), CITATION_KEYS)
+
+
+def _silent_rows() -> list[tuple]:
+    """Turns that end after a tool result in each way a reply can be missing, or not.
+
+    Turn 1 ends on an empty assistant row after an interrupted command (exit
+    130): silent. Turn 2 replies after its tool result. Turn 3's empty
+    assistant row calls a tool, and its last tool result is answered. Turn 4's
+    whitespace-only assistant row follows a re-persisted copy of turn 1's
+    result, which is cited once. Turn 5's empty row follows the user, not a
+    tool. Turn 6's empty row is followed by a compaction summary, which
+    continues the turn. Turn 7 ends the record on an empty row after a
+    successful tool result: silent.
+    """
+    interrupted = json.dumps({"output": "SECRET [Command interrupted]", "exit_code": 130, "error": None})
+    ok = json.dumps({"output": "SECRET ok", "exit_code": 0})
+    return [
+        (1, SESSION, "user", "SECRET prompt one", None, None, 1001.0, None, 0),
+        (2, SESSION, "assistant", "", None, None, 1002.0, _calls("s1", "terminal", PYTEST), 0),
+        (3, SESSION, "tool", interrupted, "s1", "terminal", 1003.0, None, 0),
+        (4, SESSION, "assistant", "", None, None, 1004.0, None, 0),
+        (5, SESSION, "user", "SECRET prompt two", None, None, 1005.0, None, 0),
+        (6, SESSION, "assistant", "", None, None, 1006.0, _calls("s2", "read_file", {"path": "a"}), 0),
+        (7, SESSION, "tool", ok, "s2", "read_file", 1007.0, None, 0),
+        (8, SESSION, "assistant", "SECRET reply", None, None, 1008.0, "[]", 0),
+        (9, SESSION, "user", "SECRET prompt three", None, None, 1009.0, None, 0),
+        (10, SESSION, "assistant", "", None, None, 1010.0, _calls("s3", "read_file", {"path": "b"}), 0),
+        (11, SESSION, "tool", ok, "s3", "read_file", 1011.0, None, 0),
+        (12, SESSION, "assistant", "", None, None, 1012.0, _calls("s4", "read_file", {"path": "c"}), 0),
+        (13, SESSION, "tool", ok, "s4", "read_file", 1013.0, None, 0),
+        (14, SESSION, "assistant", "SECRET done", None, None, 1014.0, None, 0),
+        (15, SESSION, "user", "SECRET prompt four", None, None, 1015.0, None, 0),
+        (16, SESSION, "tool", interrupted, "s1", "terminal", 1016.0, None, 0),
+        (17, SESSION, "assistant", "  \n ", None, None, 1017.0, None, 0),
+        (18, SESSION, "user", "SECRET prompt five", None, None, 1018.0, None, 0),
+        (19, SESSION, "assistant", "", None, None, 1019.0, None, 0),
+        (20, SESSION, "user", "SECRET prompt six", None, None, 1020.0, None, 0),
+        (21, SESSION, "assistant", "", None, None, 1021.0, _calls("s5", "terminal", {"command": "ls"}), 0),
+        (22, SESSION, "tool", ok, "s5", "terminal", 1022.0, None, 0),
+        (23, SESSION, "assistant", "", None, None, 1023.0, None, 0),
+        (24, SESSION, "user", "[summary of SECRET turns]", None, None, 1024.0, None, 1),
+        (25, SESSION, "assistant", "SECRET reply after summary", None, None, 1025.0, None, 0),
+        (26, SESSION, "user", "SECRET prompt seven", None, None, 1026.0, None, 0),
+        (27, SESSION, "assistant", "", None, None, 1027.0, _calls("s6", "terminal", {"command": "pwd"}), 0),
+        (28, SESSION, "tool", ok, "s6", "terminal", 1028.0, None, 0),
+        (29, SESSION, "assistant", "", None, None, 1029.0, None, 0),
+    ]
+
+
+def _write_silent_record(path: Path, rows: list[tuple], *, with_calls: bool = True) -> Path:
+    with path.open("w", encoding="utf-8") as handle:
+        for _id, session_id, role, content, call_id, tool_name, stamp, tool_calls, summary in rows:
+            message = {"session_id": session_id, "role": role, "content": content, "timestamp": stamp}
+            if call_id is not None:
+                message.update(tool_call_id=call_id, tool_name=tool_name)
+            if with_calls and role == "assistant":
+                message["tool_calls"] = json.loads(tool_calls) if tool_calls else None
+            message["_compressed_summary"] = summary
+            handle.write(json.dumps(message) + "\n")
+    return path
+
+
+class SilentTurnEndTests(unittest.TestCase):
+    """A turn that ended with no reply after its last tool result."""
+
+    EXPECTED = [
+        ("silent_turn_end:3", _citation([3, 4], [1003.0, 1004.0], ["s1"], "terminal", "nonzero_exit", 130)),
+        ("silent_turn_end:28", _citation([28, 29], [1028.0, 1029.0], ["s6"], "terminal", None, 0)),
+    ]
+
+    def _silent(self, report: dict) -> list[tuple]:
+        return [(item["finding_id"], item["citation"]) for item in report["findings"] if item["kind"] == "silent_turn_end"]
+
+    def test_state_db_cites_the_tool_row_and_the_empty_assistant_row_that_ended_the_turn(self) -> None:
+        with TemporaryDirectory() as tmp:
+            home = Path(tmp) / ".hermes"
+            _write_state_db(home, rows=_silent_rows())
+            report = build_agent_debug_report(home, SESSION)
+            self.assertEqual(agent_debug_reference_errors(report, hermes_home=home), [])
+        self.assertEqual(self._silent(report), self.EXPECTED)
+        self.assertEqual(report["finding_counts"]["silent_turn_end"], 2)
+        self.assertIn("silent_turn_end", report["checked_kinds"])
+        self.assertEqual(agent_debug_report_errors(report), [])
+        text = format_agent_debug_report(report)
+        self.assertIn("silent_turn_end:3  messages 3,4  at ", text)
+        self.assertIn("calls s1  tool terminal  nonzero_exit  exit 130", text)
+        self.assertNotIn("SECRET", json.dumps(report) + text)
+
+    def test_a_session_record_cites_the_same_turn_ends_by_line(self) -> None:
+        with TemporaryDirectory() as tmp:
+            record = _write_silent_record(Path(tmp) / "session.jsonl", _silent_rows())
+            report = build_agent_debug_report(None, SESSION, session_record=record)
+            self.assertEqual(agent_debug_reference_errors(report, session_record=record), [])
+            bare = _write_silent_record(Path(tmp) / "bare.jsonl", _silent_rows(), with_calls=False)
+            unchecked = build_agent_debug_report(None, SESSION, session_record=bare)
+        # One line per row, so line numbers equal the row ids.
+        self.assertEqual(self._silent(report), self.EXPECTED)
+        self.assertIn(
+            {"kind": "silent_turn_end", "reason": "no record line carries a tool_calls field"}, unchecked["unavailable"]
+        )
+        self.assertNotIn("silent_turn_end", unchecked["checked_kinds"])
+
+    def test_a_row_budget_that_cut_the_session_after_the_empty_row_cites_nothing_there(self) -> None:
+        with TemporaryDirectory() as tmp:
+            home = Path(tmp) / ".hermes"
+            _write_state_db(home, rows=_silent_rows() + [(30, SESSION, "assistant", "SECRET late reply", None, None, 1030.0, None, 0)])
+            report = build_agent_debug_report(home, SESSION, max_rows=29)
+        self.assertTrue(report["budget"]["row_limit_reached"])
+        self.assertEqual([item[0] for item in self._silent(report)], ["silent_turn_end:3"])
+
+    def test_the_cited_assistant_row_must_still_be_an_assistant_row(self) -> None:
+        with TemporaryDirectory() as tmp:
+            home = Path(tmp) / ".hermes"
+            path = _write_state_db(home, rows=_silent_rows())
+            report = build_agent_debug_report(home, SESSION)
+            connection = sqlite3.connect(path)
+            with connection:
+                connection.execute("UPDATE messages SET role = 'user' WHERE id = 4")
+            connection.close()
+            errors = agent_debug_reference_errors(report, hermes_home=home)
+        self.assertEqual(errors, ["silent_turn_end:3 reference 4 is mismatched: the row is not the cited assistant row"])
+
+    def test_the_validator_holds_a_silent_turn_end_to_one_call_and_a_typed_error_class(self) -> None:
+        with TemporaryDirectory() as tmp:
+            home = Path(tmp) / ".hermes"
+            _write_state_db(home, rows=_silent_rows())
+            report = build_agent_debug_report(home, SESSION)
+        index = next(i for i, item in enumerate(report["findings"]) if item["finding_id"] == "silent_turn_end:3")
+
+        def errors_after(mutate) -> list[str]:
+            forged = copy.deepcopy(report)
+            mutate(forged["findings"][index]["citation"])
+            return agent_debug_report_errors(forged)
+
+        two_calls = errors_after(lambda citation: citation.update(tool_call_ids=["s1", "s9"]))
+        one_row = errors_after(lambda citation: citation.update(message_ids=[3], timestamps=[1003.0]))
+        word = errors_after(lambda citation: citation.update(error_class="interrupted"))
+        self.assertEqual(two_calls, [f"finding {index} (silent_turn_end) citation must cite 1 tool_call id"])
+        self.assertIn(f"finding {index} (silent_turn_end) citation must cite 2 message ids", one_row)
+        self.assertEqual(
+            word,
+            [f"finding {index} (silent_turn_end) citation error_class must be null or one of nonzero_exit, success_false, error_field"],
+        )
 
 
 class AgentDebugCliTests(unittest.TestCase):

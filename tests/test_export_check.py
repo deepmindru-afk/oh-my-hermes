@@ -19,8 +19,11 @@ from _local_package import load_local_package
 load_local_package()
 
 from omh.plugin_bundle.omh import export_check
+from omh.plugin_bundle.omh.consistency_trigger import Verdict
 from omh.plugin_bundle.omh.hooks import nudge_budget, verify_hooks
 from omh.plugin_bundle.omh.impact_check import format_note as impact_format_note
+
+NO_COPY = Verdict(False, "no_copy_or_reference")
 
 QUOTA = "def allocate_quota(units: int) -> int:\n    return units * 3\n\n\nclass LegacyPlanner:\n    def compute_quota(self) -> int:\n        return 1\n"
 STALE_API = 'from .quota import allocate_quota\n\n__all__ = ["compute_quota"]\n'
@@ -190,8 +193,40 @@ class PreVerifyCompositionTest(_Workspace):
         self.assertIsNone(self.fire(coding=False, attempt=1))
         Path(self.api).write_text(FIXED_API, encoding="utf-8")
         self.assertIsNone(self.fire(coding=False))
-        self.assertEqual(self.fire()["message"],
-                         f"{verify_hooks.ROUND_END_CHECKLIST}\n{verify_hooks.ROUND_END_CLOSING}")
+        with patch.object(verify_hooks, "round_end_trigger", lambda session_id, code_paths: Verdict(True, "copy")):
+            self.assertEqual(self.fire()["message"],
+                             f"{verify_hooks.ROUND_END_CHECKLIST}\n{verify_hooks.ROUND_END_CLOSING}")
+
+    def test_the_note_continues_the_turn_when_the_trigger_finds_no_copy(self):
+        # The trigger only decides whether the consistency check earns a round of its own. The
+        # export note is the work, so it continues the turn, and the check rides along with it.
+        def trigger(session_id, code_paths):
+            raise AssertionError("beside the export note the check needs no verdict")
+
+        with patch.object(verify_hooks, "round_end_trigger", trigger):
+            message = self.fire()["message"]
+        self.assertEqual(message, "\n".join((self.note("src/benchapp/api.py"), verify_hooks.ROUND_END_CHECKLIST,
+                                             verify_hooks.ROUND_END_CLOSING)))
+
+    def test_no_copy_and_a_clean_tree_end_the_turn(self):
+        Path(self.api).write_text(FIXED_API, encoding="utf-8")
+        with patch.object(verify_hooks, "round_end_trigger", lambda session_id, code_paths: NO_COPY):
+            self.assertIsNone(self.fire())
+
+    def test_a_line_the_impact_note_names_is_not_named_again(self):
+        # An edited importer's stale `from .quota import compute_quota` is also a pyright error.
+        Path(self.api).write_text('from .quota import compute_quota\n\n__all__ = ["compute_quota"]\n', encoding="utf-8")
+        service = self.write("src/benchapp/service.py", "from benchapp.quota import compute_quota as cq\n")
+        impact = impact_format_note([("src/benchapp/api.py", 1, '"compute_quota" is unknown import symbol')],
+                                    recheck_tool=False)
+        with patch.object(verify_hooks, "round_end_note", lambda session_id, changed_paths: impact):
+            message = self.fire(changed_paths=[self.api, service])["message"]
+        self.assertEqual(message.count("src/benchapp/api.py:1:"), 1)
+        self.assertIn("src/benchapp/service.py:1: `from benchapp.quota import compute_quota`", message)
+        # With every row already named, there is no export note at all.
+        with patch.object(verify_hooks, "round_end_note", lambda session_id, changed_paths: impact):
+            message = self.fire()["message"]
+        self.assertNotIn("OMH export check", message)
 
 
 if __name__ == "__main__":

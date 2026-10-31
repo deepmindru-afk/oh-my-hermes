@@ -86,7 +86,11 @@ class RoutingPrecisionTests(unittest.TestCase):
         # its third two Japanese logo animations on an app surface.
         # The show-reel recall follow-up adds six closed-shape controls, and its
         # review round four more.
-        self.assertEqual(payload["summary"]["case_count"], 1306)
+        # Two coding requests that name OMH as the tool stay off workflow-learning,
+        # and so do two throwaway OMH test messages and the user's own router,
+        # two tasks on what OMH selected or picked, and a Korean test request,
+        # and eight messages where a command follows what OMH chose.
+        self.assertEqual(payload["summary"]["case_count"], 1322)
         self.assertEqual(payload["summary"]["passing_count"], payload["summary"]["case_count"])
         self.assertEqual(payload["summary"]["negative_case_count"], payload["summary"]["case_count"])
         self.assertEqual(payload["summary"]["negative_passing_count"], payload["summary"]["case_count"])
@@ -162,7 +166,10 @@ class RoutingPrecisionTests(unittest.TestCase):
         # show-reel's quoted idea-video ask is translation input, answered directly (+1).
         self.assertEqual(payload["summary"]["direct_answer_count"], 355)
         # show-reel's README-link control is answered as a file lookup (+1).
-        self.assertEqual(payload["summary"]["file_lookup_count"], 11)
+        # "Use OMH to fix the failing test in billing.py" names a file: a file lookup (+1).
+        # Copying the skills OMH selected and summarizing the files it picked
+        # are file tasks (+2), and so is opening the files OMH selected (+1).
+        self.assertEqual(payload["summary"]["file_lookup_count"], 15)
         self.assertEqual(payload["summary"]["overroute_count"], 0)
         self.assertEqual(payload["summary"]["catalog_picker_count"], 0)
         self.assertEqual(payload["summary"]["generic_ack_count"], 0)
@@ -225,7 +232,13 @@ class RoutingPrecisionTests(unittest.TestCase):
         # show-reel's idea-video lane adds fourteen videos from an idea; its
         # second review drops one and adds eight owners of a named video.
         # The show-reel recall follow-up adds six recovered closed shapes.
-        self.assertEqual(payload["summary"]["intervention_case_count"], 1203)
+        # Two OMH meta tests (route hint vocabulary, router on workflow names)
+        # keep workflow-learning, and two reports on OMH's router reach it.
+        # Two CI-workflow edits through OMH dispatch the coding lane, and five
+        # reports or meta questions keep workflow-learning. A later command keeps
+        # release-cut, and two more reports keep workflow-learning. A command
+        # after "then" keeps command-operator, and "list the reasons" is a report.
+        self.assertEqual(payload["summary"]["intervention_case_count"], 1219)
         self.assertEqual(
             payload["summary"]["intervention_passing_count"], payload["summary"]["intervention_case_count"]
         )

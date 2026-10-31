@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url><loc>https://omher.app/</loc></url>
+  <url><loc>https://omher.app/docs/</loc></url>
+  <url><loc>https://omher.app/docs/model-routing/</loc></url>
+  <url><loc>https://omher.app/docs/hermes-agent-architecture/</loc></url>
+  <url><loc>https://omher.app/docs/loop/</loc></url>
+  <url><loc>https://omher.app/docs/intent-to-plan/</loc></url>
+  <url><loc>https://omher.app/docs/executor-handoff/</loc></url>
+  <url><loc>https://omher.app/docs/image-gen/</loc></url>
+  <url><loc>https://omher.app/docs/product-ops/</loc></url>
+  <url><loc>https://omher.app/docs/design-orchestration/</loc></url>
+</urlset>

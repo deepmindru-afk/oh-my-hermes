@@ -377,6 +377,7 @@ EXIT_CONFIRM_SECONDS = 2.0
 DOUBLE_ESCAPE_SECONDS = 0.8
 ESCAPE_CLEAR = "clear"
 ESCAPE_REWIND = "rewind"
+ESCAPE_INTERRUPT = "interrupt"  # in vim mode only: Esc in NORMAL on an empty composer during a turn arms the interrupt
 ESCAPE_AGAIN = "esc again to {}"
 # What the info line says while a picked rewind waits to be sent, longest first: a narrow line takes the first that fits,
 # so what sending it replaces and how to cancel it survive.
@@ -763,6 +764,8 @@ RESUMABLE_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}")
 PROFILE_NAME = re.compile(r"[a-z0-9][a-z0-9_-]{0,63}")
 EXIT_HINT = "ctrl+c again to exit"  # on the info line while a second Ctrl+C would exit
 INTERRUPT_HINT = "esc to interrupt"
+# With vim mode on, Esc in NORMAL only arms the interrupt and a second sends it; in INSERT, Esc is NORMAL first.
+VIM_INTERRUPT_HINT = "esc esc to interrupt"
 OSC52_COPY = "\x1b]52;c;{}\x07"
 # What a drag in the pager copied, on the footer's last row for COPY_NOTE_SECONDS. A copy that went out as OSC 52 to a
 # terminal not known to honour it says it was sent, never that it was copied: no terminal answers one.
@@ -1187,6 +1190,27 @@ def busy_mode(config_result: Mapping[str, Any]) -> str:
     raw = display.get("busy_input_mode") if isinstance(display, dict) else None
     value = raw.strip().lower() if isinstance(raw, str) else ""
     return value if value in BUSY_MODES else BUSY_QUEUE
+
+
+# The words a `display.vim_mode` written as a string turns modal editing on with; `hermes config set` writes a YAML
+# boolean, so these only matter for a value typed into config.yaml by hand.
+VIM_MODE_WORDS = frozenset({"true", "yes", "on", "1"})
+
+
+def vim_mode(config_result: Mapping[str, Any]) -> bool:
+    """`display.vim_mode` from a `config.get {key: "full"}` answer: off unless it is true (or a word for true).
+
+    Hermes reads it as `bool(value)`, so a stray string such as `"false"`
+    would turn its Vi mode on; here a string is on only when it says true,
+    a number when it is not 0, and anything else, absent included, leaves the
+    composer as it is without the setting.
+    """
+    config = config_result.get("config")
+    display = config.get("display") if isinstance(config, dict) else None
+    raw = display.get("vim_mode") if isinstance(display, dict) else None
+    if isinstance(raw, str):
+        return raw.strip().lower() in VIM_MODE_WORDS
+    return isinstance(raw, int) and raw != 0  # True, or a number other than 0, as Hermes' `bool()` reads one
 
 
 def context_percent(usage: object) -> float | None:
@@ -2018,11 +2042,16 @@ class App(ModesMixin, AgentViewMixin):
         """`config.get`'s answer: the busy mode Hermes is set to, and the effort its config sets, shown until the
         session says its own (Hermes sends it once it has built the session's agent, which it starts as the session
         opens) and kept for the sessions opened later. A level the session said stays (`effort_said`), even one equal
-        to the config's; one the config set before is replaced."""
+        to the config's; one the config set before is replaced. Vim mode (`display.vim_mode`) goes to the main
+        composer only, the one that holds the draft even while a question's or a tell row's own composer has the keys;
+        an answer that leaves it as it was leaves its editing mode as it was too."""
         self.busy_mode = busy_mode(result)
         self.effort_configured = configured_effort(result)
         if not self.effort_said:
             self.effort = self.effort_configured
+        draft = self._draft()
+        if draft.vim != vim_mode(result):
+            draft.set_vim(not draft.vim)
 
     def _on_settings_refused(self, error: dict[str, Any]) -> bool:
         """A refused `config.get`, drift included (`contract.OPTIONAL_METHODS`): `BUSY_QUEUE` stays, and a notice says so."""
@@ -3313,12 +3342,14 @@ class App(ModesMixin, AgentViewMixin):
         ):
             self.exit_code = 0
             return
-        before = self.composer.text
+        before, editing = self.composer.text, self.composer.normal
         action = self.composer.handle(event)
         if self.composer.text != before:
             self.menu_index = 0
             self.menu_closed = None
             self.escape_armed = None  # an edit takes back what a second Esc would have done
+        elif self.composer.normal != editing:
+            self.escape_armed = None  # so does a change of vim mode's editing mode (`i` between two Escs)
         self._on_composer(action, event, steer=isinstance(event, Key) and event.name == ENTER and event.ctrl)
 
     def _remember(self, text: str) -> None:
@@ -3327,8 +3358,9 @@ class App(ModesMixin, AgentViewMixin):
             append_entry(self.history_file, text)
 
     def _search_open_key(self, event: Key | Paste) -> bool:
-        """Ctrl+R opens the search over the composer's history in the slot."""
-        if not isinstance(event, Key) or event != Key(CHAR, "r", ctrl=True):
+        """Ctrl+R opens the search over the composer's history in the slot; in vim mode's NORMAL it is the composer's
+        redo."""
+        if not isinstance(event, Key) or event != Key(CHAR, "r", ctrl=True) or self.composer.normal:
             return False
         self.search = HistorySearch(list(self.composer.history), self.composer.text)
         return True
@@ -3519,9 +3551,22 @@ class App(ModesMixin, AgentViewMixin):
         text, the second clears it into this session's history (a draft is no
         line sent, so it stays out of Hermes' history file); on an empty
         composer between turns, the second opens the rewind picker.
+
+        In vim mode Esc in INSERT goes to NORMAL and closes the `/` or the
+        `@` menu (neither opens in NORMAL), and in NORMAL it first drops a
+        half-typed command (`d`, `3`, `g`); either way it takes back what a
+        second Esc would have done. Only then does it do any of the above, so a
+        second Esc arms what a first does without vim mode, except that on an
+        empty composer during a turn it too only arms: the interrupt is the
+        second press, as Esc is easily pressed twice to leave INSERT.
         """
         if not isinstance(event, Key) or event.name != ESCAPE:
             return False
+        if self.composer.vim and (not self.composer.normal or self.composer.pending):
+            self.composer.handle(event)
+            self.path_items = []
+            self.escape_armed = None
+            return True
         if self.path_items:
             self.path_items = []
             return True
@@ -3540,10 +3585,13 @@ class App(ModesMixin, AgentViewMixin):
             return True
         if not self.composer.text and self._give_back_held():
             return True  # what was held for its paste comes back, unsent
-        if not self.composer.text and self._busy():
+        if not self.composer.text and self._busy() and not self.composer.vim:
             self._interrupt()
             return True
-        kind = ESCAPE_CLEAR if self.composer.text else ESCAPE_REWIND
+        if not self.composer.text and self._busy():
+            kind = ESCAPE_INTERRUPT
+        else:
+            kind = ESCAPE_CLEAR if self.composer.text else ESCAPE_REWIND
         armed, now = self.escape_armed, self.clock()
         if armed is None or armed[0] != kind or now - armed[1] > DOUBLE_ESCAPE_SECONDS:
             self.escape_armed = (kind, now)
@@ -3552,6 +3600,8 @@ class App(ModesMixin, AgentViewMixin):
         if kind == ESCAPE_CLEAR:
             self.composer.record(self.composer.expanded(), sent=False)  # a chip's text, not its label
             self._set_composer("")
+        elif kind == ESCAPE_INTERRUPT:
+            self._interrupt()
         else:
             self._rewind("")
         return True
@@ -4114,9 +4164,10 @@ class App(ModesMixin, AgentViewMixin):
         self.dirty = True
 
     def _menu_entries(self) -> list[Completion]:
-        """Completions while the composer holds a leading `/word` and nothing else, unless Esc closed them over it."""
+        """Completions while the composer holds a leading `/word` and nothing else, unless Esc closed them over it;
+        none in vim mode's NORMAL."""
         text = self.composer.text
-        if self.slot is not None or not text.startswith("/") or text == self.menu_closed:
+        if self.slot is not None or self.composer.normal or not text.startswith("/") or text == self.menu_closed:
             return []
         command, space, typed = text[1:].partition(" ")
         if space and command.lower() == "theme" and not any(ch.isspace() for ch in typed):
@@ -4135,6 +4186,8 @@ class App(ModesMixin, AgentViewMixin):
         entries = self._menu_entries()
         if entries:
             return [(f"/{entry.name}", entry.summary) for entry in entries]
+        if self.composer.normal:  # NORMAL's caret sits on a character: the `@` word under it is not what was typed
+            return []
         return [(item.display or item.text, item.meta) for item in self.path_items]
 
     def _menu_moves(self, key: Key) -> bool:
@@ -4179,7 +4232,7 @@ class App(ModesMixin, AgentViewMixin):
             self._set_composer(f"/{entries[min(self.menu_index, len(entries) - 1)].name} ")
             return
         start, word = at_token(self.composer.text, self.composer.caret)
-        if not self.path_items or not word:
+        if not self.path_items or not word or self.composer.normal:
             return
         item = self.path_items[min(self.menu_index, len(self.path_items) - 1)]
         self.composer.replace(start, self.composer.caret, item.text)
@@ -4189,7 +4242,8 @@ class App(ModesMixin, AgentViewMixin):
 
     def _track_path_token(self) -> None:
         """Schedule `complete.path` for the `@` token at the caret once it holds still; drop the menu without one."""
-        word = at_token(self.composer.text, self.composer.caret)[1] if self._composer_open() else ""
+        open_ = self._composer_open() and not self.composer.normal  # no menu in vim mode's NORMAL
+        word = at_token(self.composer.text, self.composer.caret)[1] if open_ else ""
         if word == self.path_word:
             return
         self.path_word = word
@@ -5924,10 +5978,11 @@ class App(ModesMixin, AgentViewMixin):
         last row like the agent list's, with mouse reports on while it is open."""
         picker = self.launch_picker
         first = budget.slot_top + (picker.first_row if picker is not None else 1)
+        top = picker.top if picker is not None else 0  # the look on the first row shown, the list scrolled
         last = budget.total - 1
         self.clickable = {
-            last - (first + index): (Hit(0, cols, f"launch:{index}"),)
-            for index in range(len(LAUNCH_PRESETS)) if first + index < budget.slot_top + budget.slot
+            last - (first + index - top): (Hit(0, cols, f"launch:{index}"),)
+            for index in range(top, len(LAUNCH_PRESETS)) if first + index - top < budget.slot_top + budget.slot
         }
         self._set_mouse(bool(self.clickable) and self.region.last_row(rows) is not None)
 
@@ -6766,7 +6821,9 @@ class App(ModesMixin, AgentViewMixin):
         background = self._background_forms() if badge and not self._background_hidden() else ()
         # The count is sized on the whole line: the badge, the branch and the background-process row give way before
         # the count does (`info_line`).
-        room = cols - inset - chip_column(self._display_mode(), self.theme)
+        # Vim mode's INSERT or NORMAL, while the main composer has the keys (a question's or a tell row's has none).
+        editing = self.composer.vim_label if self._composer_open() else ""
+        room = cols - inset - chip_column(self._display_mode(), self.theme, editing)
         if isinstance(say, tuple):
             room -= cell_width(LABEL_SEPARATOR + say[max(len(say) - 2, 0)])
         listing = self.list_selected is not None or self.tree_selected is not None
@@ -6785,6 +6842,7 @@ class App(ModesMixin, AgentViewMixin):
             branch=branch_forms(self.git.state, self.theme) if self.git is not None and badge else (),
             background=background,
             right_spare=int(bool(self.session_title)),  # the title goes before the row does (`_compose_info_right`)
+            editing=editing,
         )
         # Whether the row's form made it onto the line: what keeps its clock ticking (`_background_second`).
         words = "".join(span.text for span in line)
@@ -6826,6 +6884,13 @@ class App(ModesMixin, AgentViewMixin):
         if self.rewind_picker is not None:
             return REWIND_PICKER_KEYS
         return MODEL_PICKER_KEYS if self.model_picker is not None else ()
+
+    def _interrupt_hint(self) -> str:
+        """What the working row says Esc does to the turn: one Esc, or with vim mode on two from NORMAL and none
+        offered from INSERT, where Esc goes to NORMAL."""
+        if not self.composer.vim:
+            return INTERRUPT_HINT
+        return VIM_INTERRUPT_HINT if self.composer.normal else ""
 
     def _esc_interrupts(self) -> bool:
         """Whether the working row offers Esc for the interrupt: Esc interrupts the running turn now, nothing else
@@ -6918,7 +6983,7 @@ class App(ModesMixin, AgentViewMixin):
             effort = ""
             if self.effort in contract.REASONING_LEVELS and self.effort != "none":  # `none` is thinking off
                 effort = THINKING_EFFORT.format(self.effort)
-            interrupt = INTERRUPT_HINT if self._esc_interrupts() else ""  # else Esc means something else now
+            interrupt = self._interrupt_hint() if self._esc_interrupts() else ""  # else Esc means something else now
             lead = (Span(WORKING_GLYPHS[frame % len(WORKING_GLYPHS)], self.theme.accent), Span(" "),
                     *working_spans(text, frame, self.theme))
             # A narrow row drops whole facts, the effort first (the info line says it where it has room), then the

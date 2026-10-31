@@ -322,7 +322,12 @@ section against ECC at `ef648e01899ba3e8dc6371642deaaf64b4477775`; they share a
 posture rather than a section structure, a rule list, or ECC's own terms, so
 they carry no row. `tests/test_skill_source_attribution_coverage.py` lists each
 of them with that reason and fails when a new upstream credit lands without a
-row or a listed reason.
+row or a listed reason. `src/plugin_bundle/omh/memory_query_sanitizer.py`
+reimplements the paste-query mechanism of MemPalace's `query_sanitizer.py`, and
+the origin pointer in `src/plugin_bundle/omh/memory_origin.py` takes its idea
+from MemPalace's closet-to-drawer pointers; both follow `MemPalace/mempalace`
+at `84582fb055a6429261f9c779da86c0561ec80adc` (MIT) and are reimplemented, not
+copied.
 
 ## Candidate rows (researched, not yet shipped)
 

@@ -3953,7 +3953,7 @@ class RouterContentTests(unittest.TestCase):
         for path in paths:
             if path.is_dir():
                 continue
-            if path.suffix in {".png", ".jpg", ".jpeg", ".webp", ".pyc", ".gif", ".mp4", ".webm"}:
+            if path.suffix in {".png", ".jpg", ".jpeg", ".webp", ".ico", ".pyc", ".gif", ".mp4", ".webm"}:
                 continue
             text = path.read_text(encoding="utf-8").lower()
             for term in forbidden:
@@ -4406,30 +4406,25 @@ class RouterContentTests(unittest.TestCase):
         self.assertIn("OMH", site)
         self.assertIn("Oh My Hermes", site)
         hero = site.split('<section class="hero hero--center"', 1)[1].split("</section>", 1)[0]
-        # The hero is the spectrum wordmark (the h1) under the app-icon logo,
-        # the README tagline, and the primary install path: the script
-        # installer then setup. Windows and the package managers live in the
-        # install section, which pins them below.
+        # The hero is the pixel wordmark under Kami's face logo, the repo
+        # description, and the primary install path: the script installer
+        # then setup. Windows and the package managers live in the install
+        # section, which pins them below.
         self.assertIn('src="assets/oh-my-hermes-wordmark.png" alt="Oh My Hermes"', hero)
-        self.assertIn('src="assets/omh-logo.png"', hero)
-        self.assertIn(
-            "All-in-one package for Hermes Agent. Install once, then just type <code>dag-ulw</code>.",
-            hero,
-        )
+        self.assertIn('src="assets/omh-logo-pinklight.png"', hero)
+        self.assertIn("The coding harness with", hero)
         self.assertIn(
             "curl -fsSL https://raw.githubusercontent.com/rlaope/oh-my-hermes/main/install.sh | sh",
             hero,
         )
         self.assertIn("omh setup", hero)
-        # The landing page carries the logo twice (header at 64 px, hero),
-        # the wordmark twice (hero, footer), and the sponsor logo, and
-        # nothing else. The exact count keeps decorative images off the page;
-        # the one product capture, the real /dag-ulw TUI recording, is a
-        # <video> transcoded from assets/omh-dag-ulw-tui.gif.
-        self.assertEqual(site.count("<img"), 5)
-        self.assertEqual(site.count('src="assets/omh-logo-64.png"'), 1)
-        self.assertEqual(site.count('src="assets/omh-logo.png"'), 1)
-        self.assertEqual(site.count('src="assets/oh-my-hermes-wordmark.png"'), 2)
+        # Every image the landing page loads ships inside site/assets, and the
+        # one product capture, the real /dag-ulw TUI recording, is a <video>
+        # transcoded from assets/omh-dag-ulw-tui.gif.
+        for src in re.findall(r'<img[^>]*\ssrc="([^"]+)"', site):
+            with self.subTest(img=src):
+                self.assertTrue(src.startswith("assets/"), src)
+                self.assertTrue((Path("site") / src).is_file(), src)
         self.assertEqual(site.count('src="assets/sponsors/opengateway.svg"'), 1)
         self.assertEqual(site.count("<video"), 1)
         self.assertEqual(site.count('src="assets/omh-dag-ulw-tui.webm"'), 1)

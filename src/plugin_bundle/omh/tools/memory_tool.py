@@ -114,6 +114,8 @@ from ..memory_session_lens import (
     SURFACE_BACKGROUND,
     SURFACE_CHANNEL,
     SURFACE_DIRECT,
+    SURFACE_OPERATOR_CONSOLE,
+    SURFACE_OWNER_DIRECT,
     SURFACE_SHARED,
     lens_channel_scope,
     lens_surface_class,
@@ -160,6 +162,7 @@ from ..memory_store_io import (
 from ..host_observation import OBSERVATION_SCHEMA, attach_public_observation, host_session_id, observe_plugin_tool_call
 from ..memory_blocks import read_memory_block, read_memory_blocks, select_memory_blocks
 from ..memory_dreaming import read_dreaming_state, read_latest_consolidation
+from ..memory_origin import origin_session_id, origin_source_ref, resolve_origin
 from ..project_identity import resolve_project_identity
 
 MEMORY_ACTIONS = ("status", "blocks", "read", "consolidation", "capture", "demote", "recall", "confirm", "correct", "retire")
@@ -168,6 +171,11 @@ LIFECYCLE_ACTIONS = ("recall", "confirm", "correct", "retire")
 RECALL_MAX_LIMIT = DEFAULT_RECORD_LIMIT
 RECALL_QUERY_MAX_CHARS = 500
 RETIRE_REASONS = ("no_longer_true", "superseded", "user_asked")
+# The surfaces whose recall rows carry an `origin` handle into Hermes' session store.
+ORIGIN_SURFACE_CLASSES = frozenset({SURFACE_OPERATOR_CONSOLE, SURFACE_OWNER_DIRECT, SURFACE_DIRECT, SURFACE_CHANNEL})
+RECALL_ORIGIN_NEXT_ACTION = (
+    "To quote the person's exact words, open session_search(session_id=..., around_message_id=...) with a row's origin."
+)
 _SAFE_RECORD_ID = re.compile(r"^[A-Za-z0-9_.:-]{1,120}$")
 CAPTURE_RECORD_TYPES = ("fact", "decision", "lesson", "procedure", "episode")
 CAPTURE_SCOPES = ("project", "user")
@@ -491,6 +499,9 @@ def _capture(args: dict, kwargs: dict) -> dict[str, object]:
             # candidate, so a duplicate names the existing record and writes nothing.
             on_duplicate="skip",
             source=MODEL_CAPTURE_SOURCE,
+            # Which Hermes session said it, so recall can point back at the
+            # person's own words in Hermes' store (`memory_origin`).
+            source_ref=origin_source_ref(lens.session_id),
             scope_kind=scope_kind,
             scope_ref=scope_ref,
             principal_context=principal_context,
@@ -1102,8 +1113,9 @@ def _recall(args: dict, lens: _SessionLens) -> dict[str, object]:
             "recall", "refused", reason="session_lens_unavailable", lens_state="unbound",
             next_action="OMH memory is not available to this session right now; nothing was searched.",
         )
+    snapshot = read_record_store_snapshot(lens.homes)
     selection = select_prefetch_records(
-        read_record_store_snapshot(lens.homes),
+        snapshot,
         query,
         allowed_scopes=lens.scopes,
         session_id=lens.session_id,
@@ -1121,9 +1133,17 @@ def _recall(args: dict, lens: _SessionLens) -> dict[str, object]:
         if item.get("subject"):
             row["subject"] = item["subject"]
         rows.append(row)
+    has_origin = _attach_origins(rows, snapshot.records, lens)
     if rows:
         # What this session has seen is what it may retire while it is live.
         note_session_records(lens.lens_home, lens.session_id, "seen", [str(row["record_id"]) for row in rows])
+    next_action = (
+        "Use a record_id with confirm, correct, or retire when the conversation settles it."
+        if rows
+        else "No recallable OMH record matches; nothing was counted."
+    )
+    if has_origin:
+        next_action += " " + RECALL_ORIGIN_NEXT_ACTION
     return _lifecycle_result(
         "recall",
         "found" if rows else "nothing_found",
@@ -1131,12 +1151,37 @@ def _recall(args: dict, lens: _SessionLens) -> dict[str, object]:
         record_count=len(rows),
         scope_status=selection.scope_status,
         lens_state="provider",
-        next_action=(
-            "Use a record_id with confirm, correct, or retire when the conversation settles it."
-            if rows
-            else "No recallable OMH record matches; nothing was counted."
-        ),
+        next_action=next_action,
     )
+
+
+def _attach_origins(rows: list[dict[str, object]], records: tuple[dict, ...], lens: _SessionLens) -> bool:
+    """Give each row captured in a Hermes session its ``origin`` handle; True when any row got one.
+
+    Only on a surface that speaks for one conversation's owner or binding: the
+    lens already admitted each row there, so the session it points at is one
+    this conversation may open. A shared or background lens gets no handle.
+    """
+    if not rows or lens.surface_class not in ORIGIN_SURFACE_CLASSES:
+        return False
+    by_id: dict[str, dict] = {}
+    for record in records:
+        by_id.setdefault(str(record.get("record_id", "")), record)
+    hermes_home: Path | None = None
+    attached = False
+    for row in rows:
+        record = by_id.get(str(row.get("record_id", "")), {})
+        session_id = origin_session_id(str(record.get("source_ref", "") or ""))
+        if not session_id:
+            continue
+        if hermes_home is None:
+            hermes_home = Path(_home("HERMES_HOME", "~/.hermes"))
+        captured_at = str(record.get("created_at", "") or record.get("approved_at", "") or "")
+        origin = resolve_origin(hermes_home, session_id, captured_at)
+        if origin is not None:
+            row["origin"] = origin
+            attached = True
+    return attached
 
 
 def _locate_in_session(action: str, record_id: str, lens: _SessionLens) -> tuple[Path, dict] | dict[str, object]:

@@ -538,6 +538,17 @@ CLASSIFIED_SITES: tuple[ClassifiedSite, ...] = (
         "per-turn latch and a readable process record showing nothing armed.",
     ),
     ClassifiedSite(
+        "src/plugin_bundle/omh/remote_wait_nudge.py",
+        "failed_wait_context",
+        INTENTIONAL,
+        "The turn-start half for a turn a failed watcher's notice opened, called from "
+        "`pre_llm_call`, which the host runs inside its own swallow (`agent/turn_context.py::"
+        "_collect_pre_llm_call_context` logs and drops a raise), so a raise would also drop every "
+        "other OMH line of that turn. The failure is counted by type in `remote_wait_declines()` and "
+        "the turn gets no directive; the per-turn latch is recorded only on the success path, so a "
+        "failure cannot make the end-of-turn half append its sentence.",
+    ),
+    ClassifiedSite(
         "src/plugin_bundle/omh/hooks/session_hooks.py",
         "subagent_start",
         INTENTIONAL,
@@ -776,6 +787,23 @@ CLASSIFIED_SITES: tuple[ClassifiedSite, ...] = (
         "off. A note is only ever built from fresh server diagnostics, so a failure never claims callers broke.",
     ),
     ClassifiedSite(
+        "src/plugin_bundle/omh/consistency_trigger.py",
+        "snapshot_before_edit",
+        INTENTIONAL,
+        "Runs in pre_tool_call before an edit and must never fail or alter that edit. A failure is logged as a "
+        "warning naming the exception class (`consistency_trigger snapshot failed=`) and keeps no snapshot, and "
+        "a changed file without a snapshot fires the round-end check (`no_snapshot`); it is never read as a "
+        "file with nothing to find.",
+    ),
+    ClassifiedSite(
+        "src/plugin_bundle/omh/consistency_trigger.py",
+        "round_end_trigger",
+        INTENTIONAL,
+        "A failure deciding whether the round-end check can pay off becomes the verdict `fire=True, "
+        "reason=error` naming the exception class, logged with every verdict: the check fires exactly as it "
+        "did before the trigger, so a failure can only cost a round, never skip one.",
+    ),
+    ClassifiedSite(
         "src/plugin_bundle/omh/lsp_nav.py",
         "_write_atomic",
         INTENTIONAL,
@@ -892,11 +920,18 @@ CLASSIFIED_SITES: tuple[ClassifiedSite, ...] = (
 # and metadata reads that decide whether OMH's recorded package joins the import
 # system (two handlers; a failure adds nothing and is reported, never raised), and
 # `package_site._omh_importable`, a host import hook raising for `omh` (#2166).
-# 92 -> 93 / 83 -> 84: `export_check.round_end_note`, the always-on round-end
+# 92 -> 93 / 83 -> 84: `remote_wait_nudge.failed_wait_context`, the turn-start
+# half for a turn a failed watcher's notice opened (a raise is counted and the
+# turn gets no directive, never a dropped `pre_llm_call` context).
+# 93 -> 95 / 84 -> 86: `consistency_trigger.snapshot_before_edit` and
+# `round_end_trigger`, the round-end check's trigger: a pre_tool_call body that
+# logs a named warning and keeps nothing, and a verdict that fires the check on
+# any failure, so a failure costs a round and never skips one.
+# 95 -> 96 / 86 -> 87: `export_check.round_end_note`, the always-on round-end
 # read of the turn's edited `.py` files for dangling exports (a failure logs a
 # named warning and adds no note).
-EXPECTED_HANDLER_COUNT = 93
-EXPECTED_ANCHOR_COUNT = 84
+EXPECTED_HANDLER_COUNT = 96
+EXPECTED_ANCHOR_COUNT = 87
 
 
 class DerivedSite(NamedTuple):

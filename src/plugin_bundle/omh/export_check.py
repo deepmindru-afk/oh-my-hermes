@@ -47,8 +47,13 @@ class _Unknown(Exception):
     """The module binds names this reader cannot see; nothing is said about it."""
 
 
-def round_end_note(session_id: str, changed_paths: object) -> str:
-    """``pre_verify`` attempt 0: the note naming dangling exports in this turn's edited files, or ``""``."""
+def round_end_note(session_id: str, changed_paths: object, reported: str = "") -> str:
+    """``pre_verify`` attempt 0: the note naming dangling exports in this turn's edited files, or ``""``.
+
+    ``reported`` is the impact note of the same message. Its ``path:line`` rows are left out here:
+    an edited importer's stale ``from x import name`` is also a language-server error there, and
+    one line is named once.
+    """
     try:
         started = time.monotonic()
         rows: list[tuple[str, int, str]] = []
@@ -56,6 +61,8 @@ def round_end_note(session_id: str, changed_paths: object) -> str:
         files = _edited_python_files(changed_paths)
         for path in files:
             rows.extend(_file_rows(path, trees))
+        named = _named_lines(reported)
+        rows = [row for row in rows if f"{row[0]}:{row[1]}" not in named]
         if files:
             _LOG.info("export_check round_end session=%s files=%d rows=%d ms=%d", session_id, len(files), len(rows),
                       (time.monotonic() - started) * 1000)
@@ -63,6 +70,17 @@ def round_end_note(session_id: str, changed_paths: object) -> str:
     except Exception as exc:  # noqa: BLE001 - a broken check says nothing rather than fail the turn
         _LOG.warning("export_check round_end session=%s failed=%s", session_id, type(exc).__name__)
         return ""
+
+
+def _named_lines(note: str) -> set[str]:
+    """The ``path:line`` of each row of another ``path:line: message`` note."""
+    named: set[str] = set()
+    for line in note.splitlines() if isinstance(note, str) else ():
+        location, _, rest = line.partition(": ")
+        path, _, number = location.rpartition(":")
+        if rest and path and number.isdigit():
+            named.add(location)
+    return named
 
 
 def format_note(rows: list[tuple[str, int, str]]) -> str:

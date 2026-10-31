@@ -798,7 +798,7 @@ class FallbackTargetTests(unittest.TestCase):
 
 # What a launch prints for `write_card_session`'s defaults, after Hermes' own
 # epilogue: the title, and the one way back.
-CARD_ALPHA = "\nomh · Fix the login bug\n\n  resume: omh --resume sess-alpha\n\n"
+CARD_ALPHA = "\nomh · Fix the login bug\n\n  omh --resume sess-alpha\n\n"
 
 
 class LaunchExitTests(unittest.TestCase):
@@ -836,7 +836,7 @@ class LaunchExitTests(unittest.TestCase):
             with launched(home, ["-p", "work"]) as (_recorded, stdout, _status):
                 pass
 
-        self.assertEqual(stdout, "\nomh · Fix the login bug\n\n  resume: omh -p work --resume sess-alpha\n\n")
+        self.assertEqual(stdout, "\nomh · Fix the login bug\n\n  omh -p work --resume sess-alpha\n\n")
 
     def test_a_failed_exit_prints_nothing(self) -> None:
         with TemporaryDirectory() as tmp:
@@ -982,7 +982,7 @@ class ExitCardTests(unittest.TestCase):
             home = Path(tmp)
             write_card_session(home / "state.db", "sess-alpha", title=None)
             out = self._launch(home, {"session_id": "sess-alpha", "hermes_home": str(home)})
-        self.assertEqual(out, "\nomh · untitled session\n\n  resume: omh --resume sess-alpha\n\n")
+        self.assertEqual(out, "\nomh · untitled session\n\n  omh --resume sess-alpha\n\n")
 
     def test_the_card_is_the_title_and_the_resume_line_only(self) -> None:
         # No counts, tokens, model or `omh -c "<title>"`: a title a shell would read as options, or one another
@@ -995,7 +995,7 @@ class ExitCardTests(unittest.TestCase):
                 write_card_session(db, "sess-alpha", title=title)
                 for index, other in enumerate(others):
                     write_card_session(db, f"sess-other-{index}", title=other, started_at=CHILD_STARTED_AT + 5 + index)
-                self.assertEqual(exit_card_lines(db, "sess-alpha"), [f"omh · {title}", "", "  resume: omh --resume sess-alpha", ""])
+                self.assertEqual(exit_card_lines(db, "sess-alpha"), [f"omh · {title}", "", "  omh --resume sess-alpha", ""])
 
     def test_a_long_id_is_printed_whole(self) -> None:
         # Hermes' newer stored ids are `local-<64 hex>`: the resume line is typed back, so it is never shortened,
@@ -1009,7 +1009,7 @@ class ExitCardTests(unittest.TestCase):
             write_card_session(db, long_id)
             with patch.dict(os.environ, {"COLUMNS": "40"}):
                 lines = exit_card_lines(db, long_id)
-        self.assertEqual(lines, ["omh · Fix the login bug", "", f"  resume: omh --resume {long_id}", ""])
+        self.assertEqual(lines, ["omh · Fix the login bug", "", f"  omh --resume {long_id}", ""])
 
     def test_after_new_the_newest_earlier_session_with_messages_gets_the_card(self) -> None:
         # `/new` just before quitting: the open session is empty, the one before it is what this launch said.

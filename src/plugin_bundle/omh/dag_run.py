@@ -34,7 +34,9 @@ status is a report, and a returned node waits for ``settle``. A child marked
 ``lost`` (`dag_tool` found the Hermes process it ran in gone: a restart ends
 a child and fires no stop) does not count, so its node is out with no child
 and is offered again at once, at most `MAX_LOST_REOFFERS` times per attempt;
-past that the parent settles it. A failed or blocked node blocks its
+past that the parent settles it. A node out longer than `STUCK_AFTER_SECONDS`
+is named in every view (`stuck`); the profile can move that mark, the
+re-offer wait and the re-offer bound (`Limits`). A failed or blocked node blocks its
 dependents and nothing else. ``repair`` adds a group
 of repair nodes for a failed or blocked node, at most `MAX_REPAIR_CYCLES` per
 original node. Once its latest group is all accepted the original counts as
@@ -50,6 +52,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from contextlib import AbstractContextManager
+from dataclasses import dataclass
 import hashlib
 import json
 import os
@@ -91,6 +94,12 @@ LOCK_SECONDS: Final = 5.0
 HANDOUT_STALE_SECONDS: Final = 600.0
 # A node whose child a Hermes restart ended is offered again at once this many times per attempt, then left to settle.
 MAX_LOST_REOFFERS: Final = 3
+# A node open this long (handed out, running, or returned and not settled) is named in `say` and the status line.
+STUCK_AFTER_SECONDS: Final = 3600.0
+# The profile can change the three marks above (`dag_tool.dag_limits`); a time mark is never shorter than this, so a
+# child still starting is not offered twice, and at most this many restart re-offers.
+MIN_MARK_SECONDS: Final = 60.0
+MAX_LOST_REOFFERS_LIMIT: Final = 10
 # A child counts for an attempt when it started no earlier than this before the attempt was handed out.
 BIND_SLACK_SECONDS: Final = 2.0
 CATEGORIES: Final = tuple(HERMES_MIXTURE_CATEGORY_CHAINS)
@@ -127,6 +136,19 @@ _MARKER_PATTERNS: Final = {
 SATISFIED: Final = frozenset({"accepted", "repaired"})
 OPEN: Final = frozenset({"handed_out", "running", "returned"})
 LIVE: Final = OPEN | {"parked"}
+
+
+@dataclass(frozen=True)
+class Limits:
+    """When `ready` offers again a node no child took, when an open node counts as stuck (``0``: never), and how many
+    times a node whose child a restart ended is offered again. Defaults are the constants; a profile changes them."""
+
+    stale_after_s: float = HANDOUT_STALE_SECONDS
+    stuck_after_s: float = STUCK_AFTER_SECONDS
+    max_lost_reoffers: int = MAX_LOST_REOFFERS
+
+
+DEFAULT_LIMITS: Final = Limits()
 
 
 class DagRefusal(Exception):
@@ -687,11 +709,14 @@ def counts(record: Mapping[str, Any], derived: Mapping[str, Mapping[str, Any]]) 
     }
 
 
-def status_line(record: Mapping[str, Any], derived: Mapping[str, Mapping[str, Any]], *, added: str = "") -> str:
+def status_line(record: Mapping[str, Any], derived: Mapping[str, Mapping[str, Any]], *, added: str = "",
+                now: float | None = None, limits: Limits = DEFAULT_LIMITS) -> str:
     """The one line a messenger reply carries on a completion turn: ``DAG <name> · 3/6 done · 2 running``.
 
     ``added`` is the clause naming nodes a repair or an extend round added
     since the chat last showed the run (`delegation_snapshot.added_clause`).
+    With ``now``, nodes open past the stuck mark are counted, the oldest named
+    with its age: ``1 open past 1h (Docs body 2h 10m)``.
     """
     tally = counts(record, derived)
     parts = [f"DAG {record['name']}", f"{tally['done']}/{tally['total']} done", f"{tally['running']} running"]
@@ -703,6 +728,12 @@ def status_line(record: Mapping[str, Any], derived: Mapping[str, Mapping[str, An
                     if derived[str(node["id"])]["state"] == "accepted" and handoff_unchecked(node))
     if unchecked:
         parts.append(f"{unchecked} {HANDOFF_NOT_CHECKED}")
+    found = stuck(record, derived, now, limits=limits) if now is not None else []
+    if found:
+        labels = {str(node["id"]): str(node["label"]) for node in record["nodes"]}
+        oldest, age = found[0]
+        more = f", +{len(found) - 1}" if len(found) > 1 else ""
+        parts.append(f"{len(found)} open past {age_text(limits.stuck_after_s)} ({labels[oldest]} {age_text(age)}{more})")
     if added:
         parts.append(added)
     return " · ".join(parts)
@@ -717,7 +748,8 @@ def _layer_index(record: Mapping[str, Any]) -> dict[str, int]:
     return placed
 
 
-def offerable(record: Mapping[str, Any], derived: Mapping[str, Mapping[str, Any]], now: float) -> list[str]:
+def offerable(record: Mapping[str, Any], derived: Mapping[str, Mapping[str, Any]], now: float, *,
+              limits: Limits = DEFAULT_LIMITS) -> list[str]:
     """Nodes to hand out now: ready ones, ones whose child a restart ended, and ones no child ever took."""
     order = _layer_index(record)
     nodes = []
@@ -737,18 +769,91 @@ def offerable(record: Mapping[str, Any], derived: Mapping[str, Mapping[str, Any]
                 # from the fanout result or the parent's own work, never handed to delegate_task.
                 continue
             if derived[node_id].get("lost"):
-                if int(last.get("lost", 0)) < MAX_LOST_REOFFERS:
+                if int(last.get("lost", 0)) < limits.max_lost_reoffers:
                     nodes.append(node_id)
-            elif now - (_number(last.get("handed_out_at")) or 0.0) > HANDOUT_STALE_SECONDS:
+            elif now - (_number(last.get("handed_out_at")) or 0.0) > limits.stale_after_s:
                 nodes.append(node_id)
     return sorted(nodes, key=lambda node_id: (order.get(node_id, 0), node_id))
 
 
-def lost_for_good(record: Mapping[str, Any], derived: Mapping[str, Mapping[str, Any]]) -> list[str]:
-    """Nodes whose child a restart ended after `MAX_LOST_REOFFERS` offers: not offered again; the parent settles them."""
+def lost_for_good(record: Mapping[str, Any], derived: Mapping[str, Mapping[str, Any]], *,
+                  limits: Limits = DEFAULT_LIMITS) -> list[str]:
+    """Nodes whose child a restart ended after ``limits.max_lost_reoffers`` offers (`MAX_LOST_REOFFERS` by default):
+    not offered again; the parent settles them."""
     return [str(node["id"]) for node in record["nodes"] if derived[str(node["id"])].get("lost")
             and derived[str(node["id"])]["state"] == "handed_out"
-            and int(node["attempts"][-1].get("lost", 0)) >= MAX_LOST_REOFFERS]
+            and int(node["attempts"][-1].get("lost", 0)) >= limits.max_lost_reoffers]
+
+
+def opened_at(attempt: Mapping[str, Any]) -> float:
+    """When the attempt first went out. Offering a node again moves ``handed_out_at`` but not this, so a node that
+    keeps being offered and never taken still shows how long it has been open."""
+    return _number(attempt.get("opened_at")) or _number(attempt.get("handed_out_at")) or 0.0
+
+
+def open_for(record: Mapping[str, Any], derived: Mapping[str, Mapping[str, Any]], now: float) -> dict[str, float]:
+    """Seconds each open node (handed out, running, or returned and not settled) has been open, by node id."""
+    return {str(node["id"]): max(0.0, now - opened_at(node["attempts"][-1])) for node in record["nodes"]
+            if derived[str(node["id"])]["state"] in OPEN and node.get("attempts")}
+
+
+def stuck(record: Mapping[str, Any], derived: Mapping[str, Mapping[str, Any]], now: float, *,
+          limits: Limits = DEFAULT_LIMITS) -> list[tuple[str, float]]:
+    """Open nodes past ``limits.stuck_after_s``, oldest first, as ``(node id, seconds open)``; none when the mark is 0.
+
+    Left out: a node whose child a restart ended (offered again, or settled past the bound, on its own line), and
+    one exported to a coding owner or left to the parent, which no delegate_task child runs.
+    """
+    if limits.stuck_after_s <= 0:
+        return []
+    lanes = {str(node["id"]): (node.get("attempts") or [{}])[-1].get("lane") for node in record["nodes"]}
+    found = [(node_id, age) for node_id, age in open_for(record, derived, now).items()
+             if age > limits.stuck_after_s and not derived[node_id].get("lost")
+             and lanes[node_id] not in ("fanout", "parent")]
+    return sorted(found, key=lambda item: (-item[1], item[0]))
+
+
+def age_text(seconds: float) -> str:
+    """``9h 12m``, ``45m``, ``1h``: whole minutes, never under one."""
+    minutes = max(1, int(seconds // 60))
+    hours, minutes = divmod(minutes, 60)
+    if not hours:
+        return f"{minutes}m"
+    return f"{hours}h {minutes}m" if minutes else f"{hours}h"
+
+
+def stuck_say(record: Mapping[str, Any], derived: Mapping[str, Mapping[str, Any]],
+              found: Sequence[tuple[str, float]], limits: Limits = DEFAULT_LIMITS) -> str:
+    """What the parent is told about stuck nodes: which, for how long, and what to check. ``""`` for none.
+
+    A node no child took, one whose child still runs, and one whose child came back unsettled each get their own
+    sentence, because each has a different thing to check.
+    """
+    mark = age_text(limits.stuck_after_s)
+    by_state: dict[str, list[str]] = {"handed_out": [], "running": [], "returned": []}
+    for node_id, age in found:
+        by_state[str(derived[node_id]["state"])].append(f"{node_id} ({age_text(age)})")
+    parts = []
+    for state, named in by_state.items():
+        if not named:
+            continue
+        one = len(named) == 1
+        head = f"{'Node' if one else 'Nodes'} {', '.join(named)}"
+        it, each = ("it", "it") if one else ("them", "each")
+        if state == "handed_out":
+            parts.append(
+                f"{head} {'has' if one else 'have'} been out past the {mark} stuck mark with no child taking "
+                f"{it}: the delegate_task call did not start one (a refused route does that). Dispatch the call "
+                f"ready returns for {it}, or settle {each} failed if the route cannot run.")
+        elif state == "running":
+            parts.append(
+                f"{head} {'has' if one else 'have'} run past the {mark} stuck mark: run delegate_task action=list, "
+                f"and settle {each} failed and repair when no child of {it} is live there.")
+        else:
+            parts.append(
+                f"{head} came back but {'is' if one else 'are'} still not settled past the {mark} stuck mark: read "
+                f"{'its handoff' if one else 'each handoff'} and settle {each}.")
+    return " ".join(parts)
 
 
 def resume_handle_for(attempts: Sequence[Mapping[str, Any]]) -> str:
@@ -778,6 +883,7 @@ def hand_out(node: dict[str, Any], derived_state: str, now: float, *, lost: bool
     """
     attempts = node.setdefault("attempts", [])
     if derived_state == "handed_out" and attempts:
+        attempts[-1].setdefault("opened_at", attempts[-1].get("handed_out_at"))
         attempts[-1]["handed_out_at"] = now
         attempts[-1]["reoffered"] = int(attempts[-1].get("reoffered", 0)) + 1
         if lost:
@@ -880,7 +986,7 @@ def _call_route(
 def calls_for(
     record: dict[str, Any], derived: Mapping[str, Mapping[str, Any]], *, free_slots: int, per_call: int,
     omh_home: Path, now: float, skip: Iterable[str] = (), task_budget: int | None = None,
-    backend: Mapping[str, Any] | None = None,
+    backend: Mapping[str, Any] | None = None, limits: Limits = DEFAULT_LIMITS,
 ) -> tuple[list[dict[str, Any]], list[str]]:
     """Ready nodes as `delegate_task` calls, one per category (and route fallback), at most ``free_slots`` calls.
 
@@ -898,7 +1004,7 @@ def calls_for(
     skipped = set(skip)
     # Under model_map the option is the retry count's: nodes on different retries go in different calls.
     by_option = str((backend or {}).get("backend") or "") == "model_map"
-    for node_id in offerable(record, derived, now):
+    for node_id in offerable(record, derived, now, limits=limits):
         if node_id in skipped:
             continue
         node = nodes[node_id]
@@ -1162,8 +1268,11 @@ def extend(
     return [str(node["id"]) for node in added]
 
 
-def node_rows(record: Mapping[str, Any], derived: Mapping[str, Mapping[str, Any]]) -> list[dict[str, Any]]:
-    """What `status` says per node: no prompt, no child output."""
+def node_rows(record: Mapping[str, Any], derived: Mapping[str, Mapping[str, Any]],
+              now: float | None = None) -> list[dict[str, Any]]:
+    """What `status` says per node: no prompt, no child output. With ``now``, an open node carries ``open_for_s``,
+    the whole seconds since its attempt first went out."""
+    ages = open_for(record, derived, now) if now is not None else {}
     rows = []
     for node in record["nodes"]:
         node_id = str(node["id"])
@@ -1191,5 +1300,7 @@ def node_rows(record: Mapping[str, Any], derived: Mapping[str, Mapping[str, Any]
             row.update(handle=attempts[-1]["handle"], wake_at=attempts[-1]["wake_at"])
         if info["state"] in ("failed", "blocked"):
             row["repair_cycles_left"] = cycles_left(record, node_id)
+        if node_id in ages:
+            row["open_for_s"] = int(ages[node_id])
         rows.append(row)
     return rows

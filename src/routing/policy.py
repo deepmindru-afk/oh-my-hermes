@@ -34,7 +34,9 @@ from ..plugin_bundle.omh.dag_ulw_cues import DAG_ULW, asks_about_dag_ulw, dag_ul
 from ..plugin_bundle.omh.invocation_cues import invoked_instruction
 from ..coding.pi_family_interop import PI_DISTRIBUTION_HOST, RUNTIME_SHORT_NAME
 from ..plugin_bundle.omh.name_report_cues import about_the_skill
-from ..plugin_bundle.omh.request_lead import after_courtesy
+from .command_verb import DIRECT_CODING_EDIT_VERBS as _DIRECT_CODING_EDIT_VERBS
+from .command_verb import command_words as _command_words
+from .command_verb import commanded_words
 from ..plugin_bundle.omh.show_reel_cues import show_reel_request_admitted
 from ..plugin_bundle.omh.spend_signals import (
     SPEND_EVERYDAY_SENSE_ANCHORS,
@@ -6913,15 +6915,6 @@ def _deep_interview_guard_applies(normalized_query: str, query_tokens: set[str])
     return (interview or clarify) and before_plan
 
 
-# The words of a message from its command verb on, after the courtesy openers
-# and the address to the assistant ("please", "can you", "omh", "hermes,") that
-# every reader of a request's opening strips (`request_lead.COURTESY_OPENERS`).
-# Used only to NARROW guards: an edit verb that is not the command verb does
-# not make a request an edit.
-def _command_words(normalized_query: str) -> list[str]:
-    return re.findall(r"[a-z0-9#][a-z0-9#+.-]*", after_courtesy(normalized_query.strip()))
-
-
 # Code-shaped objects: the nouns a code edit acts on. The direct code-edit
 # guard needs one; `_CODE_UNIT_TOKENS`, the units of source code among them,
 # is what the file-operation guard declines a file named by.
@@ -6934,9 +6927,6 @@ _CODE_OBJECT_TOKENS = frozenset(
 )
 _CODE_UNIT_TOKENS = frozenset({"class", "component", "function", "method", "module", "variable"})
 _UI_BUILD_SURFACES = frozenset({"page", "pages", "screen", "screens", "sidebar", "dashboard", "form", "landing", "site", "website"})
-_DIRECT_CODING_EDIT_VERBS = frozenset(
-    {"add", "adjust", "build", "change", "delete", "edit", "fix", "implement", "make", "patch", "remove", "rename", "set", "tweak", "update"}
-)
 _CADENCE_TIME_WORDS = frozenset(
     {
         "morning", "evening", "night", "day", "weekday", "week", "month", "hour", "minute",
@@ -7088,7 +7078,7 @@ def _direct_coding_task_guard_applies(
         words = _command_words(normalized_query)
         # The command verb, a verb introduced as the task ("use X to fix",
         # "help me fix"), or a second command joined by "and"/"then".
-        commanded = set(words[:1]) | {words[i] for i in range(1, len(words)) if words[i - 1] in {"to", "me", "and", "then"}}
+        commanded = commanded_words(words)
         edit_verbs = edit_verbs & commanded
     if normalized_query.isascii():
         # "set up" is setup, not an edit; building a new page or screen is a

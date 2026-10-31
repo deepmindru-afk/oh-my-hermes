@@ -60,6 +60,11 @@ SHORTCUTS: tuple[tuple[str, str], ...] = (
             "sends nothing more and brings your draft back"),
     ("Esc Esc", "With text, clears it and keeps it in this session's history; on an empty composer between turns, "
                 "lists your prompts to rewind to (/rewind does too)"),
+    ("Esc (vim mode)", "With display.vim_mode on in Hermes' config, the composer starts in INSERT and Esc goes to "
+                       "NORMAL and does nothing else; in NORMAL, h l 0 ^ $ w b e j k gg G move, i a I A o O insert, "
+                       "x X dd D C cc S s r, d c y with a motion, p P, u and Ctrl+R edit, a count repeats, and Esc "
+                       "does what it does without vim mode, except that during a turn it takes two to interrupt. "
+                       "The info line says INSERT or NORMAL"),
     ("Ctrl+V", "Attaches the clipboard image as an [Image #N] token at the caret"),
     ("Ctrl+O", "Opens the whole transcript with every detail (thinking, tool output, whole diffs) at its end, or, "
                "while Hermes asks something, the whole question (it answers nothing); q leaves it"),
@@ -87,7 +92,7 @@ SHORTCUTS: tuple[tuple[str, str], ...] = (
                                         "only leave), or go back; any other key does nothing there"),
     ("x, s", "In the agent list, on an agent: x twice interrupts it; s steers it with the next line you send "
              "(Esc cancels)"),
-    ("↑ / ↓ or a click, Enter, Esc", "In the /theme picker, preview a launch look (spectrum, violet, gold, graphite, sakura, moonlit, aurora, ember) on the logo, the card and the chrome, keep it, or put the one in use back; /theme <look> keeps one at once"),
+    ("↑ / ↓ or a click, Enter, Esc", "In the /theme picker, preview a launch look (spectrum, violet, gold, graphite, sakura, moonlit, aurora, ember, kanagawa-wave) on the logo, the card and the chrome, keep it, or put the one in use back; /theme <look> keeps one at once"),
     ("Click", "On a row of the agent list, opens that agent's log (on main, only leaves the list)"),
     ("← / →, q or Esc", "In an agent's log, show the agent before or after, or go back; the pager's keys scroll it"),
     ("Tab / n, Shift+Tab / p, Space / Enter, d", "In /dag, highlight the next or the previous box, fold or unfold "

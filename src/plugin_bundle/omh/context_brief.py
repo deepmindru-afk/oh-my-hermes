@@ -113,6 +113,53 @@ def build_context_brief(
     return payload
 
 
+# The `omh_context` tool result rides every later model call of its session, so
+# the tool returns this compact view of the brief. `omh_capabilities`
+# action=summary returns the two catalog sections byte for byte. Each checkpoint
+# route keeps the fields the operating rule names (show the preferred workflow
+# and action first) plus its fallback and not-evidence lists, which no other
+# tool serves for a family the message did not match; it drops the `*_label`
+# restatements of the action ids, `applies_before` and `preferred_workflows`
+# (the lanes carry the workflow lists). The CLI, the wrapper contract and the
+# hook keep the full brief.
+#
+# The view keeps `schema_version` omh_context_brief/v1 and says `view: "compact"`.
+# Every key it keeps has the full brief's value, so a v1 reader keeps working on
+# what is there; a second version string would claim a different shape for a
+# subset of the same one. `view` is the discriminator.
+CONTEXT_BRIEF_CATALOG_SECTIONS = ("capability_families", "workflow_context_cards")
+COMPACT_CHECKPOINT_ROUTE_FIELDS = (
+    "tool_family",
+    "primary_workflow",
+    "primary_next_action",
+    "fallback_action",
+    "not_evidence_yet",
+)
+
+
+def compact_context_brief(payload: dict[str, object]) -> dict[str, object]:
+    """Return the tool-result view of a context brief; a brief without the full sections passes unchanged."""
+    if not any(section in payload for section in CONTEXT_BRIEF_CATALOG_SECTIONS):
+        return payload
+    compact = {key: value for key, value in payload.items() if key not in CONTEXT_BRIEF_CATALOG_SECTIONS}
+    checkpoint = payload.get("generic_tool_checkpoint")
+    if isinstance(checkpoint, dict) and isinstance(checkpoint.get("routes"), list):
+        compact["generic_tool_checkpoint"] = {
+            **checkpoint,
+            "routes": [
+                {field: route[field] for field in COMPACT_CHECKPOINT_ROUTE_FIELDS if field in route}
+                for route in checkpoint["routes"]
+                if isinstance(route, dict)
+            ],
+        }
+    compact["view"] = "compact"
+    compact["expand"] = (
+        "omh_capabilities action=summary returns capability_families and workflow_context_cards; "
+        "each route_hint hint carries the workflow_context_card of its matched workflow's lane."
+    )
+    return compact
+
+
 def _capability_family_cards() -> list[dict[str, object]]:
     try:
         from omh.capabilities.families import capability_family_cards

@@ -3,7 +3,11 @@ from __future__ import annotations
 import hashlib
 import json
 
-from ..context_brief import bounded_context_hint_limit, build_context_brief as build_plugin_context_brief
+from ..context_brief import (
+    bounded_context_hint_limit,
+    build_context_brief as build_plugin_context_brief,
+    compact_context_brief,
+)
 from ..degradation import safe_error_type as _safe_error_type
 from ..host_observation import OBSERVATION_SCHEMA, attach_public_observation, observe_plugin_tool_call
 
@@ -55,6 +59,7 @@ def omh_context_handler(args: dict, **kwargs) -> str:
         max_hints=limit,
         include_prompt_context=include_prompt_context,
     )
+    payload = compact_context_brief(payload)
     payload["plugin_tool"] = "omh_context"
     payload["source_backend"] = backend
     return json.dumps(attach_public_observation(payload, observation), sort_keys=True)

@@ -9,6 +9,7 @@ from typing import Final, TypeGuard
 
 from .. import runtime_paths
 from ..catch_log import PLAN_CONTINUED, record_catch
+from ..consistency_trigger import discard_snapshots, round_end_trigger
 from ..export_check import round_end_note as export_note
 from ..host_observation import observe_plugin_hook_call
 from ..impact_check import round_end_note
@@ -43,7 +44,9 @@ _CODE_SUFFIXES: Final = frozenset(
         ".svelte", ".swift", ".tf", ".ts", ".tsx", ".vue", ".zig", ".zsh",
     }
 )
-# Asked once per turn, at the first stop after a code edit. It carries one
+# Asked at most once per turn, at the first stop after a code edit, and alone
+# only when `consistency_trigger` finds a copy or a reference outside the
+# edited files (or cannot rule one out). It carries one
 # check only: a second copy or call site of the changed logic that had to change
 # with it, the miss a model makes when it stops as soon as the target test
 # passes. Scope and verification lines were measured too and showed no effect
@@ -132,7 +135,8 @@ def pre_verify(
     # workspace modules they import from) with `ast`, so it costs no language server and no
     # extra round of its own. It names an `__all__` entry or a `from x import name` that no
     # longer resolves -- a rename's leftover that no type error reports -- and is empty otherwise.
-    export_message = export_note(session_id, changed_paths) if attempt_value == 0 else ""
+    # A line the impact note already names is not named again.
+    export_message = export_note(session_id, changed_paths, impact_message) if attempt_value == 0 else ""
     surface_message = checklist_message = plan_message = ""
     open_items = 0
     if valid_coding:
@@ -152,10 +156,27 @@ def pre_verify(
         # The round-end check is one-shot for the same reason, and it is the
         # turn's only one: attempt 0 is the first stop after the edits, and the
         # host moves `attempt` past 0 once any nudge here continues the turn.
-        if attempt_value == 0 and str(platform) not in _NO_CHECKLIST_PLATFORMS and any(map(_is_code_path, paths)):
-            # Beside a request to run or re-check something, the check must not
-            # say "do not re-run": that request stands.
-            checklist_message = ROUND_END_CHECKLIST_BESIDE_A_RECHECK if surface_message or impact_message else ROUND_END_CHECKLIST
+        # As the host spelled them: `paths` is lower-cased for matching, and the
+        # trigger reads these files from the disk.
+        raw_paths = changed_paths if _is_path_sequence(changed_paths) else ()
+        code_paths = tuple(path for path in raw_paths
+                           if isinstance(path, str) and _is_code_path(path.replace("\\", "/").lower()))
+        if attempt_value == 0 and str(platform) not in _NO_CHECKLIST_PLATFORMS and code_paths:
+            # The check costs a round of its own only when nothing else here
+            # continues the turn. Then it fires only when the edit has a copy or
+            # a reference outside the edited files, or when that cannot be ruled
+            # out (`consistency_trigger`). Beside another nudge it rides along,
+            # the export note included: that note continues the turn on its own
+            # whatever the trigger says, because fixing the line it names is the work.
+            alone = not (surface_message or impact_message or export_message or plan_message)
+            if not alone or round_end_trigger(session_id, code_paths).fire:
+                # Beside a request to run or re-check something, the check must
+                # not say "do not re-run": that request stands.
+                checklist_message = (ROUND_END_CHECKLIST_BESIDE_A_RECHECK if surface_message or impact_message
+                                     else ROUND_END_CHECKLIST)
+    if attempt_value == 0:
+        # The turn's snapshots are spent at its first stop, read or not.
+        discard_snapshots(session_id)
     # One directive, in a fixed order: the served-surface gate, the impact
     # note, the export note, the round-end check, the plan directive. Each can
     # be true of the same turn, and dropping one because another fired would

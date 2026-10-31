@@ -83,11 +83,67 @@ check only for surfaces where ordinary code tests are insufficient:
 - dependency or build metadata changes require installation or import smoke
 - CI workflow changes require a syntax check or the workflow's local command
 
-A turn in the coding posture that edited a file with a source suffix also gets
-a round-end consistency check, once, at its first stop (`attempt == 0`). The
+A turn in the coding posture that edited a file with a source suffix can also
+get a round-end consistency check, once, at its first stop (`attempt == 0`). The
 coding posture means Hermes's `cli`, `tui`, `acp` or `desktop` surface in a
 code workspace, or `agent.coding_context: on`; the suffixes are listed in
 `_CODE_SUFFIXES` in `hooks/verify_hooks.py`.
+
+When the check would be the only nudge continuing the turn, it fires only
+when it can pay off (`consistency_trigger.py`).
+
+- At the turn's first tool call, `pre_tool_call` records the size and
+  modification time of the workspace's Python files.
+- Before each `patch` or `write_file`, it keeps the pre-edit text of each
+  Python file that call edits.
+- At the first stop, the workspace is indexed again, so every Python file the
+  turn changed is found, whatever tool changed it.
+- The definitions the changed lines touch are compared with the other files,
+  the ones the turn did not edit. Module and class level are read, including
+  `if`, `try` and `with` bodies.
+
+The check fires when one of these is true:
+
+- a touched top-level definition is also defined in another file;
+- a definition the edit removed or renamed is still named in another Python
+  file, or in a `.toml`, `.cfg`, `.ini`, `.yaml`, `.yml` or `.json` file;
+- a touched function's signature changed, or a class's `__init__`, `__new__`
+  or `__call__` signature, annotated fields or abstract methods changed, and
+  another file names that function or class;
+- a replaced line of 30 or more characters appears in another file.
+
+It also fires, as before, in every case where the trigger cannot rule a copy
+or a reference out:
+
+- a changed source file that is not Python;
+- a Python file changed without a pre-edit text of its own (`opaque_edit`,
+  or `no_snapshot` when the session kept none): a `sed`, an `execute_code`
+  write, a delegated child's edit, or a file over the 32-file or 4 MB snapshot
+  cap;
+- a changed file that does not parse or is over 512 KB;
+- a non-trivial change that touches no definition, import or docstring
+  (`unattributed`);
+- a workspace walk past 5,000 entries visited, or past 0.5 s at the turn's
+  start or 2 s at the stop; a root that ran over is not walked again for five
+  minutes in that process, and those turns fire too;
+- a Python file or a directory in the workspace that is a symlink leaving it
+  (`outside_link`); the target is never read;
+- an unedited Python file over 512 KB or unreadable;
+- an error.
+
+Otherwise the turn ends at its first stop. That includes changes the four
+signals cannot see: a function body that changes behaviour without changing its
+signature, and a reference that exists only in prose. Prose files (`.md`,
+`.rst`, `.txt`) are not searched, because docs and changelogs name old APIs on
+purpose. The walk skips hidden directories, version-control and virtualenv
+directories, caches and `node_modules`. It also skips `build` and `dist`
+directories, at any depth, that hold no `__init__.py`: those are build output.
+A package named `build` or `dist` is scanned. A session on a
+platform that never gets the check (a delegated child) takes no index.
+Oversized config files are skipped rather than fired on, because they are
+lockfiles and data dumps.
+
+Beside another nudge, the export note below included, the check rides along without a verdict.
 
 The check asks the model to look for other copies or call sites of the logic
 it changed that have to change with it, and to fix any it finds. It also tells
@@ -104,7 +160,12 @@ an `__all__` entry the module no longer defines or imports, or a
 leftover a rename leaves that no type error reports. It says nothing when there
 is none, and skips a module whose names it cannot know (a star import, a
 module-level `__getattr__`, `globals()`, `setattr`) or a file that does not
-parse. `src/plugin_bundle/omh/export_check.py` lists the rules.
+parse. `src/plugin_bundle/omh/export_check.py` lists the rules. The note
+continues the turn whatever the consistency trigger says, because fixing the
+line it names is the work. A line the impact note already names, an edited
+importer's stale `from module import name` that the language server also
+reports, is not named twice. The consistency trigger never names a line: its
+verdict only decides whether the check fires.
 
 Hermes keeps the answer the model stopped with only as an interim message, and
 returns whatever follows the nudge as the turn's final response. So when no
@@ -138,8 +199,10 @@ nothing is stashed. The child's reply is its parent's tool result. The skip
 only matters under `agent.coding_context: on`, because otherwise Hermes gives
 non-interactive platforms no coding posture.
 
-The cost is one extra round of the turn. Measured costs and gains are in the
-2026-10-30 section of `benchmarks/live-model-tools/v1/README.md`.
+The cost is one extra round of the turn whenever the check fires. Measured
+costs and gains are in the 2026-10-30 sections of
+`benchmarks/live-model-tools/v1/README.md`: the always-on check, and the
+trigger that limits it to edits with a copy or a reference elsewhere.
 `agent.max_verify_nudges: 0` turns this off together with every other
 `pre_verify` nudge.
 
