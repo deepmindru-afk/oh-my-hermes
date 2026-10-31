@@ -166,14 +166,24 @@ to approve a shell command. The backend form is:
 omh context brief --source discord --json "make an image card for this PR"
 ```
 
-The plugin-native form is the `omh_context` tool. Both return the same compact
-shape: OMH lanes, common cues, a generic-tool checkpoint, an optional route
-hint, catalog-question guidance, and the response contract. The raw prompt is
-represented by hash/length metadata only. The tool's result rides every later
-model call of the session, so it leaves out the capability family and workflow
-context cards, which `omh_capabilities` action=summary returns unchanged, and
-keeps only each checkpoint route's tool family, workflow, and next action; a
-matched route hint still carries its fallback and not-evidence lists.
+The CLI returns the full brief. It contains OMH lanes, capability family cards,
+workflow context cards, common cues, a generic-tool checkpoint, an optional
+route hint, catalog-question guidance, and the response contract. The raw
+prompt is represented by hash/length metadata only.
+
+The plugin-native form is the `omh_context` tool, and it returns a compact view
+of the same brief. The tool's result rides every later model call of the
+session, so the view makes three changes:
+
+- It leaves out the capability family cards and workflow context cards.
+  `omh_capabilities` action=summary returns both unchanged.
+- It trims each checkpoint route to five fields: its tool family, workflow,
+  next action, fallback action, and not-evidence list.
+- It adds `view: "compact"` and an `expand` line saying where the dropped
+  parts are.
+
+The view keeps `schema_version: omh_context_brief/v1`, and every key it keeps
+has the full brief's value; `view` tells the two apart.
 
 When the message asks what OMH commands, workflows, or skills are available,
 the payload includes `catalog_question.schema_version ==

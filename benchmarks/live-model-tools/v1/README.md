@@ -750,6 +750,21 @@ The "Calls" columns give how many runs called each tool, in the order `omh_conte
 Verdict, per amendment 1: **pass**. In the 528-run result above, the only clause that failed was
 the probe cell this amendment re-measured, so the change is put up for merge.
 
+#### 2026-10-31, after the measured runs: the result grew by 2,944 characters
+
+Review of #2448 found a gap. For any family the message's route hint did not match, the compact
+view had dropped the checkpoint's fallback and not-evidence data, and no tool served it any more.
+The compact routes now keep `fallback_action` and `not_evidence_yet` again (the owner accepted
+this, with no re-run).
+
+- **Added characters (measured).** The 14 routes grow from 1,888 to 4,832 characters (+2,944).
+  Replayed on the 209 recorded calls, the mean result grows from 15,956 to 18,909 characters.
+- **Codex tokens (estimate, not measured).** At the 0.232 Codex tokens per character measured on
+  OPT-C's full results, the addition is about 680 tokens per result. Since the result rides about
+  92% of a calling session's calls, that is about 630 per call. The measured GPT-6 Luna `off` drop
+  of 5,067 per call would then be about 4,400.
+- **Runs.** None of the runs above measured this version.
+
 ### 2026-10-30 round-end consistency check in `pre_verify`: off vs on, five measurements
 
 Measurements 1 to 4 failed their gates. The owner then relaxed the token clause to 1.4x
