@@ -28,6 +28,13 @@ The finding kinds:
   bring its completion back into the turn.
 - ``compaction_boundary``: a message row marked ``_compressed_summary``, the
   summary a compaction put in place of the rows before it.
+- ``silent_turn_end``: an assistant row with empty or whitespace content and
+  no tool calls, directly after a tool row and directly before the next user
+  row (or the end of the session), so the turn ended without a reply to its
+  last tool result. It cites the tool row and the assistant row, the tool
+  row's call and tool, and that result's typed error class and exit code
+  (exit 130 is an interrupted command). A tool result a compaction
+  re-persisted is cited once. Only emptiness is read from the assistant row.
 
 Selection is exact or refused. ``--hermes-session`` takes a full id,
 ``latest``, or a prefix that names exactly one session; a prefix that names
@@ -86,11 +93,13 @@ TOOL_ERROR = "tool_error"
 IDENTICAL_RETRY_AFTER_ERROR = "identical_retry_after_error"
 BACKGROUND_WITHOUT_NOTIFY = "background_without_notify"
 COMPACTION_BOUNDARY = "compaction_boundary"
+SILENT_TURN_END = "silent_turn_end"
 FINDING_KINDS: tuple[str, ...] = (
     TOOL_ERROR,
     IDENTICAL_RETRY_AFTER_ERROR,
     BACKGROUND_WITHOUT_NOTIFY,
     COMPACTION_BOUNDARY,
+    SILENT_TURN_END,
 )
 ERROR_CLASSES: tuple[str, ...] = ("nonzero_exit", "success_false", "error_field")
 ARGUMENT_DIGEST_CHARS = 16
@@ -130,7 +139,11 @@ _REQUIRED_CITATION: dict[str, tuple[int, tuple[str, ...]]] = {
     IDENTICAL_RETRY_AFTER_ERROR: (2, ("tool_call_ids", "tool_name", "error_class", "arguments_sha256")),
     BACKGROUND_WITHOUT_NOTIFY: (1, ("tool_call_ids", "tool_name")),
     COMPACTION_BOUNDARY: (1, ()),
+    SILENT_TURN_END: (2, ("tool_call_ids", "tool_name")),
 }
+# A kind whose rows are not all tool rows cites fewer tool_call ids than rows:
+# a silent turn end cites the tool row's call and not the assistant row after it.
+_CITED_CALLS: dict[str, int] = {SILENT_TURN_END: 1}
 _FINDING_KEYS = frozenset({"finding_id", "kind", "citation"})
 _SUMMARY_COLUMN = "_compressed_summary"
 # The only result fields any kind reads. A row is reduced to these on read.
@@ -141,10 +154,12 @@ UNAVAILABLE_REASONS: dict[str, dict[str, str]] = {
     SOURCE_STATE_DB: {
         IDENTICAL_RETRY_AFTER_ERROR: "messages.tool_calls column not present",
         COMPACTION_BOUNDARY: f"messages.{_SUMMARY_COLUMN} column not present",
+        SILENT_TURN_END: "messages.tool_calls column not present",
     },
     SOURCE_RECORD: {
         IDENTICAL_RETRY_AFTER_ERROR: "no record line carries a tool_calls field",
         COMPACTION_BOUNDARY: f"no record line carries a {_SUMMARY_COLUMN} field",
+        SILENT_TURN_END: "no record line carries a tool_calls field",
     },
 }
 
@@ -279,6 +294,7 @@ def _read_state_db(
                     tool_call_id=tool_call_id,
                     tool_name=tool_name,
                     content=None if content_oversized else _text(content),
+                    reply_empty=not content_oversized and not (_text(content) or "").strip(),
                     tool_calls=None if calls_oversized else _json_value(_text(calls)),
                     summary=None if summary is None else bool(summary),
                     stamp=stamp,
@@ -296,6 +312,8 @@ def _read_state_db(
         unavailable.append({"kind": IDENTICAL_RETRY_AFTER_ERROR, "reason": reasons[IDENTICAL_RETRY_AFTER_ERROR]})
     if not has_summary:
         unavailable.append({"kind": COMPACTION_BOUNDARY, "reason": reasons[COMPACTION_BOUNDARY]})
+    if not has_calls:
+        unavailable.append({"kind": SILENT_TURN_END, "reason": reasons[SILENT_TURN_END]})
     return {
         "source": {
             "kind": SOURCE_STATE_DB,
@@ -393,6 +411,7 @@ def _read_record(
                         tool_call_id=message.get("tool_call_id"),
                         tool_name=message.get("tool_name"),
                         content=message.get("content") if isinstance(message.get("content"), str) else None,
+                        reply_empty=_reply_empty(message.get("content")),
                         tool_calls=message.get("tool_calls") if "tool_calls" in message else _ABSENT,
                         summary=bool(message[_SUMMARY_COLUMN]) if _SUMMARY_COLUMN in message else None,
                         stamp=message.get("timestamp"),
@@ -424,6 +443,8 @@ def _read_record(
         unavailable.append({"kind": IDENTICAL_RETRY_AFTER_ERROR, "reason": reasons[IDENTICAL_RETRY_AFTER_ERROR]})
     if not any(row["summary"] is not None for row in selected):
         unavailable.append({"kind": COMPACTION_BOUNDARY, "reason": reasons[COMPACTION_BOUNDARY]})
+    if not any(row["has_tool_calls_field"] for row in selected):
+        unavailable.append({"kind": SILENT_TURN_END, "reason": reasons[SILENT_TURN_END]})
     stamps = [row["timestamp"] for row in selected if row["timestamp"] is not None]
     return {
         "source": {
@@ -511,6 +532,7 @@ def _reduced_row(
     tool_call_id: Any,
     tool_name: Any,
     content: str | None,
+    reply_empty: bool,
     tool_calls: Any,
     summary: bool | None,
     stamp: Any,
@@ -519,6 +541,8 @@ def _reduced_row(
     """The typed fields the kinds read, and nothing of the row's text."""
     has_tool_calls_field = tool_calls is not _ABSENT
     calls = None if tool_calls is _ABSENT else tool_calls
+    if isinstance(calls, str):
+        calls = _json_value(calls)
     return {
         "ref": ref,
         "session_id": str(session_id) if isinstance(session_id, str) and session_id else None,
@@ -528,6 +552,9 @@ def _reduced_row(
         "tool_name": str(tool_name or ""),
         "result": _typed_result(content) if role == "tool" else None,
         "digests": _argument_digests(calls) if role == "assistant" else {},
+        # Whether an assistant row said nothing and called nothing; its text is not kept.
+        "reply_empty": role == "assistant" and reply_empty and not oversized,
+        "called_tools": isinstance(calls, list) and bool(calls),
         "has_tool_calls_field": has_tool_calls_field,
         "summary": summary,
         "timestamp": hermes_epoch(stamp),
@@ -598,6 +625,8 @@ def _report_from_rows(read: Mapping[str, Any], *, max_rows: int, max_row_bytes: 
         for row in rows:
             if row["summary"]:
                 findings.append(_finding(COMPACTION_BOUNDARY, resolved, [row]))
+    if not any(item["kind"] == SILENT_TURN_END for item in unavailable):
+        findings.extend(_silent_turn_ends(resolved, rows, read))
     findings.sort(key=lambda item: (item["citation"]["message_ids"][0], FINDING_KINDS.index(item["kind"])))
 
     oversized_refs = sorted({*(row["ref"] for row in rows if row["oversized"]), *read.get("oversized_refs", ())})
@@ -731,7 +760,7 @@ def agent_debug_reference_errors(
     A reference is *missing* when its row is gone, *foreign* when the row
     belongs to another session, *stale* when the row's timestamp changed
     since the report was built, and *mismatched* when the row is not the tool
-    call, tool, or compaction summary the finding says it is. Every reference
+    call, tool, compaction summary, or assistant row the finding says it is. Every reference
     is stale when the source moved under the report's snapshot: a record
     file's size or modification time changed, or the session in state.db
     gained or lost rows (its row count or highest message id changed), so a
@@ -778,6 +807,8 @@ def agent_debug_reference_errors(
                 continue
             if expected["summary"] and not row["summary"]:
                 errors.append(f"{label} is mismatched: the row is not a compaction summary")
+            if expected["assistant"] and row["role"] != "assistant":
+                errors.append(f"{label} is mismatched: the row is not the cited assistant row")
             if expected["tool_call_id"] is not None and (
                 row["role"] != "tool"
                 or row["tool_call_id"] != expected["tool_call_id"]
@@ -801,6 +832,7 @@ def _cited_rows(report: Mapping[str, Any]) -> dict[int, list[tuple[str, dict[str
                         "tool_call_id": tool_call_ids[index] if index < len(tool_call_ids) else None,
                         "tool_name": citation.get("tool_name") or "",
                         "summary": finding["kind"] == COMPACTION_BOUNDARY,
+                        "assistant": finding["kind"] == SILENT_TURN_END and index == 1,
                     },
                 )
             )
@@ -985,6 +1017,53 @@ def _distinct_calls(tool_rows: Any) -> list[dict[str, Any]]:
     return calls
 
 
+def _silent_turn_ends(session_id: str, rows: list[dict[str, Any]], read: Mapping[str, Any]) -> list[dict[str, Any]]:
+    """Each assistant row that said nothing and called nothing right after a tool row, ending its turn.
+
+    The row after it must be the next user row (not a compaction summary,
+    which continues the turn), or there must be no row after it and the row
+    budget must not have cut the session there. A record line skipped as
+    oversized between the cited rows and the next user row could have been
+    the reply, so such a candidate is not cited. A tool result a compaction
+    re-persisted is cited once, by its first silent end.
+    """
+    skipped = tuple(read.get("oversized_refs") or ())
+    seen: set[str] = set()
+    findings: list[dict[str, Any]] = []
+    for index, row in enumerate(rows):
+        if index == 0 or row["role"] != "assistant" or not row["reply_empty"]:
+            continue
+        if row["called_tools"] or not row["has_tool_calls_field"]:
+            continue
+        tool = rows[index - 1]
+        if tool["role"] != "tool" or tool["tool_call_id"] is None or tool["call_key"] in seen:
+            continue
+        if index + 1 < len(rows):
+            after = rows[index + 1]
+            if after["role"] != "user" or after["summary"]:
+                continue
+            upper: int | None = after["ref"]
+        elif read["row_limit_reached"]:
+            continue
+        else:
+            upper = None
+        if any(ref > tool["ref"] and (upper is None or ref < upper) for ref in skipped):
+            continue
+        seen.add(tool["call_key"])
+        error_class, exit_code = _error_class(tool["result"])
+        findings.append(_finding(SILENT_TURN_END, session_id, [tool, row], error_class=error_class, exit_code=exit_code))
+    return findings
+
+
+def _reply_empty(content: Any) -> bool:
+    """Whether a record line's content is absent or blank; the content itself is not kept."""
+    if content is None:
+        return True
+    if isinstance(content, str):
+        return not content.strip()
+    return isinstance(content, list) and not content
+
+
 def _argument_digests(calls: Any) -> dict[str, str]:
     """``tool_call_id -> sha256 prefix`` of each call's canonical arguments, first call deciding."""
     if isinstance(calls, str):
@@ -1113,18 +1192,21 @@ def _citation_errors(kind: str, citation: Mapping[str, Any], session_id: Any) ->
         errors.append(f"citation must carry {rows} timestamp{'s' if rows != 1 else ''}")
     tool_call_ids = citation.get("tool_call_ids")
     if "tool_call_ids" in required:
+        calls = _CITED_CALLS.get(kind, rows)
         if not (
             isinstance(tool_call_ids, list)
-            and len(tool_call_ids) == rows
+            and len(tool_call_ids) == calls
             and all(isinstance(item, str) and item for item in tool_call_ids)
         ):
-            errors.append(f"citation must cite {rows} tool_call id{'s' if rows != 1 else ''}")
+            errors.append(f"citation must cite {calls} tool_call id{'s' if calls != 1 else ''}")
     elif tool_call_ids:
         errors.append("citation cites tool_call ids this kind does not span")
     if "tool_name" in required and not (isinstance(citation.get("tool_name"), str) and citation["tool_name"]):
         errors.append("citation must name the tool")
     if "error_class" in required and citation.get("error_class") not in ERROR_CLASSES:
         errors.append(f"citation must carry an error_class from {', '.join(ERROR_CLASSES)}")
+    elif citation.get("error_class") not in (None, *ERROR_CLASSES):
+        errors.append(f"citation error_class must be null or one of {', '.join(ERROR_CLASSES)}")
     if "arguments_sha256" in required:
         digest = citation.get("arguments_sha256")
         if not (isinstance(digest, str) and len(digest) == ARGUMENT_DIGEST_CHARS and all(c in "0123456789abcdef" for c in digest)):

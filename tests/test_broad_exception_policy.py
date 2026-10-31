@@ -538,6 +538,17 @@ CLASSIFIED_SITES: tuple[ClassifiedSite, ...] = (
         "per-turn latch and a readable process record showing nothing armed.",
     ),
     ClassifiedSite(
+        "src/plugin_bundle/omh/remote_wait_nudge.py",
+        "failed_wait_context",
+        INTENTIONAL,
+        "The turn-start half for a turn a failed watcher's notice opened, called from "
+        "`pre_llm_call`, which the host runs inside its own swallow (`agent/turn_context.py::"
+        "_collect_pre_llm_call_context` logs and drops a raise), so a raise would also drop every "
+        "other OMH line of that turn. The failure is counted by type in `remote_wait_declines()` and "
+        "the turn gets no directive; the per-turn latch is recorded only on the success path, so a "
+        "failure cannot make the end-of-turn half append its sentence.",
+    ),
+    ClassifiedSite(
         "src/plugin_bundle/omh/hooks/session_hooks.py",
         "subagent_start",
         INTENTIONAL,
@@ -884,8 +895,11 @@ CLASSIFIED_SITES: tuple[ClassifiedSite, ...] = (
 # and metadata reads that decide whether OMH's recorded package joins the import
 # system (two handlers; a failure adds nothing and is reported, never raised), and
 # `package_site._omh_importable`, a host import hook raising for `omh` (#2166).
-EXPECTED_HANDLER_COUNT = 92
-EXPECTED_ANCHOR_COUNT = 83
+# 92 -> 93 / 83 -> 84: `remote_wait_nudge.failed_wait_context`, the turn-start
+# half for a turn a failed watcher's notice opened (a raise is counted and the
+# turn gets no directive, never a dropped `pre_llm_call` context).
+EXPECTED_HANDLER_COUNT = 93
+EXPECTED_ANCHOR_COUNT = 84
 
 
 class DerivedSite(NamedTuple):

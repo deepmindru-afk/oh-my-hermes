@@ -23,7 +23,9 @@ result transforms in a fixed order:
 5. Unarmed remote waits — a ``terminal`` call that starts work on a remote
    with no background process armed to wake the session, or one blocked at
    the human approval gate, gets a per-turn directive naming the two honest
-   exits (``remote_wait_nudge.py``).
+   exits (``remote_wait_nudge.py``). The same pass reads, without changing
+   them, ``delegate_task`` and ``cronjob_manage`` results, to record that a
+   turn opened by a failed watcher armed its next wake another way.
 6. Full-width diff band padding — tool-result diffs get their painted lines
    padded to a uniform band (``diff_presentation.py``), except Kanban readback
    tools: their serialized records must retain the bound and valid JSON even
@@ -178,7 +180,8 @@ def transform_llm_output(**kwargs: Any) -> str | None:
     (`agent/turn_finalizer.py::_apply_output_hooks`); the first plugin to
     return a non-empty string wins, so both of OMH's end-of-turn passes are
     composed in this one handler. The honest stop (``remote_wait_nudge.py``)
-    reads the latch its tool-result half records. The delegation snapshot
+    reads the latch its tool-result half records, or, on a turn a failed
+    watcher's notice opened, the latch ``pre_llm_call`` recorded for it. The delegation snapshot
     (``delegation_snapshot.py``) appends, on a chat platform, a delegated
     run's start block, a count line on a turn its counts changed, or its end
     block. Both append and neither rewrites: the CLI prints only the suffix
