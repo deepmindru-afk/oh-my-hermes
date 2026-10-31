@@ -17,6 +17,13 @@ All notable changes will be documented here.
   `Turn ended: reason=` line for that timestamp before changing anything.
   Both state.db and `--session-record` are read; without `tool_calls` the kind
   is listed unavailable.
+- **The `/theme` picker scrolls on a short terminal.** Where the slot held
+  fewer rows than there are launch looks, the arrows still reached the
+  looks past it, but they were never drawn (on a 16-row terminal, ember; on a 24-row one, kanagawa-wave).
+  The list now scrolls so the highlighted look always shows, moving only
+  when the highlight would leave it, and a click lands on the look drawn in
+  that row.
+
 - **A Kanagawa Wave theme and launch look.** `omh theme use kanagawa`
   selects an indigo palette with warm ivory text and muted blue and violet
   accents, adapted from rebelot/kanagawa.nvim (MIT, Copyright (c) 2021
