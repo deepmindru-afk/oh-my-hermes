@@ -113,6 +113,40 @@ def build_context_brief(
     return payload
 
 
+# The `omh_context` tool result rides every later model call of its session, so
+# the tool returns this compact view of the brief. `omh_capabilities`
+# action=summary returns the two catalog sections byte for byte, and the
+# message's own `route_hint` carries the fallback and not-evidence lists of the
+# family it matched; each checkpoint route keeps the fields the operating rule
+# names (show the preferred workflow and action first). The CLI, the wrapper
+# contract and the hook keep the full brief.
+CONTEXT_BRIEF_CATALOG_SECTIONS = ("capability_families", "workflow_context_cards")
+COMPACT_CHECKPOINT_ROUTE_FIELDS = ("tool_family", "primary_workflow", "primary_next_action")
+
+
+def compact_context_brief(payload: dict[str, object]) -> dict[str, object]:
+    """Return the tool-result view of a context brief; a brief without the full sections passes unchanged."""
+    if not any(section in payload for section in CONTEXT_BRIEF_CATALOG_SECTIONS):
+        return payload
+    compact = {key: value for key, value in payload.items() if key not in CONTEXT_BRIEF_CATALOG_SECTIONS}
+    checkpoint = payload.get("generic_tool_checkpoint")
+    if isinstance(checkpoint, dict) and isinstance(checkpoint.get("routes"), list):
+        compact["generic_tool_checkpoint"] = {
+            **checkpoint,
+            "routes": [
+                {field: route[field] for field in COMPACT_CHECKPOINT_ROUTE_FIELDS if field in route}
+                for route in checkpoint["routes"]
+                if isinstance(route, dict)
+            ],
+        }
+    compact["view"] = "compact"
+    compact["expand"] = (
+        "omh_capabilities action=summary returns capability_families and workflow_context_cards; "
+        "route_hint carries the matched family's fallback_action and not_evidence_yet."
+    )
+    return compact
+
+
 def _capability_family_cards() -> list[dict[str, object]]:
     try:
         from omh.capabilities.families import capability_family_cards

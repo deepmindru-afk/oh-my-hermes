@@ -169,7 +169,11 @@ omh context brief --source discord --json "make an image card for this PR"
 The plugin-native form is the `omh_context` tool. Both return the same compact
 shape: OMH lanes, common cues, a generic-tool checkpoint, an optional route
 hint, catalog-question guidance, and the response contract. The raw prompt is
-represented by hash/length metadata only.
+represented by hash/length metadata only. The tool's result rides every later
+model call of the session, so it leaves out the capability family and workflow
+context cards, which `omh_capabilities` action=summary returns unchanged, and
+keeps only each checkpoint route's tool family, workflow, and next action; a
+matched route hint still carries its fallback and not-evidence lists.
 
 When the message asks what OMH commands, workflows, or skills are available,
 the payload includes `catalog_question.schema_version ==
