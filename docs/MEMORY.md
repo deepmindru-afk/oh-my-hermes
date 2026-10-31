@@ -1566,6 +1566,24 @@ record's `derived_from` list so an executor can ask for lineage when a
 summary alone is not enough. Lineage is prepared-context traversal only; it
 never claims the derivation itself was re-verified.
 
+### Origin pointer
+
+OMH stores one bounded summary line per memory and no transcript. Hermes
+already keeps every message verbatim in `<HERMES_HOME>/state.db`. So a
+model capture through `omh_memory(action="capture")` records only the session
+it was made in, as `source_ref = "hermes-session:<session_id>"`; an unusable
+session id leaves `source_ref` empty. Correcting a record keeps its ref.
+
+When `omh_memory recall` returns such a record on a surface that admitted it
+(operator console, owner direct message, bound direct message or channel),
+the row carries `origin = {"session_id", "around_message_id"}`: the newest
+user message of that session stamped no later than the capture. The model can
+open it with `session_search(session_id, around_message_id)` to quote the
+person's own words, and `next_action` says so. A shared or background lens
+gets no origin. The lookup is a read-only open of `state.db` with a short busy
+timeout and one `SELECT` of an id; a missing, corrupt or locked store gives no
+origin and recall still succeeds. No message text is read into OMH.
+
 ## Source Recovery: Which Records Came From One Source
 
 Lineage answers "where did this record come from". The reverse question --
@@ -1775,6 +1793,56 @@ is admitted at all, and what is left is a subset of what the same session reads
 inside any repository (owner decision 2026-10-13; before it, the allowlist was
 empty there, so a capture made outside a repository was stored and never
 recalled). A shared surface outside a repository still reads nothing.
+
+### The recall query
+
+The pack is ranked against a query built from the person's turn, and that
+turn reaches the provider exactly as Hermes built it. Before ranking,
+`memory_query_sanitizer.sanitize_memory_query` reduces it in two steps.
+
+First it separates the person's own words from host framing, each rule
+anchored to the exact string Hermes writes at the start of a line: an
+out-of-band steer wrapper, a context summary handoff, a gateway origin
+preamble, a triggering-message note, a reply pointer (`[Replying to: "..."]`),
+Discord channel backfill (the `[Recent channel messages]`, `[Context around
+the replied-to message]` or unverified-sender header through the last
+`[New message]` line), and a single speaker's `[name] ` prefix. A slash-skill
+or auto-loaded skill turn gives only the instruction the person typed, by
+the same markers and first/last rule as Hermes' own
+`extract_user_instruction_from_skill_message`; a bare invocation gives an
+empty query. A host notice (a background-process, delegation-completion or
+gateway-provenance notice) ends the person's words at the line where it
+starts, and a turn that is only a notice gives an empty query. A turn that
+only mentions one of these phrases mid-sentence keeps it, backfill with no
+`[New message]` boundary is kept whole, and a relay with two or more
+distinct speakers keeps its prefixes.
+
+Then own words of at most 250 characters are used as they are. Longer ones,
+such as a question next to a pasted log or document, are cut to one segment,
+skipping log, timestamp and fenced code lines: the last question of the final
+paragraph, else the first question of the first paragraph (asked first, pasted
+after), else the last question; failing that the last plain sentence; failing
+that the tail cut at a word boundary.
+
+Last, two kinds of context the person chose are appended after their own
+words. The first is the quoted message of a reply, because "answer this"
+means the quote is the topic. The second applies when the new message is
+shorter than 40 characters: the same speaker's earlier backfill lines, newest
+first. Another speaker's backfill line never enters the query, and a new
+message without a speaker prefix appends no backfill. No query is longer
+than 250 characters (`QUERY_MAX_CHARS`), cut at a word boundary with the
+person's own words kept first, and sanitizing a sanitized query changes
+nothing.
+
+This applies only to the chat-turn query the provider builds in
+`on_turn_start`, `prefetch` and `queue_prefetch`. CLI recall, `omh_memory
+recall` and coding-handoff recall packs keep their raw task text, because
+every sentence of a task matters. The prefetch receipt records which method
+applied (`passthrough`, `framing_only`, `question_extraction`,
+`tail_sentence`, `tail_truncation` or `empty`) and the original and clean
+lengths in `lens`, never the text. The paste reduction is reimplemented from
+MemPalace's query sanitizer (`MemPalace/mempalace`, MIT); the framing rules
+are OMH's own.
 
 ### The pack budget
 
@@ -2032,6 +2100,13 @@ What the window guarantees, exactly:
 `omh quality-evidence memory` imports the digest's stamp parser and its freeing
 rule, so the two read stamps and frees identically. A parity test holds the
 record and journal counts together across the user and project stores.
+
+### Backups
+
+The provider's `backup_paths()` hands `<omh_home>/memory` to `hermes backup`
+when it exists as a real directory (not a symlink); it never creates or
+changes it. A restore can leave `principal.key` with the restoring process's
+umask mode; OMH re-tightens it to 0600 on its next read.
 
 ## Dreaming
 

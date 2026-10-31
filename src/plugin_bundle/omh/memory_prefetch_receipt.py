@@ -22,6 +22,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+from .memory_query_sanitizer import SanitizedQuery
 from .memory_records import PreparedPrefetch, RECORD_SUMMARY_LIMIT_CHARS
 from .memory_session_lens import SURFACE_CLASSES
 from .project_identity import DIAGNOSTICS, RESOLVER_VERSION, ProjectIdentityResolution
@@ -59,6 +60,7 @@ def build_prefetch_receipt(
     pack_chars: int | None = None,
     surface_class: str | None = None,
     tightened_by_foreign_lens: bool = False,
+    query_sanitized: SanitizedQuery | None = None,
 ) -> dict[str, Any]:
     """Bind one selection and its rendering to configuration, lens, session and store.
 
@@ -166,6 +168,12 @@ def build_prefetch_receipt(
         "redaction_policy": "metadata_only",
         "claim_boundary": CLAIM_BOUNDARY,
     }
+    if query_sanitized is not None:
+        body["lens"].update(
+            query_method=query_sanitized.method,
+            query_original_length=query_sanitized.original_length,
+            query_clean_length=query_sanitized.clean_length,
+        )
     return {**body, "receipt_id": _digest(body), "state": "prepared", "served_at": ""}
 
 
@@ -233,6 +241,15 @@ def validate_prefetch_receipt(value: object) -> list[str]:
     lens = value.get("lens")
     if not isinstance(lens, dict) or not isinstance(lens.get("scope_allowlist"), list) or not isinstance(lens.get("perspective"), dict):
         errors.append("lens")
+    if isinstance(lens, dict) and any(key in lens for key in ("query_method", "query_original_length", "query_clean_length")):
+        if (
+            not isinstance(lens.get("query_method"), str)
+            or lens["query_method"] not in {"passthrough", "framing_only", "question_extraction", "tail_sentence", "tail_truncation", "empty"}
+            or not _non_negative_int(lens.get("query_original_length"))
+            or not _non_negative_int(lens.get("query_clean_length"))
+            or lens["query_clean_length"] > lens["query_original_length"]
+        ):
+            errors.append("lens.query_sanitized")
     selection = value.get("selection")
     rendering = value.get("rendering")
     if not isinstance(selection, dict) or not isinstance(selection.get("selected_record_ids"), list):
