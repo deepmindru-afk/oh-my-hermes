@@ -6,6 +6,15 @@ All notable changes will be documented here.
 
 ![Sprite Forge patch notes](https://raw.githubusercontent.com/rlaope/oh-my-hermes/main/assets/omh-sprite-forge-patch-notes.png)
 
+- **A rename's stale export is named before the turn ends.** When a turn
+  leaves a Python module exporting a name it no longer defines, OMH names the
+  line at the turn's first stop as `path:line`, so the model can fix it. That
+  covers an `__all__` entry, and a `from module import name` whose workspace
+  module no longer has the name. It needs no language server and is silent
+  otherwise. Measured on four models, the rename template that models kept
+  missing went from 8/12 to 12/12, with +3 of that from the note itself
+  ([measurement](benchmarks/live-model-tools/v1/README.md)).
+
 - **A steer reads as the prompt it is.** A steer you send during a turn
   shows as a prompt row (`❯ <text>`), as Claude Code shows one, in place of
   the dim `↪ steer queued by Hermes · <text>`. It stays dim right above the

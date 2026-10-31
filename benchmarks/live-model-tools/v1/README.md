@@ -1278,7 +1278,7 @@ What it shows, and what it does not:
   dispatch, so those callers still break silently. A deleted or moved module is not checked.
   n = 12 per model per arm.
 
-### 2026-10-31 export check: a rename's stale `__all__` entry, base vs new (`pre_verify`), gate failed
+### 2026-10-31 export check: a rename's stale `__all__` entry, base vs new (`pre_verify`), gate failed, merged by owner decision
 
 One question: when a turn leaves a module exporting a name it no longer defines, does naming that
 line at the turn's first stop make the model fix it? In the OPT-A round-end run (2026-10-30, the
@@ -1384,6 +1384,18 @@ What it shows, and what it does not:
   not counted.
 - n = 3 per model per template. Only `__all__` and `from ... import` names are checked; a stale
   name in a docstring, a string-dispatch table or a non-Python file is not.
+
+Owner decision (2026-10-31): merge despite the failed clause. Under the pre-registered rule, a
+failed clause meant reject; the owner overrode it. The reasons:
+
+- The note fired in 3 of 60 new-arm sessions. In the other 57, the model's input was byte-identical
+  across the arms, and their median tokens still differ by 1.058x.
+- The paired difference over all 60 is not significant: new is heavier in 36 of 60 pairs, one-sided
+  sign test p = 0.08.
+- So the token gap is run-to-run variation the change cannot have caused.
+
+The results above are left as recorded. The gain attributable to the check is +3 passes (the three
+`gpt-6.1-sol` sessions the note fixed), not the +4 the table shows.
 
 ### 2026-10-30 big files: read outline off vs on (`bigfile-ab`), gate failed
 
