@@ -86,8 +86,9 @@ class RoutingPrecisionTests(unittest.TestCase):
         # its third two Japanese logo animations on an app surface.
         # The show-reel recall follow-up adds six closed-shape controls, and its
         # review round four more.
-        # Two coding requests that name OMH as the tool stay off workflow-learning.
-        self.assertEqual(payload["summary"]["case_count"], 1308)
+        # Two coding requests that name OMH as the tool stay off workflow-learning,
+        # and so do two throwaway OMH test messages and the user's own router.
+        self.assertEqual(payload["summary"]["case_count"], 1311)
         self.assertEqual(payload["summary"]["passing_count"], payload["summary"]["case_count"])
         self.assertEqual(payload["summary"]["negative_case_count"], payload["summary"]["case_count"])
         self.assertEqual(payload["summary"]["negative_passing_count"], payload["summary"]["case_count"])
@@ -228,8 +229,8 @@ class RoutingPrecisionTests(unittest.TestCase):
         # second review drops one and adds eight owners of a named video.
         # The show-reel recall follow-up adds six recovered closed shapes.
         # Two OMH meta tests (route hint vocabulary, router on workflow names)
-        # keep workflow-learning.
-        self.assertEqual(payload["summary"]["intervention_case_count"], 1205)
+        # keep workflow-learning, and two reports on OMH's router reach it.
+        self.assertEqual(payload["summary"]["intervention_case_count"], 1207)
         self.assertEqual(
             payload["summary"]["intervention_passing_count"], payload["summary"]["intervention_case_count"]
         )

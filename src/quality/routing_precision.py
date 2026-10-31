@@ -9317,6 +9317,34 @@ ROUTING_PRECISION_CASES: tuple[RoutingPrecisionCase, ...] = (
         "",
         "workflow-learning",
     ),
+    # Owner decision on #2440: a throwaway test message is not talk about OMH
+    # and gets no workflow-learning hint; and "router" is OMH's only in a
+    # message that names OMH, so the user's own router picking something is not
+    # a report on OMH's routing.
+    RoutingPrecisionCase(
+        "throwaway-omh-test-message-is-not-meta-discussion",
+        "A throwaway test message for OMH does not open workflow learning",
+        "This is a test message for OMH",
+        "answer_clarification",
+        "",
+        "workflow-learning",
+    ),
+    RoutingPrecisionCase(
+        "testing-omh-ignore-this-is-not-meta-discussion",
+        "Testing OMH, ignore this message, does not open workflow learning",
+        "I'm testing OMH right now, ignore this message",
+        "answer_clarification",
+        "",
+        "workflow-learning",
+    ),
+    RoutingPrecisionCase(
+        "user-router-picking-is-not-an-omh-behaviour-report",
+        "The user's own router picking an option is not a report on OMH's routing",
+        "Our router picked the cheapest shipping option for every order; is that normal?",
+        "answer_clarification",
+        "",
+        "workflow-learning",
+    ),
 )
 
 
@@ -11973,6 +12001,28 @@ ROUTING_INTERVENTION_CASES: tuple[RoutingInterventionCase, ...] = (
         "dispatch",
         "workflow-learning",
         "audit_learning_readiness",
+        "workflow_learning",
+        "workflow-learning",
+    ),
+    # OMH or its router as the subject of a choosing or reading verb is a report
+    # on OMH's own behaviour (owner decision on #2440).
+    RoutingInterventionCase(
+        "omh-router-misread-reaches-workflow-learning",
+        "The OMH router misreading a message is talk about OMH's own behaviour",
+        "the OMH router misread my last message; let's look at why",
+        "dispatch",
+        "workflow-learning",
+        "audit_learning_readiness",
+        "workflow_learning",
+        "workflow-learning",
+    ),
+    RoutingInterventionCase(
+        "omh-router-chose-wrong-workflow-records-missed-route",
+        "OMH's router choosing the wrong workflow records a missed route",
+        "OMH's router chose the wrong workflow for my question",
+        "dispatch",
+        "workflow-learning",
+        "record_missed_route",
         "workflow_learning",
         "workflow-learning",
     ),

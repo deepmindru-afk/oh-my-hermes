@@ -686,6 +686,34 @@ class HookManifestTests(unittest.TestCase):
                 self.assertEqual(payload["selected_workflow"], "workflow-learning")
                 self.assertIn(payload["intent_class"], {"meta_discussion", "feedback_signal"})
 
+    def test_report_on_omh_routing_keeps_workflow_learning_but_throwaway_tests_do_not(self) -> None:
+        # Owner decision on #2440: OMH or its router choosing or reading wrong
+        # is talk about OMH; a throwaway test message, or the user's own router,
+        # is not.
+        reports = (
+            "the OMH router misread my last message; let's look at why",
+            "OMH's router chose the wrong workflow for my question",
+        )
+        for message in reports:
+            with self.subTest(message=message):
+                payload = awareness_route_hint(message)
+
+                self.assertEqual(payload["selected_workflow"], "workflow-learning")
+                self.assertEqual(payload["intent_class"], "feedback_signal")
+
+        not_reports = (
+            "This is a test message for OMH",
+            "I'm testing OMH right now, ignore this message",
+            "Our router picked the cheapest shipping option for every order; is that normal?",
+            "fix the bug where the OMH router picked the wrong locale",
+        )
+        for message in not_reports:
+            with self.subTest(message=message):
+                payload = awareness_route_hint(message)
+
+                self.assertNotEqual(payload.get("selected_workflow"), "workflow-learning")
+                self.assertNotIn(payload.get("intent_class"), {"meta_discussion", "feedback_signal"})
+
     def test_awareness_route_hint_marks_workflow_vocabulary_as_mentioned_not_selected(self) -> None:
         message = "왜 ultraprocess 로그가 떠? Codex handoff 테스트 용어일 뿐이야."
 

@@ -951,7 +951,9 @@ def count_metrics() -> tuple[CountMetric, ...]:
             # fix/coding-request-meta-discussion-misroute: a coding request that
             # names OMH as the tool ("Use OMH to fix the failing test", "With
             # OMH, add a unit test") stays off workflow-learning (+2).
-            expected=1308,
+            # Owner decision on #2440: two throwaway OMH test messages and the
+            # user's own router picking an option stay off workflow-learning (+3).
+            expected=1311,
             # The one reviewed test pin. Every other test compares its payload
             # against build_routing_precision_demo() rather than a literal.
             sites=("tests/test_routing_precision.py",),
@@ -1508,7 +1510,9 @@ def count_metrics() -> tuple[CountMetric, ...]:
             # fix/coding-request-meta-discussion-misroute: an OMH developer test
             # of the route hint vocabulary and a test of how the router reads
             # workflow names keep workflow-learning (+2).
-            expected=1205,
+            # Owner decision on #2440: the OMH router misreading a message and
+            # choosing the wrong workflow reach workflow-learning (+2).
+            expected=1207,
             # The one reviewed test pin. Every other test compares its payload
             # against build_routing_precision_demo() rather than a literal.
             sites=("tests/test_routing_precision.py",),

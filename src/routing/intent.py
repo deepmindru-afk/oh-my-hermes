@@ -119,6 +119,20 @@ _FEEDBACK_CUES = (
     "쓰지 않은",
     "누락",
 )
+# Talk about OMH's own routing going wrong: OMH or its router as the subject of
+# a past-tense verb of choosing or reading ("OMH picked the wrong skill", "the
+# router misread my message", "OMH keeps routing my requests to ..."). Word
+# order is the cue, not the words: "use OMH to pick a skill" or "pick the router
+# config" has neither. A progressive verb counts only after a filler ("keeps",
+# "still"), so "OMH routing table" stays a noun phrase. "router" is OMH's only
+# in a message that names OMH: "our router picked the cheapest shipping option"
+# is the user's own router.
+_OMH_BEHAVIOUR_SUBJECTS = frozenset({"omh", "oh-my-hermes", "router"})
+_OMH_BEHAVIOUR_PAST_VERBS = frozenset(
+    {"picked", "chose", "chosen", "selected", "routed", "misrouted", "misread", "misunderstood", "misclassified", "mistook"}
+)
+_OMH_BEHAVIOUR_PROGRESSIVE_VERBS = frozenset({"picking", "choosing", "selecting", "routing", "misreading"})
+_OMH_BEHAVIOUR_FILLERS = frozenset({"just", "again", "has", "had", "always", "keeps", "kept", "still", "wrongly"})
 _PLANNING_CUES = (
     "plan",
     "proposal",
@@ -342,6 +356,8 @@ def classify_workflow_intent(message: str) -> WorkflowIntent:
     )
     meta_cues = _matched_meta_cues(matching_normalized, matching_compact)
     feedback_cues = _matched_cues(_FEEDBACK_CUES, matching_normalized, matching_compact)
+    if _reports_omh_behaviour(matching_normalized):
+        feedback_cues = _compact_tuple((*feedback_cues, "omh_behaviour_report"))
     planning_cues = _matched_cues(_PLANNING_CUES, matching_normalized, matching_compact)
     negated_execution_cues = _compact_tuple(
         (*_matched_cues(_NEGATED_EXECUTION_CUES, matching_normalized, matching_compact), *_structural_negated_execution_cues(matching_normalized))
@@ -613,6 +629,30 @@ def _bounded_english_cue_pattern(normalized_cue: str) -> re.Pattern[str] | None:
 def _commands_code_edit(normalized: str) -> bool:
     """The request's command verb is a code-edit verb: "fix ...", "use OMH to add ...", "OMH, update ..."."""
     return bool(DIRECT_CODING_EDIT_VERBS & commanded_words(command_words(normalized)))
+
+
+def _reports_omh_behaviour(normalized: str) -> bool:
+    """OMH or its router did the choosing ("OMH picked ...", "the router misread ...").
+
+    Not when the request itself opens with a code edit ("fix the bug where the
+    router picked the wrong locale"): that names the router as code to change.
+    """
+    words = re.findall(r"[a-z0-9][a-z0-9'-]*", normalized)
+    subjects = _OMH_BEHAVIOUR_SUBJECTS
+    if not {word.removesuffix("'s") for word in words} & _PRODUCT_NAME_CONTEXT:
+        subjects = subjects - {"router"}
+    for index, word in enumerate(words[:-1]):
+        if word.removesuffix("'s") not in subjects:
+            continue
+        following = words[index + 1]
+        if following in _OMH_BEHAVIOUR_FILLERS and index + 2 < len(words):
+            if words[index + 2] in _OMH_BEHAVIOUR_PAST_VERBS | _OMH_BEHAVIOUR_PROGRESSIVE_VERBS:
+                break
+        elif following in _OMH_BEHAVIOUR_PAST_VERBS:
+            break
+    else:
+        return False
+    return not set(command_words(normalized)[:1]) & DIRECT_CODING_EDIT_VERBS
 
 
 def is_workflow_meta_or_feedback(message: str) -> bool:
