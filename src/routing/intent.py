@@ -6,9 +6,9 @@ import re
 import unicodedata
 
 from ..skills.catalog_types import historical_skill_display_names, omh_skill_display_name
-from .command_verb import leads_with_code_edit, ordered_words
+from .command_verb import gives_command, leads_with_code_edit, ordered_words
 from .display_names import canonical_display_mentions
-from .localization import normalized_phrase, routing_tokens
+from .localization import normalized_phrase, routing_terms, routing_tokens
 from .reference_regions import executable_routing_text, reference_regions
 from .visual_qa_cues import contains_cue_phrase
 
@@ -95,6 +95,11 @@ _EVERYDAY_META_CUES = frozenset(
         "테스트", "픽스처", "개발자", "운영자", "로그", "트리거", "설명",
     }
 )
+# OMH's own surfaces, named in a message: a request that opens with an edit
+# but names one ("ask OMH to fix a test and watch it open workflow learning")
+# is about OMH, so its everyday words keep their meta reading. Matched as
+# whole words, with a space, hyphen or underscore between them.
+_OMH_SURFACE_PHRASES = ("workflow learning", "route hint", "route hints")
 _KOREAN_CUE_TAILS = frozenset(
     {
         "이", "가", "을", "를", "은", "는", "에", "에서", "로", "으로", "도", "만", "와", "과", "의", "랑", "이랑",
@@ -386,8 +391,13 @@ def classify_workflow_intent(message: str) -> WorkflowIntent:
     # the failing test" the test is what the edit acts on, so the everyday
     # words lose their meta reading. Only the lead counts ("I asked OMH to fix
     # a test and it ..." is a report), only the everyday words go (OMH's own
-    # vocabulary stays), and a negation ("not asking to implement") keeps all.
-    if not negated_execution_cues and leads_with_code_edit(matching_normalized):
+    # vocabulary stays), a message naming an OMH surface keeps them, and a
+    # negation ("not asking to implement") keeps all.
+    if (
+        not negated_execution_cues
+        and leads_with_code_edit(matching_normalized)
+        and not any(_contains_bounded_english_cue(matching_normalized, phrase) for phrase in _OMH_SURFACE_PHRASES)
+    ):
         meta_cues = tuple(cue for cue in meta_cues if cue not in _EVERYDAY_META_CUES)
     execution_cues = _suppress_negated_execution_cues(
         _matched_cues(_EXECUTION_CUES, matching_normalized, matching_compact),
@@ -651,12 +661,20 @@ def _reports_omh_behaviour(normalized: str) -> bool:
     """OMH or its router, opening a clause, did the choosing ("OMH picked ...", "the OMH router misread ...").
 
     Not when the request itself opens with a code edit ("fix the bug where the
-    OMH router picked the wrong locale"): that names the router as code.
+    OMH router picked the wrong locale"): that names the router as code. And
+    not when another clause gives the user's own command ("OMH picked the
+    deploy skill; now run it on staging", "OMH selected five files. Open each
+    one"): what OMH chose is then the setting for the request, not a report on
+    it. A clause that only adds to the report ("and I only asked a question")
+    keeps it one.
     """
     names_omh = bool(set(ordered_words(normalized)) & _PRODUCT_NAME_CONTEXT)
     if not names_omh or leads_with_code_edit(normalized):
         return False
-    return any(_clause_reports_omh_behaviour(ordered_words(clause)) for clause in _CLAUSE_BREAK.split(normalized))
+    clauses = _CLAUSE_BREAK.split(normalized)
+    if not any(_clause_reports_omh_behaviour(ordered_words(clause)) for clause in clauses):
+        return False
+    return not any(gives_command(clause) for clause in clauses)
 
 
 def _clause_reports_omh_behaviour(words: list[str]) -> bool:
@@ -792,7 +810,7 @@ def _matched_meta_cues(normalized: str, compact: str) -> tuple[str, ...]:
             found = _contains_bounded_english_cue(normalized, normalized_cue)
         elif cue in _EVERYDAY_META_CUES:
             if korean_words is None:
-                korean_words = re.findall(r"[^\W_]+", unicodedata.normalize("NFC", normalized))
+                korean_words = [unicodedata.normalize("NFC", term) for term in routing_terms(normalized)]
             found = any(_korean_word_is_cue(word, cue) for word in korean_words)
         else:
             found = normalized_cue in normalized or normalized_cue.replace(" ", "") in compact

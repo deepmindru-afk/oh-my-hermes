@@ -88,8 +88,9 @@ class RoutingPrecisionTests(unittest.TestCase):
         # review round four more.
         # Two coding requests that name OMH as the tool stay off workflow-learning,
         # and so do two throwaway OMH test messages and the user's own router,
-        # two tasks on what OMH selected or picked, and a Korean test request.
-        self.assertEqual(payload["summary"]["case_count"], 1314)
+        # two tasks on what OMH selected or picked, and a Korean test request,
+        # and four messages where a command follows what OMH chose.
+        self.assertEqual(payload["summary"]["case_count"], 1318)
         self.assertEqual(payload["summary"]["passing_count"], payload["summary"]["case_count"])
         self.assertEqual(payload["summary"]["negative_case_count"], payload["summary"]["case_count"])
         self.assertEqual(payload["summary"]["negative_passing_count"], payload["summary"]["case_count"])
@@ -167,8 +168,8 @@ class RoutingPrecisionTests(unittest.TestCase):
         # show-reel's README-link control is answered as a file lookup (+1).
         # "Use OMH to fix the failing test in billing.py" names a file: a file lookup (+1).
         # Copying the skills OMH selected and summarizing the files it picked
-        # are file tasks (+2).
-        self.assertEqual(payload["summary"]["file_lookup_count"], 14)
+        # are file tasks (+2), and so is opening the files OMH selected (+1).
+        self.assertEqual(payload["summary"]["file_lookup_count"], 15)
         self.assertEqual(payload["summary"]["overroute_count"], 0)
         self.assertEqual(payload["summary"]["catalog_picker_count"], 0)
         self.assertEqual(payload["summary"]["generic_ack_count"], 0)
@@ -234,8 +235,9 @@ class RoutingPrecisionTests(unittest.TestCase):
         # Two OMH meta tests (route hint vocabulary, router on workflow names)
         # keep workflow-learning, and two reports on OMH's router reach it.
         # Two CI-workflow edits through OMH dispatch the coding lane, and five
-        # reports or meta questions keep workflow-learning.
-        self.assertEqual(payload["summary"]["intervention_case_count"], 1214)
+        # reports or meta questions keep workflow-learning. A later command keeps
+        # release-cut, and two more reports keep workflow-learning.
+        self.assertEqual(payload["summary"]["intervention_case_count"], 1217)
         self.assertEqual(
             payload["summary"]["intervention_passing_count"], payload["summary"]["intervention_case_count"]
         )

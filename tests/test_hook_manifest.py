@@ -747,6 +747,35 @@ class HookManifestTests(unittest.TestCase):
         # workflow it names, as on origin/main).
         self.assertEqual(awareness_route_hint("ultraprocess 용어를 테스트해보자")["intent_class"], "meta_discussion")
 
+    def test_a_command_after_what_omh_chose_is_not_a_report(self) -> None:
+        # #2440 re-review: a clause opened by OMH counted as a report even when
+        # a later clause gave the user's own command.
+        commands = (
+            "OMH chose the release-cut workflow; go ahead and tag v1.2",
+            "The OMH router picked the deploy skill; now run it on staging",
+            "The OMH router picked the billing skill; now write the invoice export for me",
+            "OMH picked the frontend skill, so build the settings page",
+            "OMH picked these files; copy them to the backup folder",
+            "OMH chose three skills for this. Run them in order and paste the output",
+            "OMH selected five files. Open each one and run black",
+            "OMH selected the right files. Now refactor them into one module",
+            "OMH selected the wrong Python version, so set it to 3.12 in pyproject",
+        )
+        for message in commands:
+            with self.subTest(message=message):
+                payload = awareness_route_hint(message)
+
+                self.assertNotEqual(payload.get("selected_workflow"), "workflow-learning")
+                self.assertNotEqual(payload.get("intent_class"), "feedback_signal")
+
+        reports = (
+            "OMH picked code-review, and I only asked a question",
+            "Ask OMH to fix a test and watch it open workflow learning, that's the bug",
+        )
+        for message in reports:
+            with self.subTest(message=message):
+                self.assertEqual(awareness_route_hint(message)["selected_workflow"], "workflow-learning")
+
     def test_report_on_omh_routing_keeps_workflow_learning_but_throwaway_tests_do_not(self) -> None:
         # Owner decision on #2440: OMH or its router choosing or reading wrong
         # is talk about OMH; a throwaway test message, or the user's own router,

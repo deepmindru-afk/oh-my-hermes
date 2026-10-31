@@ -24,6 +24,21 @@ KOREAN_CODE_EDIT_PREDICATES = frozenset(
     {"고쳐", "수정", "추가", "작성", "구현", "개선", "삭제", "제거", "변경", "바꿔", "넣어", "만들어"}
 )
 
+# The verbs a clause opens with when it gives the user's own command ("now run
+# it on staging", "copy them to the backup folder"), after the courtesy openers
+# `command_words` strips ("now", "so", "please", "go ahead and"). The code-edit
+# verbs are among them. Verbs of looking into something ("look", "see",
+# "check", "find", "explain", "record") are not: "let's look at why" asks about
+# OMH's own routing.
+REQUEST_COMMAND_VERBS = DIRECT_CODING_EDIT_VERBS | frozenset(
+    {
+        "run", "write", "copy", "open", "show", "list", "summarize", "summarise", "move", "paste", "tag",
+        "refactor", "deploy", "release", "merge", "push", "commit", "create", "generate", "translate",
+        "format", "convert", "archive", "count", "print", "start", "install", "publish", "send", "export",
+        "review", "test", "upload", "download", "sort", "draft", "restart", "revert", "apply", "execute",
+    }
+)
+
 # The word before a verb that still makes it the command: "use X to fix",
 # "help me fix", or a second command joined by "and"/"then".
 _COMMAND_INTRODUCERS = frozenset({"to", "me", "and", "then"})
@@ -53,6 +68,12 @@ def command_words(normalized_query: str) -> list[str]:
 def commanded_words(words: list[str]) -> set[str]:
     """The command verb, a verb introduced as the task, or a second command joined by "and"/"then"."""
     return set(words[:1]) | {words[i] for i in range(1, len(words)) if words[i - 1] in _COMMAND_INTRODUCERS}
+
+
+def gives_command(clause: str) -> bool:
+    """`clause` (folded) opens with the user's own command: a code-edit lead, or a `REQUEST_COMMAND_VERBS` verb."""
+    words = command_words(clause)
+    return bool(words) and words[0] in REQUEST_COMMAND_VERBS or leads_with_code_edit(clause)
 
 
 def leads_with_code_edit(normalized_query: str) -> bool:
