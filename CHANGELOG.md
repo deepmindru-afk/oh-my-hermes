@@ -6,6 +6,15 @@ All notable changes will be documented here.
 
 ![Sprite Forge patch notes](https://raw.githubusercontent.com/rlaope/oh-my-hermes/main/assets/omh-sprite-forge-patch-notes.png)
 
+- **A Kanagawa Wave theme and launch look.** `omh theme use kanagawa`
+  selects an indigo palette with warm ivory text and muted blue and violet
+  accents, adapted from rebelot/kanagawa.nvim (MIT, Copyright (c) 2021
+  Tommaso Laurenzi). Like the other four it sets no background, so the
+  terminal's own shows through. `/theme kanagawa-wave` selects the matching
+  launch look: a rule above and below on a dark sumi-ink ground (Kanagawa
+  Lotus on a light terminal), with an ocean swell for its living wallpaper.
+  Contributed by Dan Rio (#2436).
+
 - **A steer reads as the prompt it is.** A steer you send during a turn
   shows as a prompt row (`❯ <text>`), as Claude Code shows one, in place of
   the dim `↪ steer queued by Hermes · <text>`. It stays dim right above the
@@ -120,7 +129,7 @@ All notable changes will be documented here.
   its navy ground with OSC 11, and Otty took a set background only on the
   cells written after it, so the launch card showed holes of the terminal's
   own black. The default look, which draws no picture, now takes the
-  terminal's background as its ground; the other seven looks keep theirs.
+  terminal's background as its ground; the other looks keep theirs.
 
 - **The working glow is smaller.** The light that goes round the screen
   while a turn runs read too big and hid most of the top row's text as it
@@ -131,7 +140,7 @@ All notable changes will be documented here.
 
 - **The default look, spectrum, keeps its background colour and draws no
   picture.** Its pixel aura is gone: the wallpaper still sets spectrum's
-  ground, and the other seven looks keep their scenes. An idle screen on
+  ground, and the other looks keep their scenes. An idle screen on
   spectrum no longer wakes four times a second to paint nothing.
 
 - **The living wallpaper is pixel art, in the brand's pixel-aura style.**
@@ -873,6 +882,30 @@ All notable changes will be documented here.
   Hermes. When the recorded package is missing or another version, the
   refusal says which and names that same repair, and `omh doctor` reports
   the bundle as stale (#2166, #2415).
+
+- **Memory recall works on long pastes, saved memories lead back to the
+  original words, and `hermes backup` includes OMH memory.** A message that
+  pastes a log or document next to a question used to rank memory against
+  the whole paste; the chat-turn recall query now keeps the person's own
+  words (other speakers' Discord channel backfill, host notices and loaded
+  skill bodies are left out, a replied-to message and the same speaker's
+  recent lines are kept) and cuts a long turn to its question, else its last
+  sentence, else its tail, at most 250 characters. CLI recall and coding-handoff packs keep their raw task text,
+  and the prefetch receipt records only the method and lengths. A capture
+  made through `omh_memory` now records its Hermes session, and
+  `omh_memory recall` rows carry an `origin` the model can open with
+  `session_search` to quote the person's message; it is read-only from
+  Hermes' `state.db`, and OMH still stores no transcript. The memory
+  provider's `backup_paths()` hands `<omh_home>/memory` to `hermes backup`,
+  and a restored `principal.key` is tightened back to 0600 on its next read.
+
+- **The OMH pane in Hermes Desktop reads idle when nothing is running and
+  keeps the plan and status bar in agreement.** Old runs no longer keep it
+  looking busy. OMH catches and the delegation graph appear alongside the
+  plan, board and active fanout graph, while individual subagent rows stay
+  in Desktop's Agents panel. Calmer colours keep running work distinct from
+  waiting or finished work, and the pane follows Desktop's language when
+  Korean is selected.
 
 ## 4.0.3 - 2026-10-27
 
