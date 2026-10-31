@@ -32,6 +32,7 @@ from typing import NamedTuple
 from ..installer import OmhError
 from ..install.config_adapter import display_skin_selection, read_config
 from ..skin_pack import (
+    SHORT_NAME_WIDTH,
     SKIN_THEMES,
     SkinTheme,
     default_theme,
@@ -314,7 +315,7 @@ def _print_theme_list(payload: dict[str, object]) -> None:
                 continue
             mark = "*" if theme.get("active") else " "
             suffix = " (default)" if theme.get("default") else ""
-            print(f"  [{mark}] {str(theme.get('name', '')):<8} {theme.get('summary', '')}{suffix}")
+            print(f"  [{mark}] {str(theme.get('name', '')):<{SHORT_NAME_WIDTH}} {theme.get('summary', '')}{suffix}")
     print(_color("Current", "1;32", use_color))
     print(_active_line(payload))
     print(_color("Next", "1;32", use_color))

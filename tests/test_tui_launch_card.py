@@ -28,6 +28,7 @@ from test_tui_app import FakePoller, ScriptedTerminal
 from test_tui_modes import SID, RecordingClient
 from test_tui_theme import contrast
 from omh.skin_pack import (
+    SKIN_THEMES,
     THEME_STORE_SCHEMA,
     default_theme,
     read_launch_choice,
@@ -168,8 +169,13 @@ class PaletteTests(unittest.TestCase):
     def test_spectrum_is_the_default_and_the_first_look(self) -> None:
         self.assertEqual(DEFAULT_LAUNCH, "spectrum")
         self.assertEqual(LAUNCH_PRESETS,
-                         ("spectrum", "violet", "gold", "graphite", "sakura", "moonlit", "aurora", "ember"))
+                         ("spectrum", "violet", "gold", "graphite", "sakura", "moonlit", "aurora", "ember", "kanagawa-wave"))
         self.assertEqual(set(LAUNCH_PALETTES), set(LAUNCH_PRESETS))
+
+    def test_no_theme_shares_a_name_with_a_look(self) -> None:
+        # `/theme <name>` tries the looks first: a theme named as a look could never be applied to the session.
+        names = {name for theme in SKIN_THEMES for name in (theme.short_name, theme.skin_name)}
+        self.assertEqual(names & set(LAUNCH_PRESETS), set())
 
 
 class SkillRowTests(unittest.TestCase):
@@ -554,7 +560,7 @@ class SwitchTests(unittest.TestCase):
         self.assertIn("── gpt-6.1-sol", "\n".join(run.screen()))
 
     def test_every_look_is_kept_by_name_saved_and_read_back_with_its_chrome(self) -> None:
-        # The eight looks (owner, 2026-10-29): `/theme <look>` keeps each, the saved `launch` key reads back as the same
+        # Every look (eight by the owner, 2026-10-29, then kanagawa-wave): `/theme <look>` keeps each, the saved `launch` key reads back as the same
         # look on the next launch, and the theme the app paints carries that look's rule and rail colours.
         for look in LAUNCH_PRESETS:
             with self.subTest(look=look):
@@ -580,7 +586,7 @@ class SwitchTests(unittest.TestCase):
         run.press(*[Key(DOWN)] * len(LAUNCH_PRESETS))  # one past the last: the highlight stays on it
         self.assertEqual(run.app._shown_look(), LAUNCH_PRESETS[-1])
         run.press(Key(ENTER))
-        self.assertEqual(read_launch_choice(run.home), "ember")
+        self.assertEqual(read_launch_choice(run.home), LAUNCH_PRESETS[-1])
 
     def test_a_click_on_a_look_moves_the_highlight_and_reports_are_on_only_while_it_is_open(self) -> None:
         run = Launched()

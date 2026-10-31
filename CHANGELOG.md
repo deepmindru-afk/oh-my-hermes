@@ -6,6 +6,15 @@ All notable changes will be documented here.
 
 ![Sprite Forge patch notes](https://raw.githubusercontent.com/rlaope/oh-my-hermes/main/assets/omh-sprite-forge-patch-notes.png)
 
+- **A Kanagawa Wave theme and launch look.** `omh theme use kanagawa`
+  selects an indigo palette with warm ivory text and muted blue and violet
+  accents, adapted from rebelot/kanagawa.nvim (MIT, Copyright (c) 2021
+  Tommaso Laurenzi). Like the other four it sets no background, so the
+  terminal's own shows through. `/theme kanagawa-wave` selects the matching
+  launch look: a rule above and below on a dark sumi-ink ground (Kanagawa
+  Lotus on a light terminal), with an ocean swell for its living wallpaper.
+  Contributed by Dan Rio (#2436).
+
 - **A steer reads as the prompt it is.** A steer you send during a turn
   shows as a prompt row (`❯ <text>`), as Claude Code shows one, in place of
   the dim `↪ steer queued by Hermes · <text>`. It stays dim right above the
@@ -90,7 +99,7 @@ All notable changes will be documented here.
   its navy ground with OSC 11, and Otty took a set background only on the
   cells written after it, so the launch card showed holes of the terminal's
   own black. The default look, which draws no picture, now takes the
-  terminal's background as its ground; the other seven looks keep theirs.
+  terminal's background as its ground; the other looks keep theirs.
 
 - **The working glow is smaller.** The light that goes round the screen
   while a turn runs read too big and hid most of the top row's text as it
@@ -101,7 +110,7 @@ All notable changes will be documented here.
 
 - **The default look, spectrum, keeps its background colour and draws no
   picture.** Its pixel aura is gone: the wallpaper still sets spectrum's
-  ground, and the other seven looks keep their scenes. An idle screen on
+  ground, and the other looks keep their scenes. An idle screen on
   spectrum no longer wakes four times a second to paint nothing.
 
 - **The living wallpaper is pixel art, in the brand's pixel-aura style.**
