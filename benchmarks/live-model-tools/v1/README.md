@@ -1258,6 +1258,310 @@ sessions, and no bench run is a delegated child. Measurement 5 was not re-run.
 
 Pass counts come from the run records. Firing, final answers and tool calls come from
 each profile's session DB.
+
+### 2026-10-30 round-end check trigger: fire only on a copy or a reference
+
+Pre-registered before its first live run.
+
+The round-end consistency check above costs one extra round wherever it fires. In the
+2026-10-30 head-to-head against oh-my-pi, in the product-default configuration (Hermes
+`tool_search` default), it continued 33 of 33 Haiku 4.5 sessions and 19 of 33 Sonnet 5.5
+sessions. On Sonnet, OMH ran 4 model calls after its last edit against 2 for plain Hermes.
+Its measured wins are narrow:
+- `C-DUPLICATE`, a second copy of the edited helper;
+- `mutation_outside_scope` 2 to 0 in measurement 5, at n = 2.
+
+The change: `pre_verify` asks `consistency_trigger.round_end_trigger` first, whenever the
+check would be the only nudge continuing the turn.
+- **Snapshot.** `pre_tool_call` keeps the pre-edit text of each `.py`/`.pyi` file a
+  `patch` or `write_file` call edits, once per turn.
+- **Diff.** At the first stop, the trigger diffs each snapshot against the disk and finds
+  the definitions the changed lines touch, with stdlib `ast`.
+- **Scan.** It scans the workspace's other Python files, the ones this turn did not edit,
+  for four signals:
+  - `copy`: a touched top-level definition is also defined at the top level elsewhere;
+  - `renamed`: a definition the edit removed is still named elsewhere;
+  - `signature`: a touched function's parameters or return annotation changed, and it
+    is named elsewhere;
+  - `line_copy`: a replaced line of 30 or more characters also appears elsewhere.
+
+No signal skips the check, and the turn ends at its first stop. The trigger fires the
+check, as before, whenever it cannot decide:
+- a changed source file that is not Python;
+- a changed file without a snapshot, or one that does not parse;
+- more than 3,000 files or 2 s of scanning;
+- any error.
+
+Beside another nudge (served-surface gate, impact note, open plan) the check rides along
+without a verdict, since the round happens anyway. The check text and the closing are
+unchanged.
+
+Offline replay, before this registration: the H2H omt sessions' own `patch` and
+`write_file` calls were applied to fresh fixtures (`OPT/A/replay_h2h.py` in the research
+folder). The trigger:
+- fired on every Haiku `C-DUPLICATE` and `C-DECOY` session, each naming the other module's
+  `_to_cents`;
+- fired on `I-SIGNATURE` and `I-KWARG`, through the changed signature;
+- skipped all 23 sessions on `C-SCOPE-TRAP`, `E-BUGFIX`, `E-RENAME`, `L-RENAME-ALIAS` and
+  `I-CONTROL` in which the base check had fired.
+
+The replay cannot apply `terminal` edits.
+
+The setup, fixed before the first live run:
+
+- **Arms.** `base` links the OMH plugin bundle at origin/main `531f7034f`. `new` links
+  this branch. The bundles differ only in `consistency_trigger.py`, `verify_hooks.py`
+  and `tool_hooks.py`.
+- **Profiles.** Both arms use the H2H omt configuration:
+  - Hermes's default `tools.tool_search`;
+  - `impact_check: true` and `lsp_tools: true`;
+  - `pyright` pinned by an absolute `lsp.servers.pyright.command`;
+  - `agent.max_turns: 120` and `agent.run_budget_seconds: 600`.
+
+  Profiles `opta-<lane>-<arm>`; edit surface `impact` (toolsets
+  `file,terminal,omh-lsp`).
+- **Prompt.** `baseline` condition, no edit directive, `--git-init-workspace`,
+  `--test-env`, effort `medium`.
+- **Panel.** Subscription routes only:
+
+  | Lane | Model | Route | Tier |
+  | --- | --- | --- | --- |
+  | h45 | `claude-haiku-4-5-20251001` | `claude-proxy` (CPA) | weak |
+  | s55 | `claude-sonnet-5-5` | `claude-proxy` (CPA) | strong |
+  | luna | `gpt-6-luna` | `openai-codex` | weak |
+  | sol | `gpt-6.1-sol` | `openai-codex` | strong |
+
+- **Templates and seeds.** Seven templates, seeds 104729, 130363 and 155921: 21 instances
+  per lane per arm, 84 per arm.
+  - Positive: `C-DUPLICATE`.
+  - Negatives: `C-DECOY`, a look-alike that must not change, and five templates with no
+    copy elsewhere: `C-SCOPE-TRAP`, `E-BUGFIX`, `E-RENAME`, `L-RENAME-ALIAS` and
+    `I-CONTROL`.
+- **Order.** Per instance, the two arms run back to back, and the order alternates.
+- **Retries.** A run classified `rate_limited`, `provider_error`, `model_unavailable` or
+  `authentication_failed` is retried on the same route. Any other outcome is final. A run
+  with no completed record is a fail.
+- **Ceiling check on the base arm, from the H2H omt sessions.** The check fired in 14 of
+  15 Haiku sessions and 9 of 15 Sonnet sessions on the five no-copy templates. So the
+  base arm leaves room for the fire rate to drop.
+
+The gate. Must hold, `new` against `base`:
+
+1. Total passes: new at least base - 1.
+2. `C-DUPLICATE` passes: new at least base.
+3. `mutation_outside_scope` count: new at most base.
+4. Final answer kept (the last assistant message contains `changed_paths`, read from the
+   session DB): new at least base - 2.
+
+Must improve:
+
+5. **Fire rate on the five no-copy templates.** It is the share of coding sessions with
+   an assistant row whose `finish_reason` is `verify_hook_continue`. A coding session is
+   a completed session with a `patch` or `write_file` call on a `.py` path. New must be
+   at most half of base.
+6. **Strong models (`claude-sonnet-5-5`, `gpt-6.1-sol`).**
+   - Each model's median tokens and median wall time per run: new strictly below base.
+   - Pooled over both models (42 runs per arm), the pre-registered minimum improvement is
+     median tokens at most 0.90x base and median wall time at most 0.95x base.
+
+Reported, not gated:
+- the weak-model medians;
+- the per-template table;
+- the trigger's own verdicts (`consistency_trigger ... reason=`) from the new arm's
+  profile log;
+- model calls after the last edit;
+- tokens and money by route.
+
+Recomputed from the raw run records and the session-DB snapshots, not from the driver log.
+If any clause fails, the failure is recorded here and the branch does not ask to merge.
+
+#### Result: gate failed on one clause (final answer kept)
+
+The run setup:
+- omh `16047b44d` against base origin/main `531f7034f`.
+- Hermes Agent v0.22.5, driven through its venv entry point.
+- 168 of 168 run records, all completed, with no retries.
+- One uncounted smoke ran before the counted runs: `gpt-6-luna`, new arm, `C-SCOPE-TRAP`.
+
+Recomputed from the run records and the profile session-DB snapshots by `OPT/A/gate.py` in the
+research folder.
+
+| Model | base pass | new pass | base tokens (median) | new tokens (median) | base wall (median) | new wall (median) |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| `claude-haiku-4-5-20251001` | 21 / 21 | 21 / 21 | 143,516 | 118,019 | 55.2 s | 43.0 s |
+| `claude-sonnet-5-5` | 21 / 21 | 21 / 21 | 77,795 | 54,524 | 35.0 s | 29.9 s |
+| `gpt-6-luna` | 20 / 21 | 20 / 21 | 100,214 | 93,712 | 54.8 s | 48.6 s |
+| `gpt-6.1-sol` | 18 / 21 | 18 / 21 | 98,520 | 81,790 | 62.8 s | 61.1 s |
+| **Total** | **80 / 84** | **80 / 84** | 8.97M total | 7.14M total | 53.0 s | 43.1 s |
+
+Per template, base vs new:
+- `C-DUPLICATE` 12 vs 12, `C-DECOY` 12 vs 12.
+- `C-SCOPE-TRAP` 12 vs 12, `E-BUGFIX` 12 vs 12, `E-RENAME` 12 vs 12, `I-CONTROL` 12 vs 12.
+- `L-RENAME-ALIAS` 8 vs 8. Every miss is `semantic_validator_failed`: `gpt-6.1-sol` 0 of 3 in both arms, `gpt-6-luna` 1 in each arm.
+
+Model calls after the last edit (median): base 6, new 4. On Sonnet, 4 and 2.
+
+The gate:
+
+1. Total passes, new at least base - 1: 80 vs 80. Pass.
+2. `C-DUPLICATE`, new at least base: 12 vs 12. Pass.
+3. `mutation_outside_scope`, new at most base: 0 vs 0. Pass.
+4. Final answer kept, new at least base - 2: 61 vs 66. **Fail.**
+5. Fire rate on the five no-copy templates, new at most half of base: 0 / 54 vs 54 / 54. Pass.
+6. Strong models, each model below base:
+   - `claude-sonnet-5-5` tokens 54,524 vs 77,795, wall 29.9 vs 35.0 s;
+   - `gpt-6.1-sol` tokens 81,790 vs 98,520, wall 61.1 vs 62.8 s.
+
+   Pooled, tokens 0.679x and wall 0.817x, against the registered 0.90x and 0.95x. Pass.
+
+The trigger's verdicts in the new arm:
+- `copy` 19: every `C-DECOY` session, and 7 of 11 `C-DUPLICATE` coding sessions.
+- `no_copy_or_reference` 58. In the other 4 `C-DUPLICATE` sessions the model had already edited
+  both copies, and all 4 passed.
+- No verdict was a fail-open.
+- The decision took 0 to 225 ms, the smoke included.
+
+What clause 4 measures here. Kept means the last assistant message contains `changed_paths`.
+- **Where the gap is.** Most of it is Sonnet: 21 kept in base, 17 in new. In both arms, Sonnet
+  usually ends on prose, and whether that prose names `changed_paths` varies from run to run.
+- **What the check itself changed.** A paired reading of the base arm compares each fired
+  session's interim answer (the answer the model gave before the check) with its final row. The
+  check changed the kept status in 4 of 75 fired sessions:
+  - +3: all Haiku `C-DUPLICATE`, where the new arm fires too;
+  - -1.
+- **On the no-copy templates**, where the new arm skips the check, its net effect on kept in the
+  base arm was 0 or less.
+
+So the 5-run gap is between-run variance in how models end, not the skipped check (61/84 vs
+66/84, two-sided Fisher exact p = 0.47). That is a reading after the fact. The clause is
+recorded as failed as registered, and this branch does not ask to merge on this measurement.
+
+One miss the trigger cannot see, which the check did not catch either:
+- **The miss.** In `L-RENAME-ALIAS`, `gpt-6-luna` and `gpt-6.1-sol` left the string
+  `__all__ = ["compute_quota"]` in `api.py`.
+- **Why the trigger misses it.** The models had already edited that file, and the `renamed`
+  signal scans only unedited files.
+- **The base arm did no better.** It failed this template in 4 of 12 runs, the same models and
+  the same count as the new arm. The check, firing there, did not repair the leftover string.
+
+Spend: 16.18M tokens, $0.
+- CPA Claude subscription: 8,174,148 (base 4,696,070, new 3,478,078).
+- Codex subscription: 8,002,558 (base 4,272,958, new 3,666,536, smoke 63,064).
+
+No gateway was signalled; the eight `opta-*` profiles were deleted after their databases and
+logs were kept.
+
+#### Re-measure (owner decision), 2026-10-31, pre-registered before its first run
+
+After the result above, the owner chose one re-measure. It uses the same pre-registered gate,
+with every clause unchanged, including final answer kept at least base - 2.
+
+- **Seeds.** New seeds 181081, 206347 and 231419, none of them used above.
+- **Unchanged.** The panel, the seven templates and the profile configuration are the same as
+  above. Profiles are `opta2-<lane>-<arm>`.
+- **Base.** Current origin/main `b906cb425`.
+- **New.** This branch after merging it (`9f5f0430f`). The plugin bundles differ only in
+  `consistency_trigger.py`, `verify_hooks.py` and `tool_hooks.py`.
+- **Gate.** Clauses 1 to 6 as registered above, with the same thresholds and the same pooled
+  minimums (strong-model median tokens at most 0.90x base, median wall time at most 0.95x base).
+- **This run decides.** If every clause passes, the branch asks to merge. If any clause fails,
+  the change is recorded here as rejected. There is no further re-measure.
+- **Scoring.** The result is recomputed from the raw run records and session-DB snapshots and
+  recorded here.
+
+#### Re-measure result: gate failed on one clause (pooled strong-model wall time); the change is rejected
+
+The run:
+- base origin/main `b906cb425` against new `9f5f0430f`;
+- seeds 181081, 206347 and 231419;
+- 168 of 168 run records, all completed, with no retries.
+
+Recomputed from the run records and the profile session-DB snapshots by `OPT/A/gate2.py` in the
+research folder. The strong-model pooled medians were also recomputed separately from the run
+records alone.
+
+| Model | base pass | new pass | base tokens (median) | new tokens (median) | base wall (median) | new wall (median) |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| `claude-haiku-4-5-20251001` | 21 / 21 | 21 / 21 | 145,844 | 129,919 | 47.8 s | 45.6 s |
+| `claude-sonnet-5-5` | 21 / 21 | 21 / 21 | 75,769 | 53,641 | 28.1 s | 23.1 s |
+| `gpt-6-luna` | 21 / 21 | 21 / 21 | 102,638 | 89,090 | 43.2 s | 43.5 s |
+| `gpt-6.1-sol` | 18 / 21 | 18 / 21 | 97,620 | 83,706 | 61.4 s | 59.2 s |
+| **Total** | **81 / 84** | **81 / 84** | 9.22M total | 7.29M total | 45.4 s | 44.2 s |
+
+Every template passed 12 / 12 in both arms except `L-RENAME-ALIAS`, which passed 9 / 12 in
+both. The three misses in each arm are `gpt-6.1-sol` (`semantic_validator_failed`). Model calls
+after the last edit (median): base 6, new 4.
+
+The gate, as registered:
+
+1. Total passes, new at least base - 1: 81 vs 81. Pass.
+2. `C-DUPLICATE`, new at least base: 12 vs 12. Pass.
+3. `mutation_outside_scope`, new at most base: 0 vs 0. Pass.
+4. Final answer kept, new at least base - 2: 62 vs 63. Pass.
+5. Fire rate on the five no-copy templates, new at most half of base: 0 / 54 vs 54 / 54. Pass.
+6. Strong models:
+   - `claude-sonnet-5-5`: tokens 53,641 vs 75,769; wall 23.1 vs 28.1 s.
+   - `gpt-6.1-sol`: tokens 83,706 vs 97,620; wall 59.2 vs 61.4 s.
+
+   Each model is below base on both, which passes. Pooled over both models (42 runs per arm),
+   median tokens are 65,200 vs 86,906, 0.750x, which passes. Median wall time is 44.52 vs
+   44.75 s, 0.995x, against the registered 0.95x. **Fail.**
+
+Why the pooled wall median barely moved:
+- The pooled set mixes two separate distributions: Sonnet around 23 to 28 s, and sol around
+  59 to 61 s.
+- With 21 runs from each model, the pooled median falls in the gap between them. It is the
+  mean of the slowest Sonnet runs and the fastest sol runs, so it barely reflects either
+  model's own median.
+- The mean pooled wall time fell from 47.2 to 43.7 s.
+
+These are readings made after the run. The clause was registered as a pooled median, and it
+failed.
+
+The trigger's verdicts in the new arm:
+- `copy` 19: every `C-DECOY` session, and 7 of 11 `C-DUPLICATE` coding sessions.
+- `no_copy_or_reference` 58, no fail-opens.
+- Each decision took 0 to 236 ms.
+
+The decision rule registered for this re-measure was that a failed clause records the change as
+rejected. **The round-end trigger is rejected. There is no further re-measure.**
+
+Spend: 16.51M tokens, $0.
+- CPA Claude subscription: 8,550,991 (base 4,861,273, new 3,689,718).
+- Codex subscription: 7,960,797 (base 4,357,529, new 3,603,268).
+
+No gateway was signalled. The eight `opta2-*` profiles were deleted after their databases and
+logs were kept. None had a `gateway.pid` or a bound backend process, and the shared gateway's
+pid did not change.
+
+#### Owner decision (2026-10-31)
+
+The re-measure rule registered above said the trigger is rejected if any clause fails. Clause 6's
+pooled strong-model median wall time failed at 0.995x against 0.95x. The owner overrode that
+rule and chose to merge the trigger.
+
+His reasons:
+- **Passes held in both runs.** They were 80 vs 80 in the first run and 81 vs 81 in the re-measure.
+  `C-DUPLICATE` was 12 vs 12 both times, and `mutation_outside_scope` was 0 vs 0 both times.
+- **Tokens fell.** Strong-model pooled median tokens were 0.679x of base in the first run and
+  0.750x in the re-measure.
+- **Each strong model's own median wall time fell in both runs:**
+
+  | Model | First run, base → new | Re-measure, base → new |
+  | --- | --- | --- |
+  | `claude-sonnet-5-5` | 35.0 → 29.9 s | 28.1 → 23.1 s |
+  | `gpt-6.1-sol` | 62.8 → 61.1 s | 61.4 → 59.2 s |
+
+- **The failed clause reflects how the runs were pooled.** Pooling two models whose wall times
+  form two separate groups puts the pooled median in the gap between them. In the re-measure,
+  the mean pooled strong-model wall time fell from 47.2 to 43.7 s while the pooled median moved
+  from 44.75 to 44.52 s.
+
+The first run's failed clause, final answer kept (61 vs 66), passed in the re-measure (62 vs 63).
+
+The recorded results and both pre-registrations above are unchanged. This note records a
+decision taken after the result, not a pass of the gate as registered.
+
 ### 2026-10-30 impact check: callers broken by an edit, off vs on (`impact_check` + `lsp_diagnostics`), gate passed
 
 One question, from oh-my-pi's workspace diagnostics: when an edit changes a definition, does
