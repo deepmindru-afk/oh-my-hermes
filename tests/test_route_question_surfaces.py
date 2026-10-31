@@ -298,6 +298,13 @@ class InjectedTextIsUnchangedTests(unittest.TestCase):
         covered = {case.expected_workflow for case in ROUTING_INTERVENTION_CASES if case.message in self.MESSAGES}
         self.assertEqual(covered & set(JEV_SKILL_NAMES), set(JEV_SKILL_NAMES))
 
+    # The same wrapper-only catalog picker as "install the jev skill from the
+    # catalog": the awareness hint is empty and the wrapper, finding no hint,
+    # adds its picker. On origin/main both sides carried a workflow-learning
+    # hint, from the meta cue "log" inside "changelog"; with that cue gone the
+    # awareness side injects nothing, which is this class's own claim.
+    WRAPPER_CATALOG_PICKER_ONLY = frozenset({"use omh-jev-ask on this changelog entry"})
+
     def test_the_prompt_context_is_the_awareness_text_and_nothing_else(self) -> None:
         for message in self.MESSAGES:
             with self.subTest(message=message):
@@ -308,6 +315,13 @@ class InjectedTextIsUnchangedTests(unittest.TestCase):
                     awareness_route_hint(message, max_hints=2)
                 )
 
+                if message in self.WRAPPER_CATALOG_PICKER_ONLY:
+                    self.assertEqual(expected, "")
+                    self.assertTrue(payload["route_hint"].get("catalog_question"))
+                    self.assertEqual(
+                        [hint["id"] for hint in payload["route_hint"]["hints"]], ["catalog_question_picker"]
+                    )
+                    continue
                 self.assertEqual(payload["prompt_context"], expected)
 
     def test_no_injected_text_names_a_jev_tool_or_the_new_keys(self) -> None:

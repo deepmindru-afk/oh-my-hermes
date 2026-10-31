@@ -9295,6 +9295,154 @@ ROUTING_PRECISION_CASES: tuple[RoutingPrecisionCase, ...] = (
         "",
         "executor-runtime-readiness",
     ),
+    # A coding request that names OMH as the tool is work, not talk about OMH:
+    # "test" is what the edit acts on, and the product name is not routing
+    # context for an everyday word. Before, both messages classified
+    # meta_discussion and the pre_llm_call route hint picked workflow-learning
+    # (~1.2k chars on every model call); the chat route never named it, and these
+    # pin that it still does not.
+    RoutingPrecisionCase(
+        "coding-request-naming-omh-is-not-meta-discussion",
+        "Use OMH to fix a failing test is a coding request, not workflow meta discussion",
+        "Use OMH to fix the failing test in billing.py",
+        "answer_file_lookup",
+        "file_or_text",
+        "workflow-learning",
+    ),
+    RoutingPrecisionCase(
+        "omh-instrument-lead-with-test-is-not-meta-discussion",
+        "With OMH, add a unit test names the tool, not a discussion of OMH testing",
+        "With OMH, add a unit test for the log parser",
+        "answer_clarification",
+        "",
+        "workflow-learning",
+    ),
+    # Owner decision on #2440: a throwaway test message is not talk about OMH
+    # and gets no workflow-learning hint; and "router" is OMH's only in a
+    # message that names OMH, so the user's own router picking something is not
+    # a report on OMH's routing.
+    RoutingPrecisionCase(
+        "throwaway-omh-test-message-is-not-meta-discussion",
+        "A throwaway test message for OMH does not open workflow learning",
+        "This is a test message for OMH",
+        "answer_clarification",
+        "",
+        "workflow-learning",
+    ),
+    RoutingPrecisionCase(
+        "testing-omh-ignore-this-is-not-meta-discussion",
+        "Testing OMH, ignore this message, does not open workflow learning",
+        "I'm testing OMH right now, ignore this message",
+        "answer_clarification",
+        "",
+        "workflow-learning",
+    ),
+    RoutingPrecisionCase(
+        "user-router-picking-is-not-an-omh-behaviour-report",
+        "The user's own router picking an option is not a report on OMH's routing",
+        "Our router picked the cheapest shipping option for every order; is that normal?",
+        "answer_clarification",
+        "",
+        "workflow-learning",
+    ),
+    # #2440 review: OMH inside a noun phrase ("the skills OMH selected") names
+    # the task's object, not a report on OMH's routing; and 로그 inside 로그인 is
+    # not the meta cue 로그, so a Korean coding request stays a coding request.
+    RoutingPrecisionCase(
+        "task-on-what-omh-selected-is-not-an-omh-behaviour-report",
+        "Copying the skills OMH selected is a file task, not a report on OMH's routing",
+        "Copy the skills OMH selected into skills.txt",
+        "answer_file_lookup",
+        "file_or_text",
+        "workflow-learning",
+    ),
+    RoutingPrecisionCase(
+        "summary-of-what-omh-picked-is-not-an-omh-behaviour-report",
+        "Summarizing the files OMH picked is a file task, not a report on OMH's routing",
+        "Summarize the files OMH picked for this refactor",
+        "answer_file_lookup",
+        "file_or_text",
+        "workflow-learning",
+    ),
+    RoutingPrecisionCase(
+        "korean-login-api-test-request-is-not-meta-discussion",
+        "A Korean request to write a login API test is a coding request, not workflow meta discussion",
+        "OMH, 로그인 API에 대한 통합 테스트 작성해줘",
+        "answer_clarification",
+        "",
+        "workflow-learning",
+    ),
+    # #2440 re-review: a clause on what OMH chose, followed by the user's own
+    # command, is the setting for that command, not a report on OMH's routing.
+    # "OMH selected the wrong Python version, so set it to 3.12" counts here
+    # too: the ask is the pyproject edit, and a learning audit would not do it.
+    RoutingPrecisionCase(
+        "omh-picked-files-then-copy-is-a-file-task",
+        "OMH picked these files, then copy them, is a file task, not a report on OMH's routing",
+        "OMH picked these files; copy them to the backup folder",
+        "answer_clarification",
+        "",
+        "workflow-learning",
+    ),
+    RoutingPrecisionCase(
+        "omh-selected-files-then-run-black-is-a-file-task",
+        "OMH selected five files, then open and format them, is a file task",
+        "OMH selected five files. Open each one and run black",
+        "answer_file_lookup",
+        "file_or_text",
+        "workflow-learning",
+    ),
+    RoutingPrecisionCase(
+        "omh-selected-wrong-version-then-set-it-is-an-edit",
+        "OMH selected the wrong Python version, so set it, asks for the edit",
+        "OMH selected the wrong Python version, so set it to 3.12 in pyproject",
+        "answer_clarification",
+        "",
+        "workflow-learning",
+    ),
+    # The shortlist names workflow-learning on origin/main too; the pin is that
+    # the route asks instead of dispatching it.
+    RoutingPrecisionCase(
+        "omh-router-picked-skill-then-run-it-is-not-dispatched",
+        "The OMH router picked a skill, now run it, does not dispatch workflow learning",
+        "The OMH router picked the deploy skill; now run it on staging",
+        "answer_clarification",
+        "",
+    ),
+    # #2440 re-review 3: the closed command list missed bump, ship, kick off,
+    # rerun, retry, and check/find/explain used as commands.
+    RoutingPrecisionCase(
+        "omh-picked-branch-then-bump-is-a-request",
+        "OMH picked the release branch, bump the version, is a request, not a report",
+        "OMH picked the release branch; bump the version to 2.1",
+        "answer_clarification",
+        "",
+        "workflow-learning",
+    ),
+    RoutingPrecisionCase(
+        "omh-selected-build-then-ship-is-a-request",
+        "OMH selected the build, ship it, is a request, not a report",
+        "OMH selected the build. Ship it",
+        "answer_clarification",
+        "",
+        "workflow-learning",
+    ),
+    RoutingPrecisionCase(
+        "omh-picked-files-then-check-into-git-is-a-request",
+        "OMH picked these files, check them into git, is a request, not a report",
+        "OMH picked these files; check them into git",
+        "answer_clarification",
+        "",
+        "workflow-learning",
+    ),
+    RoutingPrecisionCase(
+        "omh-chose-module-then-find-the-bug-is-a-request",
+        "OMH chose the parser module, find the bug in it, is a request, not a report",
+        "OMH chose the parser module, find the bug in it",
+        "answer_clarification",
+        "",
+        "workflow-learning",
+    ),
 )
 
 
@@ -11940,6 +12088,186 @@ ROUTING_INTERVENTION_CASES: tuple[RoutingInterventionCase, ...] = (
         "ultrawork",
         "show_coding_handoff_status",
         "handoff",
+    ),
+    # Meta discussion keeps workflow-learning when an everyday word ("test")
+    # sits beside OMH's own vocabulary or routing words, after the coding
+    # requests above stopped reaching it through the product name alone.
+    RoutingInterventionCase(
+        "omh-developer-test-of-vocabulary-stays-workflow-learning",
+        "An OMH developer test of the route hint vocabulary still opens workflow learning",
+        "OMH developer test: is the route hint vocabulary clear to users?",
+        "dispatch",
+        "workflow-learning",
+        "audit_learning_readiness",
+        "workflow_learning",
+        "workflow-learning",
+    ),
+    # OMH or its router as the subject of a choosing or reading verb is a report
+    # on OMH's own behaviour (owner decision on #2440).
+    RoutingInterventionCase(
+        "omh-router-misread-reaches-workflow-learning",
+        "The OMH router misreading a message is talk about OMH's own behaviour",
+        "the OMH router misread my last message; let's look at why",
+        "dispatch",
+        "workflow-learning",
+        "audit_learning_readiness",
+        "workflow_learning",
+        "workflow-learning",
+    ),
+    RoutingInterventionCase(
+        "omh-router-chose-wrong-workflow-records-missed-route",
+        "OMH's router choosing the wrong workflow records a missed route",
+        "OMH's router chose the wrong workflow for my question",
+        "dispatch",
+        "workflow-learning",
+        "record_missed_route",
+        "workflow_learning",
+        "workflow-learning",
+    ),
+    # #2440 review. On origin/main a code edit to a CI workflow read as talk
+    # about OMH workflows ("workflow" plus "test") and dispatched
+    # workflow-learning; it is a coding request.
+    RoutingInterventionCase(
+        "ci-workflow-edit-through-omh-is-coding",
+        "Using OMH to update a CI workflow so tests run is a coding request",
+        "Use OMH to update the CI workflow so the tests run on Node 22",
+        "dispatch",
+        "ultrawork",
+        "choose_executor",
+        "handoff",
+        "ultrawork",
+    ),
+    RoutingInterventionCase(
+        "github-workflow-step-fix-through-omh-is-coding",
+        "Using OMH to fix a GitHub workflow step that skips tests is a coding request",
+        "Use OMH to fix the GitHub workflow step that skips the smoke tests",
+        "dispatch",
+        "ultrawork",
+        "choose_executor",
+        "handoff",
+        "ultrawork",
+    ),
+    # On origin/main this dispatched the workflow it names; it reports OMH's
+    # own choice.
+    RoutingInterventionCase(
+        "omh-picked-a-workflow-why-reaches-workflow-learning",
+        "OMH picking deep-interview for a quick fix is a report on OMH's routing",
+        "OMH picked deep-interview when I only wanted a quick fix; why?",
+        "dispatch",
+        "workflow-learning",
+        "audit_learning_readiness",
+        "workflow_learning",
+        "workflow-learning",
+    ),
+    # An edit verb later in the sentence is not the request's lead, and OMH's
+    # own vocabulary is never cleared by one: these stay workflow-learning (an
+    # earlier draft of this change dispatched them to ultrawork).
+    RoutingInterventionCase(
+        "asked-omh-to-fix-and-it-opened-learning-stays-workflow-learning",
+        "Reporting that OMH opened workflow learning for a fix request stays workflow learning",
+        "I asked OMH to fix a test and it opened workflow learning instead",
+        "dispatch",
+        "workflow-learning",
+        "audit_learning_readiness",
+        "workflow_learning",
+        "workflow-learning",
+    ),
+    RoutingInterventionCase(
+        "route-hint-vocabulary-question-stays-workflow-learning",
+        "A question about the route hint vocabulary and trigger words stays workflow learning",
+        "Is the OMH route hint vocabulary and set of trigger words documented?",
+        "dispatch",
+        "workflow-learning",
+        "audit_learning_readiness",
+        "workflow_learning",
+        "workflow-learning",
+    ),
+    RoutingInterventionCase(
+        "developer-test-of-route-hint-wording-stays-workflow-learning",
+        "An OMH developer test of what the route hint tells users stays workflow learning",
+        "OMH developer test: does the route hint tell users to add a workflow?",
+        "dispatch",
+        "workflow-learning",
+        "audit_learning_readiness",
+        "workflow_learning",
+        "workflow-learning",
+    ),
+    RoutingInterventionCase(
+        "korean-router-misread-log-stays-workflow-learning",
+        "Korean report that the OMH router misread a log stays workflow learning",
+        "OMH 라우터가 로그를 잘못 읽은 것 같아",
+        "dispatch",
+        "workflow-learning",
+        "audit_learning_readiness",
+        "workflow_learning",
+        "workflow-learning",
+    ),
+    # #2440 re-review. A later command keeps the workflow it follows from
+    # (release-cut); a later clause that only adds to the report keeps the
+    # report (on origin/main this dispatched the code-review it names); and an
+    # edit lead that names an OMH surface stays about OMH.
+    RoutingInterventionCase(
+        "omh-chose-release-cut-then-tag-stays-release-cut",
+        "OMH chose release-cut, go ahead and tag, stays the release workflow",
+        "OMH chose the release-cut workflow; go ahead and tag v1.2",
+        "dispatch",
+        "release-cut",
+        "prepare_release_plan",
+        "release_plan",
+        "release-cut",
+    ),
+    RoutingInterventionCase(
+        "omh-picked-code-review-for-a-question-reaches-workflow-learning",
+        "OMH picking code-review when the user only asked a question is a report on OMH's routing",
+        "OMH picked code-review, and I only asked a question",
+        "dispatch",
+        "workflow-learning",
+        "audit_learning_readiness",
+        "workflow_learning",
+        "workflow-learning",
+    ),
+    # #2440 re-review 3: "then" starts a clause, so a command after it keeps
+    # its owner; "list the reasons" after what OMH chose is a complaint (on
+    # origin/main it only clarified).
+    RoutingInterventionCase(
+        "omh-chose-tests-then-run-them-stays-command-operator",
+        "OMH chose these tests, then run them, stays the command operator",
+        "OMH chose these tests, then run them",
+        "dispatch",
+        "command-operator",
+        "prepare_command_operator_card",
+        "command_operator",
+        "command-operator",
+    ),
+    RoutingInterventionCase(
+        "omh-chose-ultrawork-list-the-reasons-reaches-workflow-learning",
+        "OMH choosing ultrawork for a typo, list the reasons, is a complaint about OMH's routing",
+        "OMH chose ultrawork for a typo, list the reasons it did that",
+        "dispatch",
+        "workflow-learning",
+        "audit_learning_readiness",
+        "workflow_learning",
+        "workflow-learning",
+    ),
+    RoutingInterventionCase(
+        "ask-omh-to-fix-and-watch-workflow-learning-stays-workflow-learning",
+        "A repro that names workflow learning after an edit lead stays workflow learning",
+        "Ask OMH to fix a test and watch it open workflow learning, that's the bug",
+        "dispatch",
+        "workflow-learning",
+        "audit_learning_readiness",
+        "workflow_learning",
+        "workflow-learning",
+    ),
+    RoutingInterventionCase(
+        "testing-the-router-on-workflow-names-stays-workflow-learning",
+        "Testing how the OMH router reads workflow names still opens workflow learning",
+        "I'm testing how the OMH router reads workflow names like ultrawork",
+        "dispatch",
+        "workflow-learning",
+        "audit_learning_readiness",
+        "workflow_learning",
+        "workflow-learning",
     ),
     RoutingInterventionCase(
         "workflow-learning",
@@ -14784,15 +15112,19 @@ ROUTING_INTERVENTION_CASES: tuple[RoutingInterventionCase, ...] = (
         "handoff",
         "ultrawork",
     ),
+    # Re-pinned to clarify (2026-10-31, fix/coding-request-meta-discussion-misroute): the old
+    # workflow-learning owner came from the meta cue "term" found inside the compact text
+    # "routermodel". Everyday meta cues now match whole words only, so the route asks, with
+    # meta-router leading the shortlist. The claim is unchanged: no Jev skill takes it.
     RoutingInterventionCase(
         "jev-router-model-setting-not-jev-ask",
         "Using Jev as the router model is configuration; the pinned owner is today's, the claim is that no Jev skill takes it",
         "use jev as my router model",
-        "dispatch",
-        "workflow-learning",
-        "audit_learning_readiness",
-        "workflow_learning",
-        "workflow-learning",
+        "clarify",
+        "oh-my-hermes",
+        "answer_clarification",
+        "clarification",
+        "meta-router",
     ),
     RoutingInterventionCase(
         "typesafe-typescript-not-jev",

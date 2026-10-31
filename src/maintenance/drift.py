@@ -948,7 +948,18 @@ def count_metrics() -> tuple[CountMetric, ...]:
             # Its review round: a kebab id after a logo intro, a bare 3D scene
             # with shaders, a two-noun chain after an intro, and a leading
             # Japanese format before an open topic (+4).
-            expected=1306,
+            # fix/coding-request-meta-discussion-misroute: a coding request that
+            # names OMH as the tool ("Use OMH to fix the failing test", "With
+            # OMH, add a unit test") stays off workflow-learning (+2).
+            # Owner decision on #2440: two throwaway OMH test messages and the
+            # user's own router picking an option stay off workflow-learning (+3).
+            # #2440 review: two tasks on what OMH selected or picked, and a
+            # Korean login-API test request, stay off workflow-learning (+3).
+            # #2440 re-review: a clause on what OMH chose followed by the user's
+            # own command (copy, open, set, run) is not a report (+4).
+            # #2440 re-review 3: bump, ship, check into git and find the bug
+            # after what OMH chose are requests too (+4).
+            expected=1322,
             # The one reviewed test pin. Every other test compares its payload
             # against build_routing_precision_demo() rather than a literal.
             sites=("tests/test_routing_precision.py",),
@@ -1502,7 +1513,21 @@ def count_metrics() -> tuple[CountMetric, ...]:
             # intro for this product's own name, a motion graphics piece, a 3D
             # scene, a Korean concept explainer and a Japanese format beside an
             # explainer genre (+6).
-            expected=1203,
+            # fix/coding-request-meta-discussion-misroute: an OMH developer test
+            # of the route hint vocabulary and a test of how the router reads
+            # workflow names keep workflow-learning (+2).
+            # Owner decision on #2440: the OMH router misreading a message and
+            # choosing the wrong workflow reach workflow-learning (+2).
+            # #2440 review: two CI-workflow edits through OMH are coding, OMH
+            # picking a workflow is a report, and four meta messages with a
+            # late edit verb, OMH vocabulary or a Korean log report keep
+            # workflow-learning (+7).
+            # #2440 re-review: a later command keeps release-cut, a later
+            # clause that only adds to the report keeps it, and an edit lead
+            # naming workflow learning stays about OMH (+3).
+            # #2440 re-review 3: a command after "then" keeps command-operator,
+            # and "list the reasons" after what OMH chose is a complaint (+2).
+            expected=1219,
             # The one reviewed test pin. Every other test compares its payload
             # against build_routing_precision_demo() rather than a literal.
             sites=("tests/test_routing_precision.py",),
