@@ -9,7 +9,8 @@ from typing import Final, TypeGuard
 
 from .. import runtime_paths
 from ..catch_log import PLAN_CONTINUED, record_catch
-from ..consistency_trigger import discard_snapshots, round_end_trigger
+from ..consistency_trigger import discard_snapshots, round_end_trigger, turn_root
+from ..export_check import round_end_note as export_note
 from ..host_observation import observe_plugin_hook_call
 from ..impact_check import round_end_note
 from ..todo_reconciliation import plan_continuation_parts
@@ -130,6 +131,14 @@ def pre_verify(
     # has a baseline only when this turn edited a Python file, which is the
     # posture's own evidence. Empty unless an importer gained an error.
     impact_message = round_end_note(session_id, changed_paths) if attempt_value == 0 else ""
+    # The export check is always on: it parses only this turn's edited `.py` files (and the
+    # workspace modules they import from) with `ast`, so it costs no language server and no
+    # extra round of its own. It names an `__all__` entry or a `from x import name` that no
+    # longer resolves -- a rename's leftover that no type error reports -- and is empty otherwise.
+    # A line the impact note already names is not named again; its paths are relative to the same
+    # workspace root, the one this turn's tools resolved against.
+    export_message = (export_note(session_id, changed_paths, impact_message, turn_root(session_id))
+                      if attempt_value == 0 else "")
     surface_message = checklist_message = plan_message = ""
     open_items = 0
     if valid_coding:
@@ -158,8 +167,10 @@ def pre_verify(
             # The check costs a round of its own only when nothing else here
             # continues the turn. Then it fires only when the edit has a copy or
             # a reference outside the edited files, or when that cannot be ruled
-            # out (`consistency_trigger`). Beside another nudge it rides along.
-            alone = not (surface_message or impact_message or plan_message)
+            # out (`consistency_trigger`). Beside another nudge it rides along,
+            # the export note included: that note continues the turn on its own
+            # whatever the trigger says, because fixing the line it names is the work.
+            alone = not (surface_message or impact_message or export_message or plan_message)
             if not alone or round_end_trigger(session_id, code_paths).fire:
                 # Beside a request to run or re-check something, the check must
                 # not say "do not re-run": that request stands.
@@ -169,21 +180,21 @@ def pre_verify(
         # The turn's snapshots are spent at its first stop, read or not.
         discard_snapshots(session_id)
     # One directive, in a fixed order: the served-surface gate, the impact
-    # note, the round-end check, the plan directive. Each can be true of the
-    # same turn, and dropping one because another fired would lose exactly the
-    # case it was written for. One closing final-answer sentence goes last, for
-    # the impact note and the check together, and only without a plan
-    # directive: an open plan means the turn goes on, so there is no final
-    # answer to ask for yet.
+    # note, the export note, the round-end check, the plan directive. Each can
+    # be true of the same turn, and dropping one because another fired would
+    # lose exactly the case it was written for. One closing final-answer
+    # sentence goes last, for the notes and the check together, and only
+    # without a plan directive: an open plan means the turn goes on, so there
+    # is no final answer to ask for yet.
     closing = ""
-    if (impact_message or checklist_message) and not plan_message:
+    if (impact_message or export_message or checklist_message) and not plan_message:
         # A delegated child's reply is its parent's tool result: it returns
         # its full answer, never a sentinel, so nothing is stashed for it.
         if str(platform) in _NO_CHECKLIST_PLATFORMS or not _stash_answer(session_id, final_response):
             closing = ROUND_END_CLOSING_UNSTASHED
         else:
             closing = ROUND_END_CLOSING
-    messages = [text for text in (surface_message, impact_message, checklist_message, plan_message, closing) if text]
+    messages = [text for text in (surface_message, impact_message, export_message, checklist_message, plan_message, closing) if text]
     if not messages:
         return None
     # Recorded for the person once per turn. `attempt` is the only turn

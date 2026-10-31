@@ -143,15 +143,33 @@ platform that never gets the check (a delegated child) takes no index.
 Oversized config files are skipped rather than fired on, because they are
 lockfiles and data dumps.
 
-Beside another nudge, the check rides along without a verdict.
+Beside another nudge, the export note below included, the check rides along without a verdict.
 
 The check asks the model to look for other copies or call sites of the logic
 it changed that have to change with it, and to fix any it finds. It also tells
 the model not to re-run tests for this check, unless something beside it asks
 for a run or a re-check: the served-surface request above, or the opt-in impact
 check's note about importers the edit broke. The message keeps a fixed order:
-served-surface gate, impact note, consistency check, plan directive, and one
-closing sentence for the final answer.
+served-surface gate, impact note, export note, consistency check, plan
+directive, and one closing sentence for the final answer.
+
+The export note is always on and needs no language server. At the same first
+stop it parses each `.py` file the turn edited and names, as `path:line` rows,
+an `__all__` entry the module no longer defines or imports, or a top-level
+`from module import name` whose workspace module no longer binds that name: the
+leftover a rename leaves that no type error reports. Only top-level `from`
+statements are checked. An absolute import is resolved only from the project
+root or a `src/` directly under it. It says nothing when there is none. It
+skips a file that does not parse, and a module whose names it cannot know: a
+star import, a module-level `__getattr__`, `globals()` / `vars()` / `locals()`,
+`setattr` on a module, or `sys.modules[__name__]`. The note is always on, so a
+delegated child that leaves a stale export also gets it, together with the
+full-answer closing: one more round for that child. `src/plugin_bundle/omh/export_check.py` lists the rules. The note
+continues the turn whatever the consistency trigger says, because fixing the
+line it names is the work. A line the impact note already names, an edited
+importer's stale `from module import name` that the language server also
+reports, is not named twice. The consistency trigger never names a line: its
+verdict only decides whether the check fires.
 
 Hermes keeps the answer the model stopped with only as an interim message, and
 returns whatever follows the nudge as the turn's final response. So when no

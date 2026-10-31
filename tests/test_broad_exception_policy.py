@@ -755,6 +755,14 @@ CLASSIFIED_SITES: tuple[ClassifiedSite, ...] = (
         "verdict can produce (a file without one maps to None, `no_verdict`).",
     ),
     ClassifiedSite(
+        "src/plugin_bundle/omh/export_check.py",
+        "round_end_note",
+        INTENTIONAL,
+        "An unexpected failure reading the edited files is logged as a warning naming the exception class "
+        "(`export_check round_end ... failed=`) and yields no note; the turn ends as it would without the check. "
+        "A note is only ever built from names the parsed files show missing, so a failure never claims one is.",
+    ),
+    ClassifiedSite(
         "src/plugin_bundle/omh/impact_check.py",
         "enabled",
         INTENTIONAL,
@@ -919,8 +927,11 @@ CLASSIFIED_SITES: tuple[ClassifiedSite, ...] = (
 # `round_end_trigger`, the round-end check's trigger: a pre_tool_call body that
 # logs a named warning and keeps nothing, and a verdict that fires the check on
 # any failure, so a failure costs a round and never skips one.
-EXPECTED_HANDLER_COUNT = 95
-EXPECTED_ANCHOR_COUNT = 86
+# 95 -> 96 / 86 -> 87: `export_check.round_end_note`, the always-on round-end
+# read of the turn's edited `.py` files for dangling exports (a failure logs a
+# named warning and adds no note).
+EXPECTED_HANDLER_COUNT = 96
+EXPECTED_ANCHOR_COUNT = 87
 
 
 class DerivedSite(NamedTuple):

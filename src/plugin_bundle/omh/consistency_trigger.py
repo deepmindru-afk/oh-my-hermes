@@ -179,6 +179,15 @@ def round_end_trigger(session_id: str, code_paths: tuple[str, ...]) -> Verdict:
     return verdict
 
 
+def turn_root(session_id: object) -> str | None:
+    """The workspace root this session's tools resolved against this turn, without consuming its state."""
+    if not isinstance(session_id, str) or not session_id:
+        return None
+    with _lock:
+        state = _sessions.get(session_id)
+        return state["root"] if state is not None else None
+
+
 def discard_snapshots(session_id: object) -> None:
     """Drop the session's state without reading it (the turn's first stop did not need a verdict)."""
     if isinstance(session_id, str) and session_id:
@@ -576,4 +585,5 @@ def _parse(text: str) -> ast.AST | None:
         return None
 
 
-__all__ = ["Verdict", "discard_snapshots", "note_turn_posture", "reset", "round_end_trigger", "snapshot_before_edit"]
+__all__ = ["Verdict", "discard_snapshots", "note_turn_posture", "reset", "round_end_trigger", "snapshot_before_edit",
+           "turn_root"]

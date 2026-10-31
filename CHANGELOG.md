@@ -6,6 +6,17 @@ All notable changes will be documented here.
 
 ![Sprite Forge patch notes](https://raw.githubusercontent.com/rlaope/oh-my-hermes/main/assets/omh-sprite-forge-patch-notes.png)
 
+- **A rename's stale export is named before the turn ends.** When a turn
+  leaves a Python module exporting a name it no longer defines, OMH names the
+  line at the turn's first stop as `path:line`, so the model can fix it. That
+  covers an `__all__` entry, and a `from module import name` whose workspace
+  module no longer has the name. It needs no language server and is silent
+  otherwise. Measured on four models, the rename template that models kept
+  missing went from 8/12 to 12/12, with +3 of that from the note itself. The
+  pre-registered gate failed on its token clause (1.097x against 1.05x), and
+  the owner overrode it because the gap was run-to-run variation
+  ([measurement](benchmarks/live-model-tools/v1/README.md)).
+
 - **Vim mode in the composer.** With Hermes' `display.vim_mode` on
   (`hermes config set display.vim_mode true`, then start `omh` again), the
   OMH TUI's composer edits modally, read from the active profile's config.

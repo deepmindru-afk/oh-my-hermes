@@ -42,6 +42,12 @@ SEMANTIC_RENAMES = {
         "src/benchapp/batch.py": [("limits.parse_limit)", "limits.read_limit)")],
         "tests/test_limits.py": [("limits import parse_limit", "limits import read_limit"), ("assert parse_limit(", "assert read_limit(")],
     },
+    "RENAME-EXPORTS": {
+        "src/benchapp/store/rows.py": [("def fetch_rows(", "def load_rows(")],
+        "src/benchapp/store/__init__.py": [("import ROW_LIMIT, fetch_rows", "import ROW_LIMIT, load_rows"), ('"fetch_rows"', '"load_rows"')],
+        "src/benchapp/loader.py": [("import fetch_rows,", "import load_rows,"), ("(fetch_rows(count))", "(load_rows(count))")],
+        "tests/test_store.py": [("import fetch_rows", "import load_rows"), ("assert fetch_rows(", "assert load_rows(")],
+    },
 }
 
 

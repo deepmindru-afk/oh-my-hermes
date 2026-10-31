@@ -1773,6 +1773,172 @@ What it shows, and what it does not:
   dispatch, so those callers still break silently. A deleted or moved module is not checked.
   n = 12 per model per arm.
 
+### 2026-10-31 export check: a rename's stale `__all__` entry, base vs new (`pre_verify`), gate failed, merged by owner decision
+
+One question: when a turn leaves a module exporting a name it no longer defines, does naming that
+line at the turn's first stop make the model fix it? In the OPT-A round-end run (2026-10-30, the
+same profile configuration as below), `L-RENAME-ALIAS` passed 8 of 12 in both arms, and every miss
+had one cause: GPT models renamed `compute_quota`, updated `from .quota import ...` in `api.py`,
+and left `__all__ = ["compute_quota"]`. The round-end consistency check fired in each of those
+sessions and the model still answered with the sentinel. pyright does not report a stale `__all__`
+string by default, so `impact_check` has nothing to say either. The H2H runs (Claude only, five
+arms, omp included) passed every `L-RENAME-ALIAS` and `L-RENAME-SHADOW` run.
+
+How the check works (always on, `src/plugin_bundle/omh/export_check.py`): at the turn's first stop
+(`pre_verify`, `attempt == 0`), it parses each `.py` file the turn edited with `ast` and names, as
+`path:line` rows, an `__all__` entry the module neither defines nor imports (nor ships as a
+submodule of the package), and a top-level `from module import name` whose module is a workspace
+file that no longer binds the name. Only top-level `from` statements are checked. It also reads the
+workspace modules those imports resolve to, runs no language server, and says nothing otherwise. A module whose names it cannot know is skipped (a star import, a module-level
+`__getattr__`, `globals()` / `exec` / `setattr` / `enum.global_enum`, a package editing its own
+`__path__`, an `__all__` that is not a literal list), as is a file that does not parse. Its note
+joins the same `pre_verify` message as the others, in the order served-surface gate, impact note,
+export note, consistency check, plan directive, one closing, so it never adds a round when another
+nudge already continues the turn. Swept offline over about 10,800 real files (this repo's `src/`
+and `tests/`, Hermes Agent's `agent/`, `hermes_cli/`, `tools/` and `gateway/`, CPython 3.14's
+standard library, a 4,576-file site-packages), it named 3 entries, all genuinely dangling:
+`snowballstemmer` `language`, `pydantic_core` `UNSET`, pip's vendored `cachecontrol` `__version__`.
+
+The setup:
+
+- Templates: `L-RENAME-ALIAS`, `L-RENAME-SHADOW`, `E-RENAME`, `I-CONTROL`, and a new control,
+  `L-RENAME-EXPORTS` (split `lsp-ab`): rename `fetch_rows` to `load_rows` in a package whose
+  `__all__` also lists a submodule it never imports, a name bound in both arms of a `try`, and a
+  `+=` entry defined after it. The prompt names the package's `__all__`, so a correct edit leaves
+  no dangling export. Seeds 104729, 130363, 155921.
+- Panel: `claude-haiku-4-5-20251001` and `claude-sonnet-5-5` through the local CPA proxy
+  (`claude-proxy`), `gpt-6-luna` and `gpt-6.1-sol` through Hermes `openai-codex`, effort `medium`.
+  5 templates x 3 seeds x 4 models = 60 runs per arm.
+- Arms: `base` is the OMH plugin bundle at origin/main `b906cb425`; `new` is this branch. Both use
+  the H2H "omt" profile: Hermes's default `tool_search`, `impact_check: true`, `lsp_tools: true`,
+  pyright pinned by absolute command, `agent.max_turns: 120`, `agent.run_budget_seconds: 600`,
+  `--edit-surface impact` (toolsets `file,terminal,omh-lsp`), no edit directive,
+  `--git-init-workspace`, `--test-env`. The arms run back to back per instance on identical fresh
+  workspaces, order rotating per instance. A run classified `rate_limited` / `provider_error` is
+  retried on the same route; every other outcome is final.
+- Off-arm ceiling, checked before this registration: base passed `L-RENAME-ALIAS` 8 of 12 in the
+  OPT-A run, so +2 is reachable.
+
+The merge gate, fixed here before the first live run. Counts are pooled over the four models and
+recomputed from the raw records and the profiles' session databases, not from driver logs:
+
+1. Must improve: `L-RENAME-ALIAS` new passes at least base passes + 2 (of 12 each).
+2. Must hold: total new passes at least base passes - 1 (of 60 each).
+3. Must hold: 0 export notes in the new arm's `I-CONTROL` and `L-RENAME-EXPORTS` sessions (24). A
+   note fired when the new profile's agent log has an `export_check round_end` line for the
+   session with `rows` above 0. (Amended before any counted run, after a one-instance smoke: Hermes
+   does not store a `pre_verify` message in the session database, so the first wording could not
+   be counted. The check now logs that line.)
+4. Must hold: new median tokens at most 1.05 x base median tokens, over all 60 runs per arm.
+
+If base passes 11 or 12 of 12 `L-RENAME-ALIAS` in this run, clause 1 cannot be met and the gate is
+recorded as failed on the ceiling, not redefined. Recorded beside the gate, not gated: notes per
+template, whether each note named an entry that was stale in that session, median wall time and
+model calls per arm.
+
+A failed clause means the change does not merge; the result is recorded here either way.
+
+Result: **gate failed on clause 4 (tokens)**. Clauses 1-3 passed. Recomputed from the raw records,
+the profiles' session databases and their agent logs:
+
+| Clause | base | new | Verdict |
+| --- | ---: | ---: | --- |
+| 1. `L-RENAME-ALIAS` new >= base + 2 | 8 / 12 | 12 / 12 | pass |
+| 2. Total new >= base - 1 | 56 / 60 | 60 / 60 | pass |
+| 3. Notes on the 24 control sessions | - | 0 | pass |
+| 4. Median tokens new <= 1.05x base | 89,433 | 98,080 (1.097x) | **fail** |
+
+By model, pass · median tokens:
+
+| Model | base | new |
+| --- | --- | --- |
+| `claude-haiku-4-5-20251001` | 15/15 · 131k | 15/15 · 127k |
+| `claude-sonnet-5-5` | 15/15 · 32k | 15/15 · 43k |
+| `gpt-6-luna` | 14/15 · 112k | 15/15 · 120k |
+| `gpt-6.1-sol` | 12/15 · 88k | 15/15 · 91k |
+
+What it shows, and what it does not:
+
+- The note fired in 3 of 60 new-arm sessions: the three `gpt-6.1-sol` `L-RENAME-ALIAS` runs. Each
+  named `src/benchapp/api.py:3`, each base twin left `__all__ = ["compute_quota"]` and failed, and
+  each new run fixed the line and passed. Those three sessions cost 1.24-1.41x their base twin's
+  tokens (2-3 more model calls). Because the round-end consistency check already continued every
+  GPT session, the note never added a round of its own.
+- The other gained pass (`gpt-6-luna` `L-RENAME-ALIAS`, 2/3 to 3/3) had no note; it is run-to-run
+  variation, so the attributable gain is +3, not +4.
+- In the 57 sessions without a note the export check returned an empty string, so the model's input
+  was byte-identical across the arms. Those sessions still differ by 1.058x in median tokens, and
+  the paired difference is not significant (new heavier in 36 of 60 pairs, one-sided sign test
+  p = 0.08). Clause 4 failed on variation the change cannot have caused, but the clause was fixed
+  before the run and is not redefined here.
+- The check ran on every new-arm turn that edited a `.py` file (48 of 48): median 7 ms, max 101 ms.
+- The run used omh `fix/rename-leaves-dangling-export` `71f0dd719` against origin/main
+  `b906cb425`, one base/new profile pair per model, 4 models in parallel, 2026-10-31 02:25-02:58
+  KST. 120 of 120 records completed; none failed, timed out or was retried. A one-instance smoke
+  (`gpt-6.1-sol`, `L-RENAME-ALIAS` seed 104729, on `fd0b1895f`) ran before the counted run and is
+  not counted.
+- n = 3 per model per template. Only `__all__` and top-level `from ... import` names are checked; a stale
+  name in a docstring, a string-dispatch table or a non-Python file is not.
+
+Owner decision (2026-10-31): merge despite the failed clause. Under the pre-registered rule, a
+failed clause meant reject; the owner overrode it. The reasons:
+
+- The note fired in 3 of 60 new-arm sessions. In the other 57, the model's input was byte-identical
+  across the arms, and their median tokens still differ by 1.058x.
+- The paired difference over all 60 is not significant: new is heavier in 36 of 60 pairs, one-sided
+  sign test p = 0.08.
+- So the token gap is run-to-run variation the change cannot have caused.
+
+The results above are left as recorded. The gain attributable to the check is +3 passes (the three
+`gpt-6.1-sol` sessions the note fixed), not the +4 the table shows.
+
+After the run, merged with the round-end check trigger above (#2435), two things changed that the
+run did not measure:
+
+- An export note now counts as a nudge beside which the consistency check rides along, so the note
+  continues the turn even when the trigger finds no copy or reference.
+- A `path:line` the impact note already names is left out of the export note.
+
+In the measured run the consistency check fired at every first stop, so the three note sessions
+behave the same either way.
+
+Review fixes, after the merge (2026-10-31). An independent review swept the whole Hermes tree,
+including `plugins/` and `tui_gateway/` and its virtualenv: 9,597 files, 6 rows. Three of those
+rows, in 2 files, were false: they named correct code.
+
+- `plugins/platforms/telegram/update_admission.py:19` `from telegram import Update` was resolved to
+  the plugin's own folder.
+- `tui_gateway/entry.py:23` `dispatch` and `resolve_skin` were flagged because `tui_gateway/server.py`
+  ends with `register(sys.modules[__name__])`, which adds those names at runtime.
+
+The fixes:
+
+- An absolute import now resolves only from the project root (the nearest ancestor holding a
+  project marker) or a `src/` directly under it. An installed package's `site-packages` is its own
+  root.
+- A module written into from outside is skipped: `sys.modules[__name__]`, module-level `vars()` /
+  `locals()`, `setattr` on a module, `Enum._convert_`.
+- `setattr` on an object and attribute calls such as `env.globals` no longer hide a whole module.
+- Namespace subpackages and `.pyc` modules count as submodules, and a package directory wins over
+  a same-named `.py`, as in Python's import system.
+- Each name of a parenthesized import is reported on its own line.
+- Paths are relative to the same workspace root the impact note uses.
+- The check stops at a deadline, 2 s at the default hook timeout.
+
+Re-run after the fixes, no false rows remain in the three sweeps:
+
+| Sweep | Files | Rows before | Rows after |
+| --- | ---: | ---: | ---: |
+| Whole Hermes tree, virtualenv included | 9,597 | 6 (3 false) | 6 (0 false) |
+| CPython 3.14 standard library | 1,059 | 1 | 1 |
+| This repo's `src/` | 1,216 | 0 | 0 |
+
+- The 6 rows left in the Hermes tree are all real: the three dangling `__all__` entries above, and
+  `tqdm/_utils.py`, which imports 3 names `tqdm/utils.py` no longer has. That last import fails when
+  run. The old `setattr` rule had hidden it.
+- One row in the review's probe set is now named: `from mylib import y` where `mylib` has no `y`.
+  That import is genuinely broken.
+
 ### 2026-10-30 big files: read outline off vs on (`bigfile-ab`), gate failed
 
 Status: the gate failed and the feature did not merge (PR #2408, draft, branch `feature/read-outline`). The outline code, the `bigfile-ab` split, `lib/bigfile.py` and `tests/test_read_outline.py` exist only on that branch, not on main; the commands and file names below refer to the branch, and this section records the measurement only.
