@@ -6,6 +6,26 @@ All notable changes will be documented here.
 
 ![Sprite Forge patch notes](https://raw.githubusercontent.com/rlaope/oh-my-hermes/main/assets/omh-sprite-forge-patch-notes.png)
 
+- **Vim mode in the composer.** With Hermes' `display.vim_mode` on
+  (`hermes config set display.vim_mode true`, then start `omh` again), the
+  OMH TUI's composer edits modally, read from the active profile's config.
+  It starts in INSERT, where every key works as before except Esc, which
+  goes to NORMAL and closes the `/` or `@` menu, and does nothing else: it
+  no longer arms the clear or the rewind, cancels nothing and interrupts no
+  turn. In NORMAL a letter is a command, never text:
+  `h l 0 ^ $ w b e j k gg G`, `i a I A o O`, `x X dd D C cc S s r`, `d c y`
+  with a motion, `p P`, `u` and Ctrl+R, with counts, and Esc there does
+  what it always did, so Esc Esc still clears or rewinds; during a turn,
+  Esc on an empty composer arms the interrupt and a second Esc sends it.
+  Enter sends from either mode, and in NORMAL always sends, a `\` before
+  the caret included. Paste chips and image tokens
+  are one character to every command, `p` puts them back with their text
+  or image, and the info line says `INSERT` or `NORMAL`. Questions Hermes
+  asks, masked input, the tell row, pickers and the agent list keep their
+  own keys. The supported set and how it differs from Hermes' own Vi mode
+  are in the Installation guide. With the setting off or absent nothing
+  changes. Requested by Dan Rio (#2434).
+
 - **The exit card drops its `resume:` label.** Leaving the OMH TUI prints
   the session's title and, after a blank line, `omh --resume <id>` alone,
   ready to copy.
