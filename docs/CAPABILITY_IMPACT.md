@@ -121,14 +121,23 @@ or a reference out:
   write, a delegated child's edit, or a file over the 32-file or 4 MB snapshot
   cap;
 - a changed file that does not parse or is over 512 KB;
-- a non-trivial change that touches no definition or import (`unattributed`);
+- a non-trivial change that touches no definition, import or docstring
+  (`unattributed`);
 - a workspace walk past 5,000 entries visited, or past 0.5 s at the turn's
-  start or 2 s at the stop;
+  start or 2 s at the stop; a root that ran over is not walked again for five
+  minutes in that process, and those turns fire too;
+- a Python file or a directory in the workspace that is a symlink leaving it
+  (`outside_link`); the target is never read;
 - an unedited Python file over 512 KB or unreadable;
 - an error.
 
-Otherwise the turn ends at its first stop. Prose files (`.md`, `.rst`, `.txt`)
-are not searched, because docs and changelogs name old APIs on purpose.
+Otherwise the turn ends at its first stop. That includes changes the four
+signals cannot see: a function body that changes behaviour without changing its
+signature, and a reference that exists only in prose. Prose files (`.md`,
+`.rst`, `.txt`) are not searched, because docs and changelogs name old APIs on
+purpose. The walk skips hidden directories, version-control and virtualenv
+directories, caches, `node_modules`, `build` and `dist`. A session on a
+platform that never gets the check (a delegated child) takes no index.
 Oversized config files are skipped rather than fired on, because they are
 lockfiles and data dumps.
 

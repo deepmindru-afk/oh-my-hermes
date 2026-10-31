@@ -34,8 +34,9 @@ All notable changes will be documented here.
   code, OMH can continue it once at its first stop. It asks the model to look
   for other copies or call sites of the logic it changed that have to change
   with it, and to fix them, without re-running tests for the check. That is one
-  extra round, so after a Python edit it is skipped only when OMH can show
-  nothing outside the edited files depends on the change. It fires when:
+  extra round, so after a Python edit it is skipped when none of the four
+  signals below is found in the workspace's other Python and config files.
+  It fires when:
 
   - a changed definition is also defined in another file;
   - a removed or renamed name is still used in another Python or config
@@ -44,18 +45,22 @@ All notable changes will be documented here.
     whose constructor, annotated fields or abstract methods changed;
   - a replaced line appears in another file.
 
-  It also fires, as before, whenever that cannot be shown:
+  It also fires, as before, when that search cannot be made:
 
   - a non-Python source file changed;
   - a Python file changed with no pre-edit text kept for it: through `sed`,
     `execute_code` or a delegated child, or past OMH's snapshot limits;
   - a changed file does not parse or is too large;
-  - a change touches no definition or import;
-  - the workspace walk passes 5,000 entries or its time limit;
+  - a change touches no definition, import or docstring;
+  - the workspace walk passes 5,000 entries or its time limit (a workspace
+    that ran over is not walked again for five minutes);
+  - a Python file or a directory in the workspace is a symlink that leaves it;
   - an unedited Python file is too large or unreadable;
   - any error.
 
-  This list is complete: there is no other case in which the check is skipped.
+  There is no other fallback. A change the four signals cannot see is skipped:
+  a function body that changes behaviour without changing its signature,
+  and a reference that exists only in prose such as docs.
 
   On the bench corpus the always-on check fixed a second copy of the changed
   logic far more often: 76 vs 38 of 90 runs, pooled over five measurements. It

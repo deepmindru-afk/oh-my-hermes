@@ -300,6 +300,49 @@ class OpaqueEditTest(_Workspace):
         self.assertEqual(self.verdict(first, second), ct.Verdict(True, "opaque_edit", "src/app/b.py"))
 
 
+class IndexCostTest(_Workspace):
+    def first_call(self, session: str = SESSION) -> None:
+        ct.snapshot_before_edit({"tool_name": "read_file", "session_id": session, "turn_id": self.turn}, {"path": "x"})
+
+    def test_an_over_budget_root_is_not_walked_again_within_the_ttl(self):
+        self.write("src/app/a.py", "def a():\n    return 1\n")
+        with mock.patch.object(ct, "MAX_SCAN_ENTRIES", 1):
+            self.first_call()
+        self.assertIsNone(ct._sessions[SESSION]["index"])
+        self.turn = "t2"
+        with mock.patch.object(ct, "_index", wraps=ct._index) as walks:
+            self.first_call()
+        walks.assert_not_called()
+        changed = self.edit("src/app/a.py", "return 1", "return 2")
+        self.assertEqual(self.verdict(changed)[:2], (True, "index_budget"))
+        self.turn = "t3"
+        with mock.patch.object(ct, "OVER_BUDGET_SECONDS", 0.0), mock.patch.object(ct, "_index", wraps=ct._index) as walks:
+            self.first_call()
+        walks.assert_called_once()
+
+    def test_a_session_on_a_no_check_platform_takes_no_index(self):
+        from omh.plugin_bundle.omh.hooks.verify_hooks import _NO_CHECKLIST_PLATFORMS
+
+        self.assertEqual(ct.NO_CHECK_PLATFORMS, _NO_CHECKLIST_PLATFORMS)
+        self.write("src/app/a.py", "def a():\n    return 1\n")
+        ct.note_turn_posture(SESSION, "subagent")
+        ct.note_turn_posture("cli-session", "cli")
+        with mock.patch.object(ct, "_index", wraps=ct._index) as walks:
+            self.first_call()
+            walks.assert_not_called()
+            self.first_call("cli-session")
+            walks.assert_called_once()
+        changed = self.edit("src/app/a.py", "return 1", "return 2")
+        self.assertEqual(self.verdict(changed)[:2], (True, "no_check_session"))
+
+    def test_pre_llm_call_records_the_platform_before_any_binding(self):
+        from omh.plugin_bundle.omh.hooks import llm_hooks
+
+        with mock.patch.object(llm_hooks.runtime_paths, "plugin_home", side_effect=RuntimeError("no home")):
+            llm_hooks.pre_llm_call(session_id=SESSION, platform="subagent", turn_id="t1", user_message="hi")
+        self.assertIs(ct._posture[SESSION], False)
+
+
 class ClassShapeTest(_Workspace):
     CALLER = "from app.m import Foo\n\n\ndef build():\n    return Foo(1)\n"
 
@@ -371,6 +414,27 @@ class BlockAndAttributionTest(_Workspace):
         changed = self.edit("src/app/m.py", "print(run())", "print(run() + 1)")
         self.assertEqual(self.verdict(changed), ct.Verdict(True, "unattributed", "src/app/m.py"))
 
+    def test_docstring_edits_are_attributed(self):
+        self.write("src/app/m.py", '"""Module notes."""\n\n\nclass Box:\n    """Holds a value."""\n\n\n'
+                                   'def run():\n    """Run it."""\n    return 1\n')
+        changed = self.edit("src/app/m.py", '"""Module notes."""', '"""Module notes, revised."""')
+        self.assertEqual(self.verdict(changed)[:2], (False, "nothing_changed"))
+        ct.reset()
+        changed = self.edit("src/app/m.py", '"""Holds a value."""', '"""Holds one value."""')
+        self.assertFalse(self.verdict(changed).fire)
+        ct.reset()
+        changed = self.edit("src/app/m.py", "\n\n\nclass Box:", "\n\n'not a docstring'\n\n\nclass Box:")
+        self.assertEqual(self.verdict(changed)[:2], (True, "unattributed"))
+
+    def test_a_tuple_assignment_defines_each_name(self):
+        self.write("src/app/m.py", "LOW, HIGH = 1, 2\n")
+        self.write("src/app/use.py", "from app.m import LOW\n")
+        changed = self.edit("src/app/m.py", "LOW, HIGH = 1, 2", "MIN, HIGH = 1, 2")
+        self.assertEqual(self.verdict(changed), ct.Verdict(True, "renamed", "LOW in src/app/use.py"))
+        ct.reset()
+        changed = self.edit("src/app/m.py", "MIN, HIGH = 1, 2\n", "MIN, HIGH = 1, 2\nA, B = 3, 4\n")
+        self.assertFalse(self.verdict(changed).fire)
+
     def test_comment_only_and_import_changes_are_attributed(self):
         self.write("src/app/m.py", "import os\n\n# a note\n\n\ndef run():\n    return 1\n")
         changed = self.edit("src/app/m.py", "# a note", "# a better note")
@@ -408,14 +472,32 @@ class ScanBoundsTest(_Workspace):
         with mock.patch.object(ct, "MAX_SCAN_ENTRIES", 15):
             self.assertEqual(self.verdict(changed), ct.Verdict(True, "scan_budget", "index"))
 
-    def test_a_symlink_out_of_the_workspace_is_not_followed(self):
+    def test_a_python_symlink_out_of_the_workspace_fires_unread(self):
         outside = tempfile.TemporaryDirectory()
         self.addCleanup(outside.cleanup)
         Path(outside.name, "receipt.py").write_text(RECEIPT, encoding="utf-8")
         self.write("src/app/invoice.py", INVOICE)
         os.symlink(Path(outside.name, "receipt.py"), self.root / "src/app/receipt.py")
         changed = self.edit("src/app/invoice.py", "ROUND_HALF_EVEN)\n\n\n", "ROUND_HALF_UP)\n\n\n")
-        self.assertFalse(self.verdict(changed).fire)
+        with mock.patch.object(ct, "_read", wraps=ct._read) as reads:
+            verdict = self.verdict(changed)
+        self.assertEqual(verdict, ct.Verdict(True, "outside_link", "src/app/receipt.py"))
+        self.assertNotIn(os.path.realpath(Path(outside.name, "receipt.py")), [call.args[0] for call in reads.call_args_list])
+
+    def test_a_symlinked_directory_out_of_the_workspace_fires(self):
+        outside = tempfile.TemporaryDirectory()
+        self.addCleanup(outside.cleanup)
+        self.write("src/app/units.py", TO_CENTS)
+        os.symlink(outside.name, self.root / "src/vendor")
+        changed = self.edit("src/app/units.py", "100", "1000")
+        self.assertEqual(self.verdict(changed), ct.Verdict(True, "outside_link", "src/vendor"))
+
+    def test_build_and_dist_copies_are_not_copies(self):
+        self.write("src/app/invoice.py", INVOICE)
+        self.write("build/lib/app/receipt.py", RECEIPT)
+        self.write("dist/app/receipt.py", RECEIPT)
+        changed = self.edit("src/app/invoice.py", "ROUND_HALF_EVEN)\n\n\n", "ROUND_HALF_UP)\n\n\n")
+        self.assertEqual(self.verdict(changed)[:2], (False, "no_copy_or_reference"))
 
     def test_an_oversized_unedited_python_file_fires_and_an_oversized_config_does_not(self):
         self.write("src/app/units.py", TO_CENTS)

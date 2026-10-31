@@ -11,6 +11,11 @@ deterministically and from the disk alone, whether such a thing exists:
      (``""`` for a file that does not exist yet).
    - A file that changed since the index before its first snapshot (a ``sed``, ``execute_code`` or a
      delegated child's edit) is marked as having no turn-start text.
+   - No index is taken for a session whose platform never gets the check (``note_turn_posture``, from
+     ``pre_llm_call``), or for a root whose last index ran over budget within ``OVER_BUDGET_SECONDS``.
+   - Residual: Hermes can skip a plugin's ``pre_tool_call`` (a hook timeout or a call still running).
+     A skipped first call is covered, since the stop then has no index and fires. A skipped later
+     ``sed`` call on a file that is snapshotted afterwards is not seen.
 2. ``round_end_trigger`` (``pre_verify``, attempt 0):
    - It re-indexes the workspace to find every Python file the turn changed, by any tool.
    - It diffs each kept snapshot against the disk, and finds the definitions the changed lines touch
@@ -31,8 +36,10 @@ No signal means the check is skipped. Every other outcome fires it as it fired b
 - a changed source file that is not Python;
 - a Python file changed this turn without a turn-start snapshot (``opaque_edit``);
 - a changed file that does not parse;
-- a non-trivial change that touches no definition or import (``unattributed``);
-- an index or scan over its entry or time budget;
+- a non-trivial change that touches no definition, import or docstring (``unattributed``);
+- an index or scan over its entry or time budget, or a root cached as over budget;
+- a Python file or a directory under the root that is a symlink leaving it (``outside_link``);
+- a session that had no index taken because its platform never gets the check, if it is asked anyway;
 - an unedited Python file too large or unreadable to rule out;
 - any error.
 
@@ -69,6 +76,12 @@ MAX_SCAN_ENTRIES: Final = 5000
 INDEX_SECONDS: Final = 0.5
 SCAN_SECONDS: Final = 2.0
 _DEADLINE_EVERY: Final = 64
+# A root whose index ran over budget is not walked again for this long, in this process: later turns
+# fire the check without paying for a walk that will not finish.
+OVER_BUDGET_SECONDS: Final = 300.0
+# Pruned like `lsp_nav` (VCS, virtualenvs, caches, hidden directories), plus build outputs, which hold
+# copies of the source that are not the source.
+_SKIP_DIRS: Final = lsp_nav._SKIP_DIRS | frozenset({"build", "dist"})
 # A replaced line shorter than this (after collapsing whitespace) is too common to call a copy.
 MIN_COPY_LINE_CHARS: Final = 30
 _MAX_SESSIONS: Final = 64
@@ -78,11 +91,17 @@ _V4A_MOVE: Final = re.compile(r"^\*\*\*\s*Move\s+File:\s*(.+?)\s*->\s*(.+)$", re
 # Top-level names many unrelated modules define; one of them defined elsewhere is not a copy.
 _COMMON_NAMES: Final = frozenset({"main", "log", "LOG", "logger", "LOGGER", "app"})
 _CONSTRUCTOR_METHODS: Final = frozenset({"__init__", "__new__", "__call__"})
+# Platforms `pre_verify` never gives the check (`verify_hooks._NO_CHECKLIST_PLATFORMS`, kept equal by a test).
+NO_CHECK_PLATFORMS: Final = frozenset({"subagent"})
 # Statement bodies read as if their definitions sat at the enclosing level.
 _BLOCK_FIELDS: Final = ("body", "orelse", "finalbody")
 
 _LOG = logging.getLogger("omh.consistency_trigger")
 _lock = threading.Lock()
+# root -> (monotonic time, (reason, detail)) of its last index that could not finish.
+_over_budget: "OrderedDict[str, tuple[float, tuple[str, str]]]" = OrderedDict()
+# session -> False when the session's platform never gets the check (`note_turn_posture`).
+_posture: "OrderedDict[str, bool]" = OrderedDict()
 # session -> {"turn", "root", "index": {realpath: (mtime_ns, size)} | None, "before": {realpath: str},
 #             "opaque": set[str], "bytes": int}
 _sessions: "OrderedDict[str, dict[str, Any]]" = OrderedDict()
@@ -96,6 +115,10 @@ class Verdict(NamedTuple):
 
 class _Budget(Exception):
     """A walk ran past its entry count or deadline."""
+
+
+class _OutsideLink(Exception):
+    """A Python file or a directory under the root is a symlink that leaves it."""
 
 
 def snapshot_before_edit(kwargs: dict[str, Any], tool_input: object) -> None:
@@ -159,10 +182,26 @@ def discard_snapshots(session_id: object) -> None:
             _sessions.pop(session_id, None)
 
 
+def note_turn_posture(session_id: object, platform: object) -> None:
+    """``pre_llm_call``: remember whether this session's platform can get the check at all, so
+    ``pre_tool_call`` (which is given no platform) spends no index on one that cannot. Only the platform
+    rule `pre_verify` itself applies is used (`verify_hooks._NO_CHECKLIST_PLATFORMS`); the coding posture
+    is not re-derived here, because a wrong guess would quietly turn every verdict into a fail-open."""
+    if not isinstance(session_id, str) or not session_id:
+        return
+    with _lock:
+        _posture[session_id] = str(platform or "") not in NO_CHECK_PLATFORMS
+        _posture.move_to_end(session_id)
+        while len(_posture) > _MAX_SESSIONS:
+            _posture.popitem(last=False)
+
+
 def reset() -> None:
-    """Forget every session's state (tests)."""
+    """Forget every session's state and every cached over-budget root (tests)."""
     with _lock:
         _sessions.clear()
+        _over_budget.clear()
+        _posture.clear()
 
 
 def _turn_state(session_id: str, kwargs: dict[str, Any]) -> dict[str, Any]:
@@ -172,15 +211,31 @@ def _turn_state(session_id: str, kwargs: dict[str, Any]) -> dict[str, Any]:
         if state is not None and state["turn"] == turn:
             return state
     root = os.path.realpath(_workspace_root(kwargs.get("task_id")) or os.getcwd())
-    try:
-        index: dict[str, tuple[int, int]] | None = _index(root, time.monotonic() + INDEX_SECONDS)
-    except _Budget:
-        index = None
+    index: dict[str, tuple[int, int]] | None = None
+    unindexed: tuple[str, str] = ("", "")
+    with _lock:
+        eligible = _posture.get(session_id, True)
+        cached = _over_budget.get(root)
+    if not eligible:
+        unindexed = ("no_check_session", "")
+    elif cached is not None and time.monotonic() - cached[0] < OVER_BUDGET_SECONDS:
+        unindexed = cached[1]
+    else:
+        try:
+            index = _index(root, time.monotonic() + INDEX_SECONDS)
+        except (_Budget, _OutsideLink) as exc:
+            unindexed = ("outside_link", str(exc)) if isinstance(exc, _OutsideLink) else ("index_budget", str(exc))
+            with _lock:
+                _over_budget[root] = (time.monotonic(), unindexed)
+                _over_budget.move_to_end(root)
+                while len(_over_budget) > _MAX_SESSIONS:
+                    _over_budget.popitem(last=False)
     with _lock:
         state = _sessions.get(session_id)
         if state is not None and state["turn"] == turn:  # a parallel first call got here first
             return state
-        state = {"turn": turn, "root": root, "index": index, "before": {}, "opaque": set(), "bytes": 0}
+        state = {"turn": turn, "root": root, "index": index, "unindexed": unindexed, "before": {},
+                 "opaque": set(), "bytes": 0}
         _sessions.pop(session_id, None)
         _sessions[session_id] = state
         while len(_sessions) > _MAX_SESSIONS:
@@ -199,11 +254,14 @@ def _decide(state: dict[str, Any] | None, code_paths: tuple[str, ...], deadline:
             return Verdict(True, "not_python", os.path.basename(path))
         reported.add(path)
     if state["index"] is None:
-        return Verdict(True, "index_budget")
+        reason, detail = state["unindexed"]
+        return Verdict(True, reason or "index_budget", detail)
     try:
         current = _index(root, deadline)
     except _Budget:
         return Verdict(True, "scan_budget", "index")
+    except _OutsideLink as exc:
+        return Verdict(True, "outside_link", str(exc))
     before_index = state["index"]
     changed = {path for path in set(before_index) | set(current) if before_index.get(path) != current.get(path)}
     changed |= reported
@@ -254,8 +312,10 @@ def _collect(before: str, after: str, needles: _Needles) -> str:
         lines = {i1, i1 + 1} if i1 == i2 else set(range(i1 + 1, i2 + 1))
         touched_lines |= lines
         # Attributed when the hunk's old lines sit in a definition or import before the edit, or its
-        # new lines in one after it (a definition or import the edit added).
-        if not _trivial(old_lines[i1:i2] + new_lines[j1:j2]) and not _covered(lines, old_spans) \
+        # new lines in one after it (a definition or import the edit added). A pure insertion is
+        # judged by its new lines only: sitting next to a definition does not make it part of one.
+        old_side = set() if i1 == i2 else lines
+        if not _trivial(old_lines[i1:i2] + new_lines[j1:j2]) and not _covered(old_side, old_spans) \
                 and not _covered(set(range(j1 + 1, j2 + 1)), new_spans):
             return "unattributed"
         for line in old_lines[i1:i2]:
@@ -323,17 +383,25 @@ def _scan(root: str, edited: set[str], needles: _Needles, deadline: float) -> Ve
                     return Verdict(True, "line_copy", where)
     except _Budget as exc:
         return Verdict(True, "scan_budget", str(exc))
+    except _OutsideLink as exc:
+        return Verdict(True, "outside_link", str(exc))
     return Verdict(False, "no_copy_or_reference")
 
 
 def _walk(root: str, suffixes: tuple[str, ...], deadline: float):
-    """Realpaths of files under ``root`` with ``suffixes`` (sorted walk, pruned like `lsp_nav`); raises
-    `_Budget` past ``MAX_SCAN_ENTRIES`` entries visited or past ``deadline``."""
+    """Realpaths of files under ``root`` with ``suffixes`` (sorted walk, pruned by `_SKIP_DIRS` and hidden
+    directories). Raises `_Budget` past ``MAX_SCAN_ENTRIES`` entries visited or past ``deadline``, and
+    `_OutsideLink` for a Python file or a directory that is a symlink leaving the root: what it points at
+    is never read, and a reference could sit there."""
     visited = 0
     for dirpath, dirnames, filenames in os.walk(root):
         if time.monotonic() >= deadline:
             raise _Budget("deadline")
-        dirnames[:] = sorted(d for d in dirnames if d not in lsp_nav._SKIP_DIRS and not d.startswith("."))
+        dirnames[:] = sorted(d for d in dirnames if d not in _SKIP_DIRS and not d.startswith("."))
+        for name in dirnames:
+            linked = os.path.join(dirpath, name)
+            if os.path.islink(linked) and not inside(os.path.realpath(linked), root):
+                raise _OutsideLink(os.path.relpath(linked, root))
         visited += len(dirnames)
         for filename in sorted(filenames):
             visited += 1
@@ -344,7 +412,11 @@ def _walk(root: str, suffixes: tuple[str, ...], deadline: float):
             if not filename.endswith(suffixes):
                 continue
             path = os.path.realpath(os.path.join(dirpath, filename))
-            if inside(path, root) and os.path.isfile(path):
+            if not inside(path, root):
+                if filename.endswith(PYTHON_SUFFIXES):
+                    raise _OutsideLink(os.path.relpath(os.path.join(dirpath, filename), root))
+                continue
+            if os.path.isfile(path):
                 yield path
 
 
@@ -376,8 +448,10 @@ def _definitions(tree: ast.AST) -> dict[str, list[tuple[int, int, ast.AST]]]:
             elif isinstance(node, (ast.Assign, ast.AnnAssign)):
                 targets = node.targets if isinstance(node, ast.Assign) else [node.target]
                 for target in targets:
-                    if isinstance(target, ast.Name):
-                        found.setdefault(prefix + target.id, []).append((start, end, node))
+                    names = target.elts if isinstance(target, (ast.Tuple, ast.List)) else [target]
+                    for item in names:
+                        if isinstance(item, ast.Name):
+                            found.setdefault(prefix + item.id, []).append((start, end, node))
             elif isinstance(node, (ast.If, ast.Try, ast.With, ast.AsyncWith)) or type(node).__name__ == "TryStar":
                 for field in _BLOCK_FIELDS:
                     visit(getattr(node, field, None) or [], prefix)
@@ -389,8 +463,16 @@ def _definitions(tree: ast.AST) -> dict[str, list[tuple[int, int, ast.AST]]]:
 
 
 def _import_spans(tree: ast.AST) -> list[tuple[int, int, ast.AST]]:
-    return [(node.lineno, getattr(node, "end_lineno", None) or node.lineno, node)
-            for node in ast.walk(tree) if isinstance(node, (ast.Import, ast.ImportFrom))]
+    """Imports and docstrings (the first string statement of the module, a class or a function): a
+    change there is attributed, and nothing in it is searched for."""
+    nodes: list[ast.AST] = [node for node in ast.walk(tree) if isinstance(node, (ast.Import, ast.ImportFrom))]
+    for owner in [tree] + [node for node in ast.walk(tree)
+                           if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))]:
+        body = getattr(owner, "body", None) or []
+        if body and isinstance(body[0], ast.Expr) and isinstance(body[0].value, ast.Constant) \
+                and isinstance(body[0].value.value, str):
+            nodes.append(body[0])
+    return [(node.lineno, getattr(node, "end_lineno", None) or node.lineno, node) for node in nodes]
 
 
 def _class_shape(node: ast.ClassDef) -> str:
@@ -474,4 +556,4 @@ def _parse(text: str) -> ast.AST | None:
         return None
 
 
-__all__ = ["Verdict", "discard_snapshots", "reset", "round_end_trigger", "snapshot_before_edit"]
+__all__ = ["Verdict", "discard_snapshots", "note_turn_posture", "reset", "round_end_trigger", "snapshot_before_edit"]
