@@ -4,21 +4,37 @@ The check (`hooks/verify_hooks.ROUND_END_CHECKLIST`) costs one more round of the
 off only when something outside the edited files has to change with the edit. This module decides,
 deterministically and from the disk alone, whether such a thing exists:
 
-1. ``snapshot_before_edit`` (``pre_tool_call``): before the turn's first ``patch`` / ``write_file`` of
-   each ``.py`` / ``.pyi`` file, keep the file's text (``""`` for a file that does not exist yet).
-2. ``round_end_trigger`` (``pre_verify``, attempt 0): diff each snapshot against the disk, find the
-   definitions the changed lines touch (stdlib ``ast``), and scan the workspace's other Python files,
-   the ones this turn did not edit, for one of four signals:
+1. ``snapshot_before_edit`` (``pre_tool_call``, before any gate):
+   - At the turn's first tool call of any kind, it records a bounded ``(mtime, size)`` index of the
+     workspace's ``.py`` / ``.pyi`` files.
+   - Before each ``patch`` / ``write_file`` of such a file, it keeps the file's text, once per turn
+     (``""`` for a file that does not exist yet).
+   - A file that changed since the index before its first snapshot (a ``sed``, ``execute_code`` or a
+     delegated child's edit) is marked as having no turn-start text.
+2. ``round_end_trigger`` (``pre_verify``, attempt 0):
+   - It re-indexes the workspace to find every Python file the turn changed, by any tool.
+   - It diffs each kept snapshot against the disk, and finds the definitions the changed lines touch
+     with stdlib ``ast``. Module and class level are read, including ``if`` / ``try`` / ``with``
+     bodies.
+   - It scans the other files for one of four signals:
 
-   - ``copy``: a touched top-level definition is also defined at the top level of another file;
-   - ``renamed``: a top-level or class-level definition the edit removed is still named elsewhere;
-   - ``signature``: a touched function's parameters or return annotation changed, and it is named
-     elsewhere;
-   - ``line_copy``: a non-trivial line the edit replaced or removed also appears elsewhere.
+     - ``copy``: a touched top-level definition is also defined at the top level of another file;
+     - ``renamed``: a definition the edit removed is still named in another Python file or a config
+       file (``.toml`` ``.cfg`` ``.ini`` ``.yaml`` ``.yml`` ``.json``);
+     - ``signature``: a touched function's parameters or return annotation changed, or a class's
+       constructor shape did (``__init__`` / ``__new__`` / ``__call__``, annotated fields, abstract
+       methods), and the function or class is named in another file;
+     - ``line_copy``: a non-trivial line the edit replaced or removed also appears elsewhere.
 
-   No signal means the check is skipped. Anything this module cannot decide fires the check, as it
-   fired before: a changed source file that is not Python, a changed file with no snapshot or that does
-   not parse, a scan over its file count or time budget, or any error.
+No signal means the check is skipped. Every other outcome fires it as it fired before this module:
+
+- a changed source file that is not Python;
+- a Python file changed this turn without a turn-start snapshot (``opaque_edit``);
+- a changed file that does not parse;
+- a non-trivial change that touches no definition or import (``unattributed``);
+- an index or scan over its entry or time budget;
+- an unedited Python file too large or unreadable to rule out;
+- any error.
 
 State is per process and per session, reset when a new turn id reaches ``pre_tool_call`` and consumed
 at the turn's first stop. Nothing here raises into a hook.
@@ -37,14 +53,22 @@ from collections import OrderedDict
 from typing import Any, Final, NamedTuple
 
 from . import lsp_nav
-from .lsp_nav import LspNavError
+from .lsp_nav import LspNavError, inside
 from .tools.lsp_nav_tool import _workspace_root
 
 PYTHON_SUFFIXES: Final = (".py", ".pyi")
+# Files a `renamed` name can be load-bearing in without being Python: entry points, tool and CI
+# configuration. Prose (.md, .rst, .txt) is left out: docs and changelogs name old APIs on purpose.
+CONFIG_SUFFIXES: Final = (".toml", ".cfg", ".ini", ".yaml", ".yml", ".json")
 MAX_SNAPSHOT_FILES: Final = 32
+MAX_SNAPSHOT_BYTES: Final = 4_000_000
 MAX_FILE_BYTES: Final = 512_000
-MAX_SCAN_FILES: Final = 3000
+# Directory entries visited per walk (files and directories alike, pruned trees not counted).
+MAX_SCAN_ENTRIES: Final = 5000
+# The turn-start index runs inside `pre_tool_call`; the verdict (re-index plus scan) inside `pre_verify`.
+INDEX_SECONDS: Final = 0.5
 SCAN_SECONDS: Final = 2.0
+_DEADLINE_EVERY: Final = 64
 # A replaced line shorter than this (after collapsing whitespace) is too common to call a copy.
 MIN_COPY_LINE_CHARS: Final = 30
 _MAX_SESSIONS: Final = 64
@@ -53,10 +77,14 @@ _V4A_HEADER: Final = re.compile(r"^\*\*\*\s*(?:Update|Add|Delete)\s+File:\s*(.+)
 _V4A_MOVE: Final = re.compile(r"^\*\*\*\s*Move\s+File:\s*(.+?)\s*->\s*(.+)$", re.MULTILINE)
 # Top-level names many unrelated modules define; one of them defined elsewhere is not a copy.
 _COMMON_NAMES: Final = frozenset({"main", "log", "LOG", "logger", "LOGGER", "app"})
+_CONSTRUCTOR_METHODS: Final = frozenset({"__init__", "__new__", "__call__"})
+# Statement bodies read as if their definitions sat at the enclosing level.
+_BLOCK_FIELDS: Final = ("body", "orelse", "finalbody")
 
 _LOG = logging.getLogger("omh.consistency_trigger")
 _lock = threading.Lock()
-# session -> {"turn": str, "root": str, "before": {realpath: str | None}}; None = too large to keep.
+# session -> {"turn", "root", "index": {realpath: (mtime_ns, size)} | None, "before": {realpath: str},
+#             "opaque": set[str], "bytes": int}
 _sessions: "OrderedDict[str, dict[str, Any]]" = OrderedDict()
 
 
@@ -66,43 +94,52 @@ class Verdict(NamedTuple):
     detail: str = ""
 
 
+class _Budget(Exception):
+    """A walk ran past its entry count or deadline."""
+
+
 def snapshot_before_edit(kwargs: dict[str, Any], tool_input: object) -> None:
-    """``pre_tool_call``: keep the pre-edit text of each Python file this call edits, once per turn."""
+    """``pre_tool_call``: index the workspace at the turn's first call; snapshot Python files before edits."""
     try:
+        session_id = str(kwargs.get("session_id", "") or kwargs.get("task_id", "") or "")
+        if not session_id:
+            return
+        state = _turn_state(session_id, kwargs)
         tool_name = kwargs.get("tool_name")
         if tool_name not in _EDIT_TOOLS or not isinstance(tool_input, dict):
             return
-        session_id = str(kwargs.get("session_id", "") or kwargs.get("task_id", "") or "")
-        targets = [path for path in _edit_targets(str(tool_name), tool_input) if path.endswith(PYTHON_SUFFIXES)]
-        if not session_id or not targets:
-            return
-        root = os.path.realpath(_workspace_root(kwargs.get("task_id")) or os.getcwd())
-        turn = str(kwargs.get("turn_id", "") or "")
-        with _lock:
-            state = _sessions.get(session_id)
-            if state is None or state["turn"] != turn:
-                state = {"turn": turn, "root": root, "before": {}}
-                _sessions.pop(session_id, None)
-                _sessions[session_id] = state
-                while len(_sessions) > _MAX_SESSIONS:
-                    _sessions.popitem(last=False)
-        for requested in targets:
+        root = state["root"]
+        for requested in _edit_targets(str(tool_name), tool_input):
+            if not requested.endswith(PYTHON_SUFFIXES):
+                continue
             path = _resolve(requested, root)
             if path is None:
                 continue
             with _lock:
-                if path in state["before"] or len(state["before"]) >= MAX_SNAPSHOT_FILES:
+                if path in state["before"] or path in state["opaque"]:
                     continue
+            index = state["index"]
+            if index is not None and _stat(path) != index.get(path):
+                # Changed since the turn began, by something that was not a patch or write_file:
+                # the text on disk now is not the turn's starting text.
+                with _lock:
+                    state["opaque"].add(path)
+                continue
             text = _read(path, missing="")
             with _lock:
-                state["before"].setdefault(path, text)
-    except Exception as exc:  # noqa: BLE001 - never fail the edit; a missing snapshot fires the check
+                if text is None or len(state["before"]) >= MAX_SNAPSHOT_FILES \
+                        or state["bytes"] + len(text) > MAX_SNAPSHOT_BYTES:
+                    continue
+                if path not in state["before"]:
+                    state["before"][path] = text
+                    state["bytes"] += len(text)
+    except Exception as exc:  # noqa: BLE001 - never fail the call; a missing snapshot fires the check
         _LOG.warning("consistency_trigger snapshot failed=%s", type(exc).__name__)
 
 
 def round_end_trigger(session_id: str, code_paths: tuple[str, ...]) -> Verdict:
     """``pre_verify`` attempt 0: whether the consistency check should fire for this turn's changed source
-    files (``code_paths``). Consumes the session's snapshots."""
+    files (``code_paths``). Consumes the session's state."""
     with _lock:
         state = _sessions.pop(session_id, None) if session_id else None
     started = time.monotonic()
@@ -116,47 +153,79 @@ def round_end_trigger(session_id: str, code_paths: tuple[str, ...]) -> Verdict:
 
 
 def discard_snapshots(session_id: object) -> None:
-    """Drop the session's snapshots without reading them (the turn's first stop did not need a verdict)."""
+    """Drop the session's state without reading it (the turn's first stop did not need a verdict)."""
     if isinstance(session_id, str) and session_id:
         with _lock:
             _sessions.pop(session_id, None)
 
 
 def reset() -> None:
-    """Forget every snapshot (tests)."""
+    """Forget every session's state (tests)."""
     with _lock:
         _sessions.clear()
+
+
+def _turn_state(session_id: str, kwargs: dict[str, Any]) -> dict[str, Any]:
+    turn = str(kwargs.get("turn_id", "") or "")
+    with _lock:
+        state = _sessions.get(session_id)
+        if state is not None and state["turn"] == turn:
+            return state
+    root = os.path.realpath(_workspace_root(kwargs.get("task_id")) or os.getcwd())
+    try:
+        index: dict[str, tuple[int, int]] | None = _index(root, time.monotonic() + INDEX_SECONDS)
+    except _Budget:
+        index = None
+    with _lock:
+        state = _sessions.get(session_id)
+        if state is not None and state["turn"] == turn:  # a parallel first call got here first
+            return state
+        state = {"turn": turn, "root": root, "index": index, "before": {}, "opaque": set(), "bytes": 0}
+        _sessions.pop(session_id, None)
+        _sessions[session_id] = state
+        while len(_sessions) > _MAX_SESSIONS:
+            _sessions.popitem(last=False)
+        return state
 
 
 def _decide(state: dict[str, Any] | None, code_paths: tuple[str, ...], deadline: float) -> Verdict:
     if state is None:
         return Verdict(True, "no_snapshot")
     root = state["root"]
-    edited: set[str] = set()
+    reported: set[str] = set()
     for item in code_paths:
         path = os.path.realpath(item if os.path.isabs(item) else os.path.join(root, item))
         if not path.endswith(PYTHON_SUFFIXES):
             return Verdict(True, "not_python", os.path.basename(path))
-        edited.add(path)
+        reported.add(path)
+    if state["index"] is None:
+        return Verdict(True, "index_budget")
+    try:
+        current = _index(root, deadline)
+    except _Budget:
+        return Verdict(True, "scan_budget", "index")
+    before_index = state["index"]
+    changed = {path for path in set(before_index) | set(current) if before_index.get(path) != current.get(path)}
+    changed |= reported
     needles = _Needles()
-    for path in sorted(edited):
-        before = state["before"].get(path, False)
-        if before is False or before is None:
-            return Verdict(True, "no_snapshot", os.path.basename(path))
+    for path in sorted(changed):
+        if path in state["opaque"] or path not in state["before"]:
+            return Verdict(True, "opaque_edit", _relative(path, root))
         after = _read(path, missing="")
         if after is None:
-            return Verdict(True, "too_large", os.path.basename(path))
-        if not _collect(before, after, needles):
-            return Verdict(True, "parse_error", os.path.basename(path))
+            return Verdict(True, "too_large", _relative(path, root))
+        status = _collect(state["before"][path], after, needles)
+        if status != "ok":
+            return Verdict(True, status, _relative(path, root))
     if needles.empty():
         return Verdict(False, "nothing_changed")
-    return _scan(root, edited, needles, deadline)
+    return _scan(root, changed, needles, deadline)
 
 
 class _Needles:
     def __init__(self) -> None:
         self.defined: set[str] = set()   # copy: defined at the top level elsewhere
-        self.renamed: set[str] = set()   # renamed: named elsewhere
+        self.renamed: set[str] = set()   # renamed: named elsewhere, Python or config
         self.signature: set[str] = set()  # signature: named elsewhere
         self.lines: set[str] = set()     # line_copy: appears as a line elsewhere
 
@@ -164,64 +233,83 @@ class _Needles:
         return not (self.defined or self.renamed or self.signature or self.lines)
 
 
-def _collect(before: str, after: str, needles: _Needles) -> bool:
-    """Add what this file's edit could have a copy or a reference of elsewhere; False when either side does not parse."""
+def _collect(before: str, after: str, needles: _Needles) -> str:
+    """Add what this file's edit could have a copy or a reference of elsewhere.
+
+    Returns ``"ok"``, ``"parse_error"`` (either side does not parse) or ``"unattributed"`` (a
+    non-trivial changed hunk touches no definition or import, so nothing here can be searched for).
+    """
     before_tree, after_tree = _parse(before), _parse(after)
     if before_tree is None or after_tree is None:
-        return False
+        return "parse_error"
     old_lines, new_lines = before.splitlines(), after.splitlines()
+    old_defs, new_defs = _definitions(before_tree), _definitions(after_tree)
+    old_spans = [span for entries in old_defs.values() for span in entries] + _import_spans(before_tree)
+    new_spans = [span for entries in new_defs.values() for span in entries] + _import_spans(after_tree)
     touched_lines: set[int] = set()
     matcher = difflib.SequenceMatcher(None, old_lines, new_lines, autojunk=False)
-    for tag, i1, i2, _j1, _j2 in matcher.get_opcodes():
+    for tag, i1, i2, j1, j2 in matcher.get_opcodes():
         if tag == "equal":
             continue
-        if i1 == i2:  # a pure insertion touches the lines on both sides of it
-            touched_lines.update({i1, i1 + 1})
-            continue
-        touched_lines.update(range(i1 + 1, i2 + 1))
+        lines = {i1, i1 + 1} if i1 == i2 else set(range(i1 + 1, i2 + 1))
+        touched_lines |= lines
+        # Attributed when the hunk's old lines sit in a definition or import before the edit, or its
+        # new lines in one after it (a definition or import the edit added).
+        if not _trivial(old_lines[i1:i2] + new_lines[j1:j2]) and not _covered(lines, old_spans) \
+                and not _covered(set(range(j1 + 1, j2 + 1)), new_spans):
+            return "unattributed"
         for line in old_lines[i1:i2]:
             normalized = " ".join(line.split())
             if len(normalized) >= MIN_COPY_LINE_CHARS and not normalized.startswith(("import ", "from ")):
                 needles.lines.add(normalized)
-    old_defs, new_defs = _definitions(before_tree), _definitions(after_tree)
-    for qualified, (start, end, node) in old_defs.items():
+    for qualified, entries in old_defs.items():
         name = qualified.rsplit(".", 1)[-1]
-        if _dunder(name):
-            continue
         if qualified not in new_defs:
-            needles.renamed.add(name)
+            if not _dunder(name):
+                needles.renamed.add(name)
             continue
-        if not touched_lines.intersection(range(start, end + 1)):
+        if not any(touched_lines.intersection(range(start, end + 1)) for start, end, _node in entries):
             continue
         top = qualified.split(".", 1)[0]
         if not _dunder(top) and top not in _COMMON_NAMES and not top.startswith("test"):
             needles.defined.add(top)
-        new_node = new_defs[qualified][2]
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and _signature(node) != _signature(new_node):
+        old_sigs = sorted(_signature(node) for _s, _e, node in entries if _is_function(node))
+        new_sigs = sorted(_signature(node) for _s, _e, node in new_defs[qualified] if _is_function(node))
+        if old_sigs != new_sigs and not _dunder(name):
             needles.signature.add(name)
-    return True
+    # A constructor's signature, a field or an abstract method changes what callers of the class
+    # depend on; callers name the class, not `__init__`, so the class is what is searched for.
+    for qualified, entries in old_defs.items():
+        new_entries = new_defs.get(qualified)
+        classes = [node for _s, _e, node in entries if isinstance(node, ast.ClassDef)]
+        new_classes = [node for _s, _e, node in new_entries or () if isinstance(node, ast.ClassDef)]
+        if classes and new_classes and sorted(map(_class_shape, classes)) != sorted(map(_class_shape, new_classes)):
+            needles.signature.add(qualified.rsplit(".", 1)[-1])
+    return "ok"
 
 
 def _scan(root: str, edited: set[str], needles: _Needles, deadline: float) -> Verdict:
     defined = {name: re.compile(rf"^(?:async[ \t]+def|def|class)[ \t]+{re.escape(name)}\b|^{re.escape(name)}[ \t]*(?::[^=\n]*)?=(?!=)",
                                 re.MULTILINE) for name in sorted(needles.defined)}
     named = {name: re.compile(rf"\b{re.escape(name)}\b") for name in sorted(needles.renamed | needles.signature)}
-    scanned = 0
-    for dirpath, dirnames, filenames in os.walk(root):
-        dirnames[:] = sorted(d for d in dirnames if d not in lsp_nav._SKIP_DIRS and not d.startswith("."))
-        for filename in sorted(filenames):
-            if not filename.endswith(PYTHON_SUFFIXES):
-                continue
-            path = os.path.realpath(os.path.join(dirpath, filename))
+    renamed = {name: named[name] for name in sorted(needles.renamed)}
+    suffixes = PYTHON_SUFFIXES + (CONFIG_SUFFIXES if renamed else ())
+    try:
+        for path in _walk(root, suffixes, deadline):
             if path in edited:
                 continue
-            scanned += 1
-            if scanned > MAX_SCAN_FILES or time.monotonic() >= deadline:
-                return Verdict(True, "scan_budget", str(scanned))
-            text = _read(path)
-            if not text:
-                continue
             where = os.path.relpath(path, root)
+            python = path.endswith(PYTHON_SUFFIXES)
+            text = _read(path)
+            if text is None:
+                if python:  # cannot rule a reference out
+                    return Verdict(True, "unreadable", where)
+                continue  # an oversized config is a lockfile or a data dump, not a place a def is named
+            if not python:
+                for name, pattern in renamed.items():
+                    if name in text and pattern.search(text):
+                        return Verdict(True, "renamed", f"{name} in {where}")
+                continue
             for name, pattern in defined.items():
                 if name in text and pattern.search(text):
                     return Verdict(True, "copy", f"{name} in {where}")
@@ -231,32 +319,95 @@ def _scan(root: str, edited: set[str], needles: _Needles, deadline: float) -> Ve
                     return Verdict(True, reason, f"{name} in {where}")
             if needles.lines:
                 lines = {" ".join(line.split()) for line in text.splitlines()}
-                hit = next((line for line in sorted(needles.lines) if line in lines), None)
-                if hit is not None:
+                if any(line in lines for line in needles.lines):
                     return Verdict(True, "line_copy", where)
-    return Verdict(False, "no_copy_or_reference", str(scanned))
+    except _Budget as exc:
+        return Verdict(True, "scan_budget", str(exc))
+    return Verdict(False, "no_copy_or_reference")
 
 
-def _definitions(tree: ast.AST) -> dict[str, tuple[int, int, ast.AST]]:
-    """Module- and class-level functions, classes and assigned names: qualified name -> (first line, last line, node)."""
-    found: dict[str, tuple[int, int, ast.AST]] = {}
+def _walk(root: str, suffixes: tuple[str, ...], deadline: float):
+    """Realpaths of files under ``root`` with ``suffixes`` (sorted walk, pruned like `lsp_nav`); raises
+    `_Budget` past ``MAX_SCAN_ENTRIES`` entries visited or past ``deadline``."""
+    visited = 0
+    for dirpath, dirnames, filenames in os.walk(root):
+        if time.monotonic() >= deadline:
+            raise _Budget("deadline")
+        dirnames[:] = sorted(d for d in dirnames if d not in lsp_nav._SKIP_DIRS and not d.startswith("."))
+        visited += len(dirnames)
+        for filename in sorted(filenames):
+            visited += 1
+            if visited > MAX_SCAN_ENTRIES:
+                raise _Budget("entries")
+            if visited % _DEADLINE_EVERY == 0 and time.monotonic() >= deadline:
+                raise _Budget("deadline")
+            if not filename.endswith(suffixes):
+                continue
+            path = os.path.realpath(os.path.join(dirpath, filename))
+            if inside(path, root) and os.path.isfile(path):
+                yield path
+
+
+def _index(root: str, deadline: float) -> dict[str, tuple[int, int]]:
+    return {path: stat for path in _walk(root, PYTHON_SUFFIXES, deadline) if (stat := _stat(path)) is not None}
+
+
+def _stat(path: str) -> tuple[int, int] | None:
+    try:
+        info = os.stat(path)
+    except OSError:
+        return None
+    return (info.st_mtime_ns, info.st_size)
+
+
+def _definitions(tree: ast.AST) -> dict[str, list[tuple[int, int, ast.AST]]]:
+    """Module- and class-level functions, classes and assigned names, including those inside ``if`` /
+    ``try`` / ``with`` bodies: qualified name -> every (first line, last line, node) defining it."""
+    found: dict[str, list[tuple[int, int, ast.AST]]] = {}
 
     def visit(body: list[ast.stmt], prefix: str) -> None:
         for node in body:
             start = min([node.lineno] + [item.lineno for item in getattr(node, "decorator_list", [])])
             end = getattr(node, "end_lineno", None) or node.lineno
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-                found.setdefault(prefix + node.name, (start, end, node))
+                found.setdefault(prefix + node.name, []).append((start, end, node))
                 if isinstance(node, ast.ClassDef):
                     visit(node.body, prefix + node.name + ".")
             elif isinstance(node, (ast.Assign, ast.AnnAssign)):
                 targets = node.targets if isinstance(node, ast.Assign) else [node.target]
                 for target in targets:
                     if isinstance(target, ast.Name):
-                        found.setdefault(prefix + target.id, (start, end, node))
+                        found.setdefault(prefix + target.id, []).append((start, end, node))
+            elif isinstance(node, (ast.If, ast.Try, ast.With, ast.AsyncWith)) or type(node).__name__ == "TryStar":
+                for field in _BLOCK_FIELDS:
+                    visit(getattr(node, field, None) or [], prefix)
+                for handler in getattr(node, "handlers", None) or []:
+                    visit(handler.body, prefix)
 
     visit(getattr(tree, "body", []), "")
     return found
+
+
+def _import_spans(tree: ast.AST) -> list[tuple[int, int, ast.AST]]:
+    return [(node.lineno, getattr(node, "end_lineno", None) or node.lineno, node)
+            for node in ast.walk(tree) if isinstance(node, (ast.Import, ast.ImportFrom))]
+
+
+def _class_shape(node: ast.ClassDef) -> str:
+    """What a caller constructing or subclassing ``node`` depends on: constructor signatures, annotated
+    fields (with whether each has a default), and abstract methods."""
+    constructors = sorted(f"{item.name}:{_signature(item)}" for item in node.body
+                          if _is_function(item) and item.name in _CONSTRUCTOR_METHODS)
+    fields = [f"{item.target.id}={item.value is not None}" for item in node.body
+              if isinstance(item, ast.AnnAssign) and isinstance(item.target, ast.Name)]
+    abstract = sorted(item.name for item in node.body if _is_function(item) and any(
+        (isinstance(d, ast.Name) and d.id == "abstractmethod")
+        or (isinstance(d, ast.Attribute) and d.attr == "abstractmethod") for d in item.decorator_list))
+    return f"{constructors}|{fields}|{abstract}"
+
+
+def _is_function(node: ast.AST) -> bool:
+    return isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
 
 
 def _signature(node: ast.AST) -> str:
@@ -265,8 +416,21 @@ def _signature(node: ast.AST) -> str:
     return f"{type(node).__name__}|{ast.dump(args) if args else ''}|{ast.dump(returns) if returns else ''}"
 
 
+def _covered(lines: set[int], spans: list[tuple[int, int, ast.AST]]) -> bool:
+    return any(start <= line <= end for line in lines for start, end, _node in spans)
+
+
+def _trivial(lines: list[str]) -> bool:
+    """Blank and comment-only lines: nothing a copy or a caller could depend on."""
+    return all(not line.strip() or line.strip().startswith("#") for line in lines)
+
+
 def _dunder(name: str) -> bool:
     return name.startswith("__") and name.endswith("__")
+
+
+def _relative(path: str, root: str) -> str:
+    return os.path.relpath(path, root) if inside(path, root) else os.path.basename(path)
 
 
 def _edit_targets(tool_name: str, args: dict[str, Any]) -> list[str]:
@@ -292,14 +456,15 @@ def _resolve(requested: str, root: str) -> str | None:
 def _read(path: str, missing: str | None = None) -> str | None:
     """The file's text; ``missing`` when it does not exist; None when it is too large or unreadable."""
     try:
-        if os.path.getsize(path) > MAX_FILE_BYTES:
-            return None
-        with open(path, encoding="utf-8", errors="replace") as handle:
-            return handle.read()
-    except FileNotFoundError:
-        return missing
+        if not os.path.isfile(path):
+            return missing if not os.path.exists(path) else None
+        with open(path, "rb") as handle:
+            data = handle.read(MAX_FILE_BYTES + 1)
     except OSError:
         return None
+    if len(data) > MAX_FILE_BYTES:
+        return None
+    return data.decode("utf-8", errors="replace")
 
 
 def _parse(text: str) -> ast.AST | None:

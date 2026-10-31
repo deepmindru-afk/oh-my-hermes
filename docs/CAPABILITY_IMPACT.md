@@ -90,23 +90,47 @@ code workspace, or `agent.coding_context: on`; the suffixes are listed in
 `_CODE_SUFFIXES` in `hooks/verify_hooks.py`.
 
 When the check would be the only nudge continuing the turn, it fires only
-when it can pay off (`consistency_trigger.py`). `pre_tool_call` keeps the
-pre-edit text of each Python file the turn edits. At the first stop, the
-changed definitions are compared with the workspace's other Python files, the
-ones the turn did not edit. The check fires when one of these is true:
+when it can pay off (`consistency_trigger.py`).
+
+- At the turn's first tool call, `pre_tool_call` records the size and
+  modification time of the workspace's Python files.
+- Before each `patch` or `write_file`, it keeps the pre-edit text of each
+  Python file that call edits.
+- At the first stop, the workspace is indexed again, so every Python file the
+  turn changed is found, whatever tool changed it.
+- The definitions the changed lines touch are compared with the other files,
+  the ones the turn did not edit. Module and class level are read, including
+  `if`, `try` and `with` bodies.
+
+The check fires when one of these is true:
 
 - a touched top-level definition is also defined in another file;
-- a definition the edit removed or renamed is still named in another file;
-- a touched function's signature changed and another file names it;
+- a definition the edit removed or renamed is still named in another Python
+  file, or in a `.toml`, `.cfg`, `.ini`, `.yaml`, `.yml` or `.json` file;
+- a touched function's signature changed, or a class's `__init__`, `__new__`
+  or `__call__` signature, annotated fields or abstract methods changed, and
+  another file names that function or class;
 - a replaced line of 30 or more characters appears in another file.
 
-Otherwise the turn ends at its first stop. Anything the trigger cannot decide
-fires the check as before:
+It also fires, as before, in every case where the trigger cannot rule a copy
+or a reference out:
 
 - a changed source file that is not Python;
-- a file without a snapshot or that does not parse;
-- a scan past 3,000 files or 2 s;
+- a Python file changed without a pre-edit text of its own (`opaque_edit`,
+  or `no_snapshot` when the session kept none): a `sed`, an `execute_code`
+  write, a delegated child's edit, or a file over the 32-file or 4 MB snapshot
+  cap;
+- a changed file that does not parse or is over 512 KB;
+- a non-trivial change that touches no definition or import (`unattributed`);
+- a workspace walk past 5,000 entries visited, or past 0.5 s at the turn's
+  start or 2 s at the stop;
+- an unedited Python file over 512 KB or unreadable;
 - an error.
+
+Otherwise the turn ends at its first stop. Prose files (`.md`, `.rst`, `.txt`)
+are not searched, because docs and changelogs name old APIs on purpose.
+Oversized config files are skipped rather than fired on, because they are
+lockfiles and data dumps.
 
 Beside another nudge, the check rides along without a verdict.
 

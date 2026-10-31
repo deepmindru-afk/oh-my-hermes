@@ -25,24 +25,37 @@ All notable changes will be documented here.
   code, OMH can continue it once at its first stop. It asks the model to look
   for other copies or call sites of the logic it changed that have to change
   with it, and to fix them, without re-running tests for the check. That is one
-  extra round, so for Python edits it fires only when it can pay off. It
-  fires when:
+  extra round, so after a Python edit it is skipped only when OMH can show
+  nothing outside the edited files depends on the change. It fires when:
 
   - a changed definition is also defined in another file;
-  - a removed or renamed name is still used in another file;
-  - a function whose signature changed is named in another file;
+  - a removed or renamed name is still used in another Python or config
+    file;
+  - a function whose signature changed is named in another file, or a class
+    whose constructor, annotated fields or abstract methods changed;
   - a replaced line appears in another file.
 
-  The files the turn did not edit are compared with what it changed, using the
-  pre-edit text kept at each edit. Other languages, and anything the comparison
-  cannot decide, get the check as before.
+  It also fires, as before, whenever that cannot be shown:
+
+  - a non-Python source file changed;
+  - a Python file changed with no pre-edit text kept for it: through `sed`,
+    `execute_code` or a delegated child, or past OMH's snapshot limits;
+  - a changed file does not parse or is too large;
+  - a change touches no definition or import;
+  - the workspace walk passes 5,000 entries or its time limit;
+  - an unedited Python file is too large or unreadable;
+  - any error.
+
+  This list is complete: there is no other case in which the check is skipped.
 
   On the bench corpus the always-on check fixed a second copy of the changed
   logic far more often: 76 vs 38 of 90 runs, pooled over five measurements. It
   cost about 1.37x the median tokens. The trigger kept those fixes and stopped
   the check on edits with no copy: 0 of 54 sessions against 54 of 54, with the
   same passes. Strong models' median tokens fell to 0.68x and 0.75x of the
-  always-on check in two runs.
+  always-on check in two runs. One clause of the pre-registered gate failed in
+  each run; the owner overrode it. The decision is recorded in
+  [the bench README](benchmarks/live-model-tools/v1/README.md#owner-decision-2026-10-31).
 
   If nothing more changed, the model replies with the single line
   `OMH: no further changes.`, and OMH puts the answer it had already given

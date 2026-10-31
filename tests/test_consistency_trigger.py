@@ -91,7 +91,7 @@ class CopySignalTest(_Workspace):
         self.write("src/app/receipt.py", RECEIPT)
         first = self.edit("src/app/invoice.py", "ROUND_HALF_EVEN)\n\n\n", "ROUND_HALF_UP)\n\n\n")
         second = self.edit("src/app/receipt.py", "rounding=decimal.ROUND_HALF_EVEN", "rounding=decimal.ROUND_HALF_UP")
-        self.assertEqual(self.verdict(first, second), ct.Verdict(False, "no_copy_or_reference", "0"))
+        self.assertEqual(self.verdict(first, second), ct.Verdict(False, "no_copy_or_reference"))
 
     def test_an_edit_with_no_copy_or_reference_elsewhere_skips(self):
         self.write("src/app/units.py", UNITS)
@@ -153,11 +153,12 @@ class FailOpenTest(_Workspace):
         self.write("src/app/units.py", TO_CENTS)
         self.assertEqual(self.verdict(str(self.root / "src/app/units.py"))[:2], (True, "no_snapshot"))
 
-    def test_a_changed_file_without_its_own_snapshot_fires(self):
+    def test_a_reported_file_without_its_own_snapshot_fires(self):
         self.write("src/app/units.py", TO_CENTS)
         self.write("src/app/cart.py", CART)
         changed = self.edit("src/app/units.py", "return int(", "return int(")
-        self.assertEqual(self.verdict(changed, str(self.root / "src/app/cart.py"))[:2], (True, "no_snapshot"))
+        self.assertEqual(self.verdict(changed, str(self.root / "src/app/cart.py")),
+                         ct.Verdict(True, "opaque_edit", "src/app/cart.py"))
 
     def test_a_non_python_source_file_fires(self):
         self.write("src/app/units.py", TO_CENTS)
@@ -173,7 +174,7 @@ class FailOpenTest(_Workspace):
         self.write("src/app/units.py", TO_CENTS)
         self.write("src/app/cart.py", CART)
         changed = self.edit("src/app/units.py", "100", "1000")
-        with mock.patch.object(ct, "MAX_SCAN_FILES", 0):
+        with mock.patch.object(ct, "MAX_SCAN_ENTRIES", 1):
             self.assertEqual(self.verdict(changed)[:2], (True, "scan_budget"))
         self.edit("src/app/units.py", "1000", "100")
         with mock.patch.object(ct, "SCAN_SECONDS", -1.0):
@@ -227,12 +228,210 @@ class SnapshotStateTest(_Workspace):
                                     {"path": "src/app/m0.py"})
         self.assertEqual(len(ct._sessions), ct._MAX_SESSIONS)
 
-    def test_a_malformed_call_never_raises(self):
+    def test_a_malformed_call_never_raises_and_keeps_no_snapshot(self):
         ct.snapshot_before_edit({"tool_name": "patch", "session_id": SESSION}, None)
         ct.snapshot_before_edit({"tool_name": "patch", "session_id": SESSION}, {"path": 7})
+        self.assertEqual(ct._sessions[SESSION]["before"], {})
         with mock.patch.object(ct, "_workspace_root", side_effect=RuntimeError("no root")):
-            ct.snapshot_before_edit({"tool_name": "patch", "session_id": SESSION}, {"path": "a.py"})
-        self.assertNotIn(SESSION, ct._sessions)
+            ct.snapshot_before_edit({"tool_name": "patch", "session_id": "other"}, {"path": "a.py"})
+        self.assertNotIn("other", ct._sessions)
+
+
+class OpaqueEditTest(_Workspace):
+    """Python files a turn changed without `patch` / `write_file`, which Hermes's changed_paths omit."""
+
+    def tool(self, name: str = "terminal", session: str = SESSION) -> None:
+        """A non-edit tool call; the turn's first one takes the workspace index."""
+        ct.snapshot_before_edit({"tool_name": name, "session_id": session, "turn_id": self.turn}, {"command": "x"})
+
+    def test_a_sed_rename_in_another_file_fires(self):
+        self.write("src/app/a.py", "def old_name(a):\n    return a\n")
+        self.write("src/app/b.py", "def other():\n    return 1\n")
+        self.write("src/app/use.py", "from app.a import old_name\nold_name(1)\n")
+        self.tool()
+        self.write("src/app/a.py", "def renamed_name(a):\n    return a\n")  # sed -i, through `terminal`
+        changed = self.edit("src/app/b.py", "return 1", "return 2")
+        self.assertEqual(self.verdict(changed), ct.Verdict(True, "opaque_edit", "src/app/a.py"))
+
+    def test_a_sed_rename_then_a_patch_of_the_same_file_fires(self):
+        self.write("src/app/a.py", "def old_name(a):\n    return a\n\n\ndef other():\n    return 1\n")
+        self.write("src/app/use.py", "from app.a import old_name\nold_name(1)\n")
+        self.tool()
+        self.write("src/app/a.py", "def renamed_name(a):\n    return a\n\n\ndef other():\n    return 1\n")
+        changed = self.edit("src/app/a.py", "return 1", "return 2")
+        self.assertEqual(self.verdict(changed), ct.Verdict(True, "opaque_edit", "src/app/a.py"))
+
+    def test_a_file_execute_code_created_fires(self):
+        self.write("src/app/a.py", "def other():\n    return 1\n")
+        self.tool("execute_code")
+        self.write("src/app/generated.py", "def made() -> int:\n    return 1\n")
+        changed = self.edit("src/app/a.py", "return 1", "return 2")
+        self.assertEqual(self.verdict(changed), ct.Verdict(True, "opaque_edit", "src/app/generated.py"))
+
+    def test_a_delegated_childs_edit_fires_for_the_parent(self):
+        self.write("src/app/a.py", "def other():\n    return 1\n")
+        self.write("src/app/b.py", "def helper():\n    return 1\n")
+        self.tool("delegate_task")
+        self.edit("src/app/b.py", "return 1", "return 3", session="child-session")
+        changed = self.edit("src/app/a.py", "return 1", "return 2")
+        self.assertEqual(self.verdict(changed), ct.Verdict(True, "opaque_edit", "src/app/b.py"))
+
+    def test_a_tool_call_that_changes_no_python_file_does_not_fire(self):
+        self.write("src/app/a.py", "def other():\n    return 1\n")
+        self.tool()
+        self.write("src/app/__pycache__/a.cpython-311.pyc", "x")  # a test run's bytecode
+        self.write("notes.txt", "ran the tests")
+        changed = self.edit("src/app/a.py", "return 1", "return 2")
+        self.assertEqual(self.verdict(changed)[:2], (False, "no_copy_or_reference"))
+
+    def test_an_index_past_its_budget_fires(self):
+        self.write("src/app/a.py", "def other():\n    return 1\n")
+        with mock.patch.object(ct, "MAX_SCAN_ENTRIES", 1):
+            self.tool()
+        changed = self.edit("src/app/a.py", "return 1", "return 2")
+        self.assertEqual(self.verdict(changed)[:2], (True, "index_budget"))
+
+    def test_the_session_byte_cap_leaves_the_next_file_without_a_snapshot(self):
+        self.write("src/app/a.py", "def a():\n    return 1\n")
+        self.write("src/app/b.py", "def b():\n    return 1\n")
+        with mock.patch.object(ct, "MAX_SNAPSHOT_BYTES", 30):
+            first = self.edit("src/app/a.py", "return 1", "return 2")
+            second = self.edit("src/app/b.py", "return 1", "return 2")
+        self.assertEqual(self.verdict(first, second), ct.Verdict(True, "opaque_edit", "src/app/b.py"))
+
+
+class ClassShapeTest(_Workspace):
+    CALLER = "from app.m import Foo\n\n\ndef build():\n    return Foo(1)\n"
+
+    def shape(self, module: str, old: str, new: str) -> ct.Verdict:
+        self.write("src/app/m.py", module)
+        self.write("src/app/use.py", self.CALLER)
+        return self.verdict(self.edit("src/app/m.py", old, new))
+
+    def test_a_constructor_gaining_a_parameter_fires_on_the_class(self):
+        verdict = self.shape("class Foo:\n    def __init__(self, a):\n        self.a = a\n",
+                             "def __init__(self, a):", "def __init__(self, a, b):")
+        self.assertEqual(verdict, ct.Verdict(True, "signature", "Foo in src/app/use.py"))
+
+    def test_new_and_call_signatures_fire_on_the_class(self):
+        for method in ("__new__", "__call__"):
+            with self.subTest(method):
+                verdict = self.shape(f"class Foo:\n    def {method}(self, a):\n        return a\n",
+                                     f"def {method}(self, a):", f"def {method}(self, a, b):")
+                self.assertEqual(verdict[:2], (True, "signature"))
+
+    def test_a_dataclass_field_added_or_removed_fires(self):
+        module = "from dataclasses import dataclass\n\n\n@dataclass\nclass Foo:\n    a: int\n    bee: int = 0\n"
+        self.assertEqual(self.shape(module, "    a: int\n", "    a: int\n    c: int\n")[:2], (True, "signature"))
+        ct.reset()
+        self.assertTrue(self.shape(module, "    bee: int = 0\n", "").fire)
+
+    def test_an_abstract_method_added_fires(self):
+        module = "import abc\n\n\nclass Foo(abc.ABC):\n    @abc.abstractmethod\n    def get(self, k): ...\n"
+        verdict = self.shape(module, "    def get(self, k): ...\n",
+                             "    def get(self, k): ...\n\n    @abc.abstractmethod\n    def put(self, k, v): ...\n")
+        self.assertEqual(verdict[:2], (True, "signature"))
+
+    def test_a_method_body_change_or_a_plain_new_method_does_not_fire(self):
+        module = "class Foo:\n    def __init__(self, a):\n        self.a = a\n\n    def size(self):\n        return 1\n"
+        self.assertFalse(self.shape(module, "return 1", "return 2").fire)
+        ct.reset()
+        self.assertFalse(self.shape(module, "        return 1\n",
+                                    "        return 1\n\n    def extra(self):\n        return 2\n").fire)
+        ct.reset()
+        self.assertFalse(self.shape(module, "        self.a = a\n", "        self.a = int(a)\n").fire)
+
+
+class BlockAndAttributionTest(_Workspace):
+    USE = "from app.m import load_cfg, norm, f\n"
+
+    def test_a_def_inside_try_or_if_renamed_fires(self):
+        self.write("src/app/m.py", "try:\n    import ujson as json\nexcept ImportError:\n    import json\n\n"
+                                   "if True:\n    def load_cfg(p):\n        return json.load(open(p))\n")
+        self.write("src/app/use.py", self.USE)
+        changed = self.edit("src/app/m.py", "def load_cfg(p):", "def read_cfg(p):")
+        self.assertEqual(self.verdict(changed), ct.Verdict(True, "renamed", "load_cfg in src/app/use.py"))
+
+    def test_one_of_two_platform_variants_changing_its_signature_fires(self):
+        self.write("src/app/m.py", "import sys\nif sys.platform == 'win32':\n    def norm(p):\n        return p.lower()\n"
+                                   "else:\n    def norm(p):\n        return p\n")
+        self.write("src/app/use.py", self.USE)
+        changed = self.edit("src/app/m.py", "    def norm(p):\n        return p\n", "    def norm(p, strict):\n        return p\n")
+        self.assertEqual(self.verdict(changed)[:2], (True, "signature"))
+
+    def test_an_overload_implementation_changing_its_signature_fires(self):
+        self.write("src/app/m.py", "from typing import overload\n\n\n@overload\ndef f(x: int) -> int: ...\n\n\n"
+                                   "@overload\ndef f(x: str) -> str: ...\n\n\ndef f(x):\n    return x\n")
+        self.write("src/app/use.py", self.USE)
+        changed = self.edit("src/app/m.py", "def f(x):\n    return x", "def f(x, y):\n    return x")
+        self.assertEqual(self.verdict(changed)[:2], (True, "signature"))
+
+    def test_a_change_touching_no_definition_fires_as_unattributed(self):
+        self.write("src/app/m.py", "def run():\n    return 1\n\n\nprint(run())\n")
+        changed = self.edit("src/app/m.py", "print(run())", "print(run() + 1)")
+        self.assertEqual(self.verdict(changed), ct.Verdict(True, "unattributed", "src/app/m.py"))
+
+    def test_comment_only_and_import_changes_are_attributed(self):
+        self.write("src/app/m.py", "import os\n\n# a note\n\n\ndef run():\n    return 1\n")
+        changed = self.edit("src/app/m.py", "# a note", "# a better note")
+        self.assertEqual(self.verdict(changed)[:2], (False, "nothing_changed"))
+        ct.reset()
+        changed = self.edit("src/app/m.py", "import os\n", "import os\nimport sys\n")
+        self.assertFalse(self.verdict(changed).fire)
+
+
+class ConfigReferenceTest(_Workspace):
+    def test_a_renamed_entry_point_named_in_pyproject_fires(self):
+        self.write("src/app/m.py", "def main_cli():\n    return 0\n")
+        self.write("pyproject.toml", "[project.scripts]\nx = 'app.m:main_cli'\n")
+        changed = self.edit("src/app/m.py", "def main_cli():", "def run_cli():")
+        self.assertEqual(self.verdict(changed), ct.Verdict(True, "renamed", "main_cli in pyproject.toml"))
+
+    def test_prose_and_non_rename_signals_do_not_read_config(self):
+        self.write("src/app/m.py", "def main_cli():\n    return 0\n")
+        self.write("README.md", "Run `main_cli` to start.\n")
+        changed = self.edit("src/app/m.py", "def main_cli():", "def run_cli():")
+        self.assertFalse(self.verdict(changed).fire)
+        ct.reset()
+        self.write("src/app/n.py", "def tool(a):\n    return a\n")
+        self.write("setup.cfg", "[tool]\nentry = tool\n")
+        changed = self.edit("src/app/n.py", "def tool(a):", "def tool(a, b):")
+        self.assertFalse(self.verdict(changed).fire)
+
+
+class ScanBoundsTest(_Workspace):
+    def test_every_entry_counts_toward_the_budget(self):
+        self.write("src/app/units.py", TO_CENTS)
+        for index in range(20):
+            self.write(f"assets/f{index}.png", "x")
+        changed = self.edit("src/app/units.py", "100", "1000")
+        with mock.patch.object(ct, "MAX_SCAN_ENTRIES", 15):
+            self.assertEqual(self.verdict(changed), ct.Verdict(True, "scan_budget", "index"))
+
+    def test_a_symlink_out_of_the_workspace_is_not_followed(self):
+        outside = tempfile.TemporaryDirectory()
+        self.addCleanup(outside.cleanup)
+        Path(outside.name, "receipt.py").write_text(RECEIPT, encoding="utf-8")
+        self.write("src/app/invoice.py", INVOICE)
+        os.symlink(Path(outside.name, "receipt.py"), self.root / "src/app/receipt.py")
+        changed = self.edit("src/app/invoice.py", "ROUND_HALF_EVEN)\n\n\n", "ROUND_HALF_UP)\n\n\n")
+        self.assertFalse(self.verdict(changed).fire)
+
+    def test_an_oversized_unedited_python_file_fires_and_an_oversized_config_does_not(self):
+        self.write("src/app/units.py", TO_CENTS)
+        self.write("src/app/big.py", "#" * 256)
+        self.write("package-lock.json", "x" * 256)
+        self.write("src/app/use.py", CART)
+        changed = self.edit("src/app/units.py", "def to_cents(", "def amount_to_cents(")
+        with mock.patch.object(ct, "MAX_FILE_BYTES", 200):
+            self.assertEqual(self.verdict(changed), ct.Verdict(True, "unreadable", "src/app/big.py"))
+        os.remove(self.root / "src/app/big.py")
+        os.remove(self.root / "src/app/use.py")
+        ct.reset()
+        self.write("src/app/units.py", TO_CENTS)
+        changed = self.edit("src/app/units.py", "def to_cents(", "def amount_to_cents(")
+        with mock.patch.object(ct, "MAX_FILE_BYTES", 200):
+            self.assertEqual(self.verdict(changed)[:2], (False, "no_copy_or_reference"))
 
 
 class PreVerifyGateTest(_Workspace):

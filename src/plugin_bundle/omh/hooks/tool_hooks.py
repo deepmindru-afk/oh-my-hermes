@@ -134,8 +134,9 @@ def pre_tool_call(**kwargs: object) -> dict[str, object] | None:
     # First, before any gate can return early: a new turn's first tool call drops the impact
     # check's state from an earlier turn of this session, whatever happens to the call itself.
     forget_other_turn(str(kwargs.get("session_id", "") or kwargs.get("task_id", "") or ""), kwargs.get("turn_id"))
-    # Also before any gate: the round-end consistency trigger keeps the pre-edit text of the Python
-    # files this call edits, so a call a gate here sends to a person for approval is covered too.
+    # Also before any gate: the round-end consistency trigger indexes the workspace's Python files at
+    # the turn's first call, of any tool, and keeps the pre-edit text of the Python files this call
+    # edits, so a call a gate here sends to a person for approval is covered too.
     snapshot_before_edit(kwargs, _tool_arguments(kwargs))
     if str(kwargs.get("tool_name", "") or "") == "omh_jev_ask":
         # First, before any early return: the call carries the turn it runs
