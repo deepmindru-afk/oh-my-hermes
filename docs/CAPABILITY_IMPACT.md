@@ -136,9 +136,11 @@ signals cannot see: a function body that changes behaviour without changing its
 signature, and a reference that exists only in prose. Prose files (`.md`,
 `.rst`, `.txt`) are not searched, because docs and changelogs name old APIs on
 purpose. The walk skips hidden directories, version-control and virtualenv
-directories, caches and `node_modules`. It also skips `build` and `dist`
-directories, at any depth, that hold no `__init__.py`: those are build output.
-A package named `build` or `dist` is scanned. A session on a
+directories, caches and `node_modules`. It also skips build output: a `build`
+directory that holds a `lib`, `lib.*`, `bdist.*`, `temp.*` or `__editable__*`
+directory (what setuptools and distutils leave), and a `dist` directory that
+holds no top-level `.py` file. Any other `build` or `dist` is scanned, such as a
+scripts directory or a namespace subpackage of that name. A session on a
 platform that never gets the check (a delegated child) takes no index.
 Oversized config files are skipped rather than fired on, because they are
 lockfiles and data dumps.
@@ -159,7 +161,10 @@ an `__all__` entry the module no longer defines or imports, or a top-level
 `from module import name` whose workspace module no longer binds that name: the
 leftover a rename leaves that no type error reports. Only top-level `from`
 statements are checked. An absolute import is resolved only from the project
-root or a `src/` directly under it. It says nothing when there is none. It
+root or a `src/` directly under it; when the importer's own directory is not a
+package and holds a module of the same name, that module is read instead, as a
+script or a pytest test module imports it (`tests/conftest.py` over the root's
+`conftest.py`). It says nothing when there is none. It
 skips a file that does not parse, and a module whose names it cannot know: a
 star import, a module-level `__getattr__`, `globals()` / `vars()` / `locals()`,
 `setattr` on a module, or `sys.modules[__name__]`. The note is always on, so a

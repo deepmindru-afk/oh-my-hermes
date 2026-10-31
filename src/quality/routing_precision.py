@@ -9443,6 +9443,17 @@ ROUTING_PRECISION_CASES: tuple[RoutingPrecisionCase, ...] = (
         "",
         "workflow-learning",
     ),
+    # #2440 follow-up: a bare "out" after the verb read every "find out ..." as
+    # an inquiry, so finding out which keys are unused got workflow-learning.
+    # "find out why", "find out what happened" and "find out the reason" still ask.
+    RoutingPrecisionCase(
+        "omh-picked-config-then-find-out-which-keys-is-a-request",
+        "OMH picked the config, find out which keys are unused, is a request, not a report",
+        "OMH picked the config. Find out which keys are unused",
+        "answer_clarification",
+        "",
+        "workflow-learning",
+    ),
 )
 
 

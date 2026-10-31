@@ -768,6 +768,8 @@ class HookManifestTests(unittest.TestCase):
             "OMH chose the parser module, find the bug in it",
             "OMH picked this function. Explain it line by line",
             "OMH chose these tests, then run them",
+            # #2440 follow-up: "find out" is a command unless it asks why or what happened.
+            "OMH picked the config. Find out which keys are unused",
         )
         for message in commands:
             with self.subTest(message=message):
@@ -781,6 +783,9 @@ class HookManifestTests(unittest.TestCase):
             "Ask OMH to fix a test and watch it open workflow learning, that's the bug",
             "OMH picked the wrong skill; show me why",
             "OMH chose ultrawork for a typo, list the reasons it did that",
+            "OMH routed my typo to ultrawork, find out what happened",
+            "OMH picked the wrong skill again; find out why",
+            "OMH chose ultrawork for a typo, find out the reason",
         )
         for message in reports:
             with self.subTest(message=message):

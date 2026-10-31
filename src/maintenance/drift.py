@@ -959,7 +959,10 @@ def count_metrics() -> tuple[CountMetric, ...]:
             # own command (copy, open, set, run) is not a report (+4).
             # #2440 re-review 3: bump, ship, check into git and find the bug
             # after what OMH chose are requests too (+4).
-            expected=1322,
+            # omh/omp-round-review-followups: "find out which keys are unused"
+            # after what OMH picked is a request; a bare "out" no longer makes
+            # it an inquiry (+1).
+            expected=1323,
             # The one reviewed test pin. Every other test compares its payload
             # against build_routing_precision_demo() rather than a literal.
             sites=("tests/test_routing_precision.py",),

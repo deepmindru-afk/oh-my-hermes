@@ -9,7 +9,9 @@ nothing by default, so the model stops with the stale entry in place. ``round_en
   ``__init__.py``, ships as a submodule);
 - a top-level ``from module import name`` whose module is a workspace file that no longer binds
   ``name``. An absolute import is resolved only from the project root (the nearest ancestor holding
-  a project marker) or a ``src/`` directly under it; a standard-library name never is.
+  a project marker) or a ``src/`` directly under it, and a same-named module beside an importer that
+  is not in a package wins over that (a script's or a pytest test module's own ``sys.path`` entry);
+  a standard-library name is never resolved.
 
 Always on: it reads the edited files and the workspace modules their imports resolve to, never runs a
 language server or a process, stops at a deadline sized like the impact check's share of the host
@@ -32,6 +34,7 @@ from pathlib import PurePath
 from typing import Final
 
 from .impact_check import host_hook_timeout
+from .tools.lsp_nav_tool import workspace_relative
 
 MAX_FILES: Final = 50
 MAX_FILE_BYTES: Final = 512_000
@@ -79,13 +82,15 @@ def round_end_note(session_id: str, changed_paths: object, reported: str = "", r
         files = _edited_python_files(changed_paths)
         for path in files:
             if time.monotonic() >= deadline:
+                check.timed_out = True
                 break
             rows.extend(check.file_rows(path))
         named = _named_lines(reported)
         rows = [row for row in rows if f"{row[0]}:{row[1]}" not in named]
         if files:
-            _LOG.info("export_check round_end session=%s files=%d rows=%d ms=%d", session_id, len(files), len(rows),
-                      (time.monotonic() - started) * 1000)
+            # `deadline=1`: the check stopped at its deadline and `rows` counts a partial result.
+            _LOG.info("export_check round_end session=%s files=%d rows=%d deadline=%d ms=%d", session_id, len(files),
+                      len(rows), check.timed_out, (time.monotonic() - started) * 1000)
         return format_note(rows)
     except Exception as exc:  # noqa: BLE001 - a broken check says nothing rather than fail the turn
         _LOG.warning("export_check round_end session=%s failed=%s", session_id, type(exc).__name__)
@@ -131,6 +136,7 @@ class _Check:
     def __init__(self, root: str | None, deadline: float) -> None:
         self.root = os.path.realpath(root) if isinstance(root, str) and root else None
         self.deadline = deadline
+        self.timed_out = False
         self.trees: dict[str, ast.Module | None] = {}
 
     def file_rows(self, path: str) -> list[tuple[str, int, str]]:
@@ -148,6 +154,7 @@ class _Check:
             pass
         for node in tree.body:
             if time.monotonic() >= self.deadline:
+                self.timed_out = True
                 break
             if isinstance(node, ast.ImportFrom):
                 rows.extend((shown, line, finding) for line, finding in self.missing_imports(node, path))
@@ -189,18 +196,11 @@ class _Check:
         return self.trees[path]
 
     def display(self, path: str) -> str:
-        """``path`` relative to the workspace root, with `/` separators, as the impact note shows it."""
+        """``path`` relative to the workspace root, with `/` separators, as the impact note shows it
+        (`workspace_relative`: a path on another Windows drive is shown whole)."""
         if self.root is not None:
-            return PurePath(os.path.relpath(path, self.root)).as_posix()
+            return workspace_relative(path, self.root)
         return PurePath(path).as_posix()
-
-
-def _edited_python_files(changed_paths: object) -> list[str]:
-    if not isinstance(changed_paths, (list, tuple)):
-        return []
-    files = [os.path.realpath(item) for item in changed_paths
-             if isinstance(item, str) and os.path.isabs(item) and item.endswith(".py")]
-    return sorted({path for path in files if os.path.isfile(path)})[:MAX_FILES]
 
 
 def _module_file(node: ast.ImportFrom, importer: str) -> str | None:
@@ -223,8 +223,21 @@ def _module_file(node: ast.ImportFrom, importer: str) -> str | None:
     for base in (project, os.path.join(project, "src")):
         found = _existing_module(os.path.join(base, *parts))
         if found is not None:
-            return found
+            return _sibling_module(importer, parts) or found
     return None
+
+
+def _sibling_module(importer: str, parts: list[str]) -> str | None:
+    """The module ``parts`` names beside ``importer`` when its directory is not a package: Python puts
+    a script's own directory first on ``sys.path``, and pytest's default ``prepend`` mode inserts a
+    test module's directory when it holds no ``__init__.py``. So `from conftest import x` in
+    `tests/test_a.py` reads `tests/conftest.py`, not the root's. It is consulted only once the root
+    rule has found a module, to pick between two workspace modules of one name: on its own, a
+    sibling named like an installed package (`scripts/setuptools.py`) is not this reader's to judge."""
+    directory = os.path.dirname(importer)
+    if os.path.isfile(os.path.join(directory, "__init__.py")):
+        return None
+    return _existing_module(os.path.join(directory, *parts))
 
 
 def _project_root(path: str) -> str | None:
@@ -402,8 +415,9 @@ def _writes_module_names(call: ast.Call, imported: set[str]) -> bool:
     if call.func.id == "setattr" and call.args:
         target = call.args[0]
         # `setattr(self, ...)` sets an attribute; `setattr(module, ...)` sets a module's name.
-        return (isinstance(target, ast.Name) and target.id in imported) or (
-            isinstance(target, ast.Subscript) and _is_own_module(target))
+        # `setattr(sys.modules[__name__], ...)` needs no arm here: `_bound_names` gives up on the
+        # `sys.modules[__name__]` subscript wherever it appears.
+        return isinstance(target, ast.Name) and target.id in imported
     return False
 
 

@@ -42,8 +42,13 @@ REQUEST_COMMAND_VERBS = DIRECT_CODING_EDIT_VERBS | frozenset(
 _REQUEST_COMMAND_PHRASES = frozenset({("kick", "off")})
 # A command verb followed by these asks about what happened rather than for
 # work: "check why", "find out why", "explain what happened", "show me why",
-# "list the reasons". The object pronoun ("me", "us") and "the" are skipped.
-_INQUIRY_AFTER_VERB = (("why",), ("out",), ("what", "happened"), ("reason",), ("reasons",))
+# "list the reasons". The object pronoun ("me", "us") and a leading "the" are
+# skipped. "out" counts only with what it asks about: "find out which keys are
+# unused" is work.
+_INQUIRY_AFTER_VERB = (
+    ("why",), ("out", "why"), ("out", "what", "happened"), ("out", "the", "reason"),
+    ("what", "happened"), ("reason",), ("reasons",),
+)
 _INQUIRY_VERBS = frozenset({"check", "find", "explain", "show", "list", "tell"})
 _INQUIRY_SKIPPED = frozenset({"me", "us", "the"})
 
