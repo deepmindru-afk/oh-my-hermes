@@ -760,6 +760,14 @@ class HookManifestTests(unittest.TestCase):
             "OMH selected five files. Open each one and run black",
             "OMH selected the right files. Now refactor them into one module",
             "OMH selected the wrong Python version, so set it to 3.12 in pyproject",
+            # #2440 re-review 3.
+            "OMH picked the release branch; bump the version to 2.1",
+            "OMH picked the nightly pipeline, kick off a run",
+            "OMH selected the build. Ship it",
+            "OMH picked these files; check them into git",
+            "OMH chose the parser module, find the bug in it",
+            "OMH picked this function. Explain it line by line",
+            "OMH chose these tests, then run them",
         )
         for message in commands:
             with self.subTest(message=message):
@@ -771,6 +779,8 @@ class HookManifestTests(unittest.TestCase):
         reports = (
             "OMH picked code-review, and I only asked a question",
             "Ask OMH to fix a test and watch it open workflow learning, that's the bug",
+            "OMH picked the wrong skill; show me why",
+            "OMH chose ultrawork for a typo, list the reasons it did that",
         )
         for message in reports:
             with self.subTest(message=message):

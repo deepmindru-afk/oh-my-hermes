@@ -95,10 +95,12 @@ _EVERYDAY_META_CUES = frozenset(
         "테스트", "픽스처", "개발자", "운영자", "로그", "트리거", "설명",
     }
 )
-# OMH's own surfaces, named in a message: a request that opens with an edit
-# but names one ("ask OMH to fix a test and watch it open workflow learning")
-# is about OMH, so its everyday words keep their meta reading. Matched as
-# whole words, with a space, hyphen or underscore between them.
+# OMH's own surfaces: a request that opens with an edit but names one in a
+# later clause ("ask OMH to fix a test and watch it open workflow learning")
+# is about OMH, so its everyday words keep their meta reading. Named in the
+# lead clause, the surface is what the edit acts on ("use OMH to fix the
+# workflow learning test"). Matched as whole words, with a space, hyphen or
+# underscore between them.
 _OMH_SURFACE_PHRASES = ("workflow learning", "route hint", "route hints")
 _KOREAN_CUE_TAILS = frozenset(
     {
@@ -157,7 +159,7 @@ _OMH_BEHAVIOUR_OPINION_LEADS = (
     ("it", "seems"), ("seems", "like"), ("looks", "like"), ("apparently",),
 )
 # Where a clause starts: sentence punctuation, or a joining conjunction.
-_CLAUSE_BREAK = re.compile(r"[.;:!?,]+|(?<![a-z0-9])(?:and|but|so|because)(?![a-z0-9])")
+_CLAUSE_BREAK = re.compile(r"[.;:!?,]+|(?<![a-z0-9])(?:and|but|so|because|then)(?![a-z0-9])")
 _PLANNING_CUES = (
     "plan",
     "proposal",
@@ -396,7 +398,7 @@ def classify_workflow_intent(message: str) -> WorkflowIntent:
     if (
         not negated_execution_cues
         and leads_with_code_edit(matching_normalized)
-        and not any(_contains_bounded_english_cue(matching_normalized, phrase) for phrase in _OMH_SURFACE_PHRASES)
+        and not _names_omh_surface_after_lead(matching_normalized)
     ):
         meta_cues = tuple(cue for cue in meta_cues if cue not in _EVERYDAY_META_CUES)
     execution_cues = _suppress_negated_execution_cues(
@@ -655,6 +657,18 @@ def _bounded_english_cue_pattern(normalized_cue: str) -> re.Pattern[str] | None:
     separator = r"[\s_-]+"
     pattern = r"(?<![a-z0-9])" + separator.join(re.escape(part) for part in parts) + r"(?![a-z0-9])"
     return re.compile(pattern)
+
+
+def _names_omh_surface_after_lead(normalized: str) -> bool:
+    """An OMH surface named in a clause after the request's lead ("... and watch it open workflow learning").
+
+    In the lead itself it is what the edit acts on: "use OMH to fix the
+    workflow learning test" is a coding request.
+    """
+    clauses = [clause for clause in _CLAUSE_BREAK.split(normalized) if clause.strip()]
+    return any(
+        _contains_bounded_english_cue(clause, phrase) for clause in clauses[1:] for phrase in _OMH_SURFACE_PHRASES
+    )
 
 
 def _reports_omh_behaviour(normalized: str) -> bool:

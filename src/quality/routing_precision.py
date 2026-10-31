@@ -9409,6 +9409,40 @@ ROUTING_PRECISION_CASES: tuple[RoutingPrecisionCase, ...] = (
         "answer_clarification",
         "",
     ),
+    # #2440 re-review 3: the closed command list missed bump, ship, kick off,
+    # rerun, retry, and check/find/explain used as commands.
+    RoutingPrecisionCase(
+        "omh-picked-branch-then-bump-is-a-request",
+        "OMH picked the release branch, bump the version, is a request, not a report",
+        "OMH picked the release branch; bump the version to 2.1",
+        "answer_clarification",
+        "",
+        "workflow-learning",
+    ),
+    RoutingPrecisionCase(
+        "omh-selected-build-then-ship-is-a-request",
+        "OMH selected the build, ship it, is a request, not a report",
+        "OMH selected the build. Ship it",
+        "answer_clarification",
+        "",
+        "workflow-learning",
+    ),
+    RoutingPrecisionCase(
+        "omh-picked-files-then-check-into-git-is-a-request",
+        "OMH picked these files, check them into git, is a request, not a report",
+        "OMH picked these files; check them into git",
+        "answer_clarification",
+        "",
+        "workflow-learning",
+    ),
+    RoutingPrecisionCase(
+        "omh-chose-module-then-find-the-bug-is-a-request",
+        "OMH chose the parser module, find the bug in it, is a request, not a report",
+        "OMH chose the parser module, find the bug in it",
+        "answer_clarification",
+        "",
+        "workflow-learning",
+    ),
 )
 
 
@@ -12186,6 +12220,29 @@ ROUTING_INTERVENTION_CASES: tuple[RoutingInterventionCase, ...] = (
         "omh-picked-code-review-for-a-question-reaches-workflow-learning",
         "OMH picking code-review when the user only asked a question is a report on OMH's routing",
         "OMH picked code-review, and I only asked a question",
+        "dispatch",
+        "workflow-learning",
+        "audit_learning_readiness",
+        "workflow_learning",
+        "workflow-learning",
+    ),
+    # #2440 re-review 3: "then" starts a clause, so a command after it keeps
+    # its owner; "list the reasons" after what OMH chose is a complaint (on
+    # origin/main it only clarified).
+    RoutingInterventionCase(
+        "omh-chose-tests-then-run-them-stays-command-operator",
+        "OMH chose these tests, then run them, stays the command operator",
+        "OMH chose these tests, then run them",
+        "dispatch",
+        "command-operator",
+        "prepare_command_operator_card",
+        "command_operator",
+        "command-operator",
+    ),
+    RoutingInterventionCase(
+        "omh-chose-ultrawork-list-the-reasons-reaches-workflow-learning",
+        "OMH choosing ultrawork for a typo, list the reasons, is a complaint about OMH's routing",
+        "OMH chose ultrawork for a typo, list the reasons it did that",
         "dispatch",
         "workflow-learning",
         "audit_learning_readiness",

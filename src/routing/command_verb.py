@@ -27,17 +27,25 @@ KOREAN_CODE_EDIT_PREDICATES = frozenset(
 # The verbs a clause opens with when it gives the user's own command ("now run
 # it on staging", "copy them to the backup folder"), after the courtesy openers
 # `command_words` strips ("now", "so", "please", "go ahead and"). The code-edit
-# verbs are among them. Verbs of looking into something ("look", "see",
-# "check", "find", "explain", "record") are not: "let's look at why" asks about
-# OMH's own routing.
+# verbs are among them. "look", "see" and "record" are not: "let's look at
+# why" asks about OMH's own routing.
 REQUEST_COMMAND_VERBS = DIRECT_CODING_EDIT_VERBS | frozenset(
     {
         "run", "write", "copy", "open", "show", "list", "summarize", "summarise", "move", "paste", "tag",
         "refactor", "deploy", "release", "merge", "push", "commit", "create", "generate", "translate",
         "format", "convert", "archive", "count", "print", "start", "install", "publish", "send", "export",
         "review", "test", "upload", "download", "sort", "draft", "restart", "revert", "apply", "execute",
+        "bump", "ship", "rerun", "retry", "check", "find", "explain",
     }
 )
+# Two-word commands whose first word alone is not one: "kick off a run".
+_REQUEST_COMMAND_PHRASES = frozenset({("kick", "off")})
+# A command verb followed by these asks about what happened rather than for
+# work: "check why", "find out why", "explain what happened", "show me why",
+# "list the reasons". The object pronoun ("me", "us") and "the" are skipped.
+_INQUIRY_AFTER_VERB = (("why",), ("out",), ("what", "happened"), ("reason",), ("reasons",))
+_INQUIRY_VERBS = frozenset({"check", "find", "explain", "show", "list", "tell"})
+_INQUIRY_SKIPPED = frozenset({"me", "us", "the"})
 
 # The word before a verb that still makes it the command: "use X to fix",
 # "help me fix", or a second command joined by "and"/"then".
@@ -71,8 +79,20 @@ def commanded_words(words: list[str]) -> set[str]:
 
 
 def gives_command(clause: str) -> bool:
-    """`clause` (folded) opens with the user's own command: a code-edit lead, or a `REQUEST_COMMAND_VERBS` verb."""
+    """`clause` (folded) opens with the user's own command: a code-edit lead, or a `REQUEST_COMMAND_VERBS` verb.
+
+    Not an inquiry verb that asks why: "show me why", "find out why",
+    "explain what happened", "list the reasons".
+    """
     words = command_words(clause)
+    if words and tuple(words[:2]) in _REQUEST_COMMAND_PHRASES:
+        return True
+    if words and words[0] in _INQUIRY_VERBS:
+        rest = words[1:]
+        while rest[:1] and rest[0] in _INQUIRY_SKIPPED:
+            rest = rest[1:]
+        if any(tuple(rest[: len(inquiry)]) == inquiry for inquiry in _INQUIRY_AFTER_VERB):
+            return False
     return bool(words) and words[0] in REQUEST_COMMAND_VERBS or leads_with_code_edit(clause)
 
 
