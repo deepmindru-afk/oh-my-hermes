@@ -9,7 +9,7 @@ from typing import Final, TypeGuard
 
 from .. import runtime_paths
 from ..catch_log import PLAN_CONTINUED, record_catch
-from ..consistency_trigger import discard_snapshots, round_end_trigger
+from ..consistency_trigger import discard_snapshots, round_end_trigger, turn_root
 from ..export_check import round_end_note as export_note
 from ..host_observation import observe_plugin_hook_call
 from ..impact_check import round_end_note
@@ -135,8 +135,10 @@ def pre_verify(
     # workspace modules they import from) with `ast`, so it costs no language server and no
     # extra round of its own. It names an `__all__` entry or a `from x import name` that no
     # longer resolves -- a rename's leftover that no type error reports -- and is empty otherwise.
-    # A line the impact note already names is not named again.
-    export_message = export_note(session_id, changed_paths, impact_message) if attempt_value == 0 else ""
+    # A line the impact note already names is not named again; its paths are relative to the same
+    # workspace root, the one this turn's tools resolved against.
+    export_message = (export_note(session_id, changed_paths, impact_message, turn_root(session_id))
+                      if attempt_value == 0 else "")
     surface_message = checklist_message = plan_message = ""
     open_items = 0
     if valid_coding:

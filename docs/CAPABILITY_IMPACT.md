@@ -155,12 +155,16 @@ directive, and one closing sentence for the final answer.
 
 The export note is always on and needs no language server. At the same first
 stop it parses each `.py` file the turn edited and names, as `path:line` rows,
-an `__all__` entry the module no longer defines or imports, or a
+an `__all__` entry the module no longer defines or imports, or a top-level
 `from module import name` whose workspace module no longer binds that name: the
-leftover a rename leaves that no type error reports. It says nothing when there
-is none, and skips a module whose names it cannot know (a star import, a
-module-level `__getattr__`, `globals()`, `setattr`) or a file that does not
-parse. `src/plugin_bundle/omh/export_check.py` lists the rules. The note
+leftover a rename leaves that no type error reports. Only top-level `from`
+statements are checked. An absolute import is resolved only from the project
+root or a `src/` directly under it. It says nothing when there is none. It
+skips a file that does not parse, and a module whose names it cannot know: a
+star import, a module-level `__getattr__`, `globals()` / `vars()` / `locals()`,
+`setattr` on a module, or `sys.modules[__name__]`. The note is always on, so a
+delegated child that leaves a stale export also gets it, together with the
+full-answer closing: one more round for that child. `src/plugin_bundle/omh/export_check.py` lists the rules. The note
 continues the turn whatever the consistency trigger says, because fixing the
 line it names is the work. A line the impact note already names, an edited
 importer's stale `from module import name` that the language server also

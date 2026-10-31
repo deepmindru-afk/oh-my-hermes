@@ -12,7 +12,9 @@ All notable changes will be documented here.
   covers an `__all__` entry, and a `from module import name` whose workspace
   module no longer has the name. It needs no language server and is silent
   otherwise. Measured on four models, the rename template that models kept
-  missing went from 8/12 to 12/12, with +3 of that from the note itself
+  missing went from 8/12 to 12/12, with +3 of that from the note itself. The
+  pre-registered gate failed on its token clause (1.097x against 1.05x), and
+  the owner overrode it because the gap was run-to-run variation
   ([measurement](benchmarks/live-model-tools/v1/README.md)).
 
 - **Vim mode in the composer.** With Hermes' `display.vim_mode` on

@@ -1787,9 +1787,9 @@ arms, omp included) passed every `L-RENAME-ALIAS` and `L-RENAME-SHADOW` run.
 How the check works (always on, `src/plugin_bundle/omh/export_check.py`): at the turn's first stop
 (`pre_verify`, `attempt == 0`), it parses each `.py` file the turn edited with `ast` and names, as
 `path:line` rows, an `__all__` entry the module neither defines nor imports (nor ships as a
-submodule of the package), and a `from module import name` whose module is a workspace file that
-no longer binds the name. It reads no other file, runs no language server and says nothing
-otherwise. A module whose names it cannot know is skipped (a star import, a module-level
+submodule of the package), and a top-level `from module import name` whose module is a workspace
+file that no longer binds the name. Only top-level `from` statements are checked. It also reads the
+workspace modules those imports resolve to, runs no language server, and says nothing otherwise. A module whose names it cannot know is skipped (a star import, a module-level
 `__getattr__`, `globals()` / `exec` / `setattr` / `enum.global_enum`, a package editing its own
 `__path__`, an `__all__` that is not a literal list), as is a file that does not parse. Its note
 joins the same `pre_verify` message as the others, in the order served-surface gate, impact note,
@@ -1877,7 +1877,7 @@ What it shows, and what it does not:
   KST. 120 of 120 records completed; none failed, timed out or was retried. A one-instance smoke
   (`gpt-6.1-sol`, `L-RENAME-ALIAS` seed 104729, on `fd0b1895f`) ran before the counted run and is
   not counted.
-- n = 3 per model per template. Only `__all__` and `from ... import` names are checked; a stale
+- n = 3 per model per template. Only `__all__` and top-level `from ... import` names are checked; a stale
   name in a docstring, a string-dispatch table or a non-Python file is not.
 
 Owner decision (2026-10-31): merge despite the failed clause. Under the pre-registered rule, a
@@ -1901,6 +1901,43 @@ run did not measure:
 
 In the measured run the consistency check fired at every first stop, so the three note sessions
 behave the same either way.
+
+Review fixes, after the merge (2026-10-31). An independent review swept the whole Hermes tree,
+including `plugins/` and `tui_gateway/` and its virtualenv: 9,597 files, 6 rows. Three of those
+rows, in 2 files, were false: they named correct code.
+
+- `plugins/platforms/telegram/update_admission.py:19` `from telegram import Update` was resolved to
+  the plugin's own folder.
+- `tui_gateway/entry.py:23` `dispatch` and `resolve_skin` were flagged because `tui_gateway/server.py`
+  ends with `register(sys.modules[__name__])`, which adds those names at runtime.
+
+The fixes:
+
+- An absolute import now resolves only from the project root (the nearest ancestor holding a
+  project marker) or a `src/` directly under it. An installed package's `site-packages` is its own
+  root.
+- A module written into from outside is skipped: `sys.modules[__name__]`, module-level `vars()` /
+  `locals()`, `setattr` on a module, `Enum._convert_`.
+- `setattr` on an object and attribute calls such as `env.globals` no longer hide a whole module.
+- Namespace subpackages and `.pyc` modules count as submodules, and a package directory wins over
+  a same-named `.py`, as in Python's import system.
+- Each name of a parenthesized import is reported on its own line.
+- Paths are relative to the same workspace root the impact note uses.
+- The check stops at a deadline, 2 s at the default hook timeout.
+
+Re-run after the fixes, no false rows remain in the three sweeps:
+
+| Sweep | Files | Rows before | Rows after |
+| --- | ---: | ---: | ---: |
+| Whole Hermes tree, virtualenv included | 9,597 | 6 (3 false) | 6 (0 false) |
+| CPython 3.14 standard library | 1,059 | 1 | 1 |
+| This repo's `src/` | 1,216 | 0 | 0 |
+
+- The 6 rows left in the Hermes tree are all real: the three dangling `__all__` entries above, and
+  `tqdm/_utils.py`, which imports 3 names `tqdm/utils.py` no longer has. That last import fails when
+  run. The old `setattr` rule had hidden it.
+- One row in the review's probe set is now named: `from mylib import y` where `mylib` has no `y`.
+  That import is genuinely broken.
 
 ### 2026-10-30 big files: read outline off vs on (`bigfile-ab`), gate failed
 

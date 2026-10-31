@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import tempfile
 import unittest
+import warnings
 from pathlib import Path
 from unittest.mock import patch
 
@@ -43,8 +44,9 @@ class _Workspace(unittest.TestCase):
         path.write_text(text, encoding="utf-8")
         return str(path)
 
-    def note(self, *relatives: str) -> str:
-        return export_check.round_end_note("s", [str(self.root / relative) for relative in relatives])
+    def note(self, *relatives: str, reported: str = "") -> str:
+        return export_check.round_end_note("s", [str(self.root / relative) for relative in relatives], reported,
+                                           str(self.root))
 
 
 class StaleAllTest(_Workspace):
@@ -66,6 +68,15 @@ class StaleAllTest(_Workspace):
         with self.assertLogs("omh.export_check", "INFO") as logs:
             self.note("src/benchapp/api.py")
         self.assertRegex(logs.output[0], r"export_check round_end session=s files=1 rows=1 ms=\d+$")
+
+    def test_a_stale_entry_added_with_plus_equals_is_named(self):
+        self.write("pkg/mod.py", "__all__ = ['kept']\n__all__ += ['gone']\nkept = 1\n")
+        self.assertIn("pkg/mod.py:2: `__all__` lists `gone`", self.note("pkg/mod.py"))
+
+    def test_without_a_workspace_root_the_path_is_shown_whole_with_slashes(self):
+        path = self.write("pkg/mod.py", "__all__ = ['gone']\n")
+        note = export_check.round_end_note("s", [path])
+        self.assertIn(f"{Path(path).as_posix()}:1: `__all__` lists `gone`", note)
 
     def test_a_correct_rename_is_silent(self):
         self.write("src/benchapp/__init__.py", "")
@@ -101,8 +112,15 @@ class StaleAllTest(_Workspace):
             "def __getattr__(name):\n    return name\n",
             "__getattr__ = make_getattr(__name__)\n",
             "globals()['gone'] = 1\n",
-            "def add(module):\n    setattr(module, 'gone', 1)\n",
+            "def add():\n    from pkg import mod\n    setattr(mod, 'gone', 1)\n",
+            "import sys\nsetattr(sys.modules[__name__], 'gone', 1)\n",
             "import enum\n@enum.global_enum\nclass Flag(enum.IntFlag):\n    gone = 1\n",
+            # Found by the review on Hermes: tui_gateway/server.py hands itself to a registry.
+            "import sys\nimport registry\nregistry.register(sys.modules[__name__])\n",
+            "import sys\nsys.modules[__name__].__dict__.update(gone=1)\n",
+            "for name in ('gone',):\n    vars()[name] = 1\n",
+            "locals()['gone'] = 1\n",
+            "import enum\nclass S(enum.IntEnum):\n    gone = 1\nS._convert_('S', __name__, lambda n: True)\n",
             "__path__.append('elsewhere')\n",
             "__all__ = ['gone'] + []\n",
             "__all__.extend(other.__all__)\n",
@@ -111,11 +129,39 @@ class StaleAllTest(_Workspace):
                 self.write("pkg/mod.py", f"__all__ = ['gone']\n{body}")
                 self.assertEqual(self.note("pkg/mod.py"), "")
 
-    def test_implicit_module_names_and_compiled_submodules_are_bound(self):
+    def test_attribute_writes_on_other_objects_do_not_hide_the_module(self):
+        # `setattr(self, ...)`, a template environment's `globals`, a function's own `vars()`: none
+        # of them writes this module's names, so a stale entry beside them is still named.
+        self.write("pkg/mod.py", (
+            "class C:\n    def __init__(self, **kw):\n        for k, v in kw.items():\n            setattr(self, k, v)\n"
+            "def init(env):\n    env.globals['x'] = 1\n    env.exec('code')\n    return vars()\n"
+            "__all__ = ['C', 'init', 'gone']\n"
+        ))
+        self.assertIn("pkg/mod.py:9: `__all__` lists `gone`", self.note("pkg/mod.py"))
+
+    def test_implicit_module_names_and_compiled_or_namespace_submodules_are_bound(self):
         self.write("pkg/_speedups.cpython-311-darwin.so", "")
         self.write("pkg/_typed.pyi", "")
-        self.write("pkg/__init__.py", "__all__ = ['__doc__', '__file__', '_speedups', '_typed']\n")
+        self.write("pkg/legacy.pyc", "")
+        self.write("pkg/nsdir/mod.py", "")  # a namespace subpackage: no __init__.py
+        self.write("pkg/__init__.py", "__all__ = ['__doc__', '__file__', '_speedups', '_typed', 'legacy', 'nsdir']\n")
         self.assertEqual(self.note("pkg/__init__.py"), "")
+
+    def test_an_invalid_escape_in_the_edited_file_raises_no_warning_here(self):
+        self.write("pkg/mod.py", 'import re\nPAT = re.compile("\\d+")\n__all__ = ["PAT"]\n')
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            self.assertEqual(self.note("pkg/mod.py"), "")
+        self.assertEqual([item for item in caught if issubclass(item.category, SyntaxWarning)], [])
+
+    def test_a_deadline_returns_the_rows_found_so_far(self):
+        for index in range(3):
+            self.write(f"pkg/m{index}.py", "__all__ = ['gone']\n")
+        ticks = iter([0.0, 0.0, 0.0, 0.0] + [100.0] * 50)
+        with patch.object(export_check.time, "monotonic", lambda: next(ticks)):
+            note = self.note("pkg/m0.py", "pkg/m1.py", "pkg/m2.py")
+        self.assertIn("pkg/m0.py:1:", note)
+        self.assertNotIn("pkg/m2.py:1:", note)
 
     def test_parse_errors_unknown_paths_and_other_files_are_silent(self):
         self.write("pkg/broken.py", "__all__ = ['gone'\n")
@@ -134,10 +180,13 @@ class StaleImportTest(_Workspace):
         self.write("src/benchapp/quota.py", QUOTA)
         self.write("src/benchapp/api.py", 'from .quota import compute_quota\n\n__all__ = ["compute_quota"]\n')
         self.write("src/benchapp/service.py", "from benchapp.quota import compute_quota as cq\n")
-        note = self.note("src/benchapp/api.py", "src/benchapp/service.py")
+        self.write("src/benchapp/report.py", "from .quota import (\n    allocate_quota,\n    compute_quota,\n)\n")
+        note = self.note("src/benchapp/api.py", "src/benchapp/service.py", "src/benchapp/report.py")
         self.assertIn("src/benchapp/api.py:1: `from .quota import compute_quota`: src/benchapp/quota.py no longer defines "
                       "`compute_quota`", note)
         self.assertIn("src/benchapp/service.py:1: `from benchapp.quota import compute_quota`", note)
+        # A parenthesized import names the line of the stale name, the line pyright names.
+        self.assertIn("src/benchapp/report.py:3: `from .quota import compute_quota`", note)
         # The `__all__` entry is bound by the stale import, so it is that import that is named.
         self.assertNotIn("`__all__` lists", note)
 
@@ -145,17 +194,49 @@ class StaleImportTest(_Workspace):
         self.write("src/benchapp/__init__.py", "from . import formats\n")
         self.write("src/benchapp/formats.py", "")
         self.write("src/benchapp/quota.py", QUOTA)
-        # Inside a package an absolute import starts above it, and a standard-library name is the
-        # standard library's: neither of these workspace files is what those imports load.
-        self.write("src/benchapp/typing.py", "")
+        # `src/typing.py` sits where an absolute import is resolved, so only the standard-library
+        # rule keeps `from typing import Any` off it; `helpers.py` inside the package is not on that path.
+        self.write("src/typing.py", "")
         self.write("src/benchapp/helpers.py", "")
+        self.write("src/benchapp/nsdir/mod.py", "")  # a namespace subpackage
         self.write("src/benchapp/api.py", (
-            "import os\nfrom os import path\nfrom . import formats\nfrom .quota import allocate_quota, LegacyPlanner\n"
-            "from benchapp import quota\nfrom requests import get\nfrom .absent import thing\n"
+            "import os\nfrom os import path\nfrom . import formats, nsdir\nfrom .quota import allocate_quota, LegacyPlanner\n"
+            "from benchapp import quota, nsdir as ns\nfrom requests import get\nfrom .absent import thing\n"
             "from typing import Any\nfrom helpers import tool\n"
             "try:\n    from .quota import optional_name\nexcept ImportError:\n    optional_name = None\n"
         ))
         self.assertEqual(self.note("src/benchapp/api.py"), "")
+
+    def test_a_plugin_folder_named_like_an_installed_package_is_not_resolved(self):
+        # Found by the review on Hermes: plugins/platforms/telegram/update_admission.py's
+        # `from telegram import Update` means python-telegram-bot, not the plugin's own folder.
+        self.write("pyproject.toml", "")
+        self.write("plugins/platforms/telegram/__init__.py", "from .adapter import Adapter\n")
+        self.write("plugins/platforms/telegram/adapter.py", "class Adapter:\n    pass\n")
+        self.write("plugins/platforms/telegram/update_admission.py", "from telegram import Update\n")
+        self.write("scripts/setuptools.py", "def other():\n    pass\n")
+        self.write("scripts/build.py", "from setuptools import setup\n")
+        self.assertEqual(self.note("plugins/platforms/telegram/update_admission.py", "scripts/build.py"), "")
+        # A virtualenv inside the checkout imports from its own site-packages, never the checkout
+        # (found by the sweep: onnxruntime's `from utils import ...` against the repo's utils.py).
+        self.write("utils.py", "def mine():\n    pass\n")
+        self.write("venv/lib/python3.11/site-packages/tool/models/__init__.py", "")
+        self.write("venv/lib/python3.11/site-packages/tool/models/export.py", "from utils import onnx_inference\n")
+        self.assertEqual(self.note("venv/lib/python3.11/site-packages/tool/models/export.py"), "")
+
+    def test_a_package_directory_wins_over_a_same_named_module(self):
+        self.write("src/x.py", "")
+        self.write("src/x/__init__.py", "a = 1\n")
+        self.write("src/user.py", "from x import a\n")
+        self.assertEqual(self.note("src/user.py"), "")
+        self.write("src/user.py", "from x import b\n")
+        self.assertIn("src/user.py:1: `from x import b`: src/x/__init__.py no longer defines `b`", self.note("src/user.py"))
+
+    def test_a_module_written_into_from_outside_is_not_judged_as_a_target(self):
+        self.write("tui/__init__.py", "")
+        self.write("tui/server.py", "import sys\nimport methods\nmethods.register(sys.modules[__name__])\n")
+        self.write("tui/entry.py", "from tui.server import dispatch\n")
+        self.assertEqual(self.note("tui/entry.py"), "")
 
 
 class PreVerifyCompositionTest(_Workspace):
@@ -174,7 +255,16 @@ class PreVerifyCompositionTest(_Workspace):
         payload = {"session_id": "export-session", "coding": True, "attempt": 0, "final_response": "{}",
                    "changed_paths": [self.api], "omh_home": str(self.home)}
         payload.update(overrides)
-        return verify_hooks.pre_verify(**payload)
+        # The workspace root comes from the turn's tool calls (`consistency_trigger.turn_root`).
+        with patch.object(verify_hooks, "turn_root", lambda session_id: str(self.root)):
+            return verify_hooks.pre_verify(**payload)
+
+    def test_a_delegated_child_gets_the_note_and_returns_its_full_answer(self):
+        # The note is always on, so a delegated child that leaves a stale export pays one more round;
+        # it gets no consistency check and no sentinel, only the note and the full-answer closing.
+        message = self.fire(platform="subagent")["message"]
+        self.assertEqual(message, f"{self.note('src/benchapp/api.py')}\n{verify_hooks.ROUND_END_CLOSING_UNSTASHED}")
+        self.assertNotIn("export-session", verify_hooks._STASHED_ANSWERS)
 
     def test_the_note_sits_between_the_impact_note_and_the_check_under_one_closing(self):
         impact = impact_format_note([("src/benchapp/report.py", 5, "error")], recheck_tool=False)
