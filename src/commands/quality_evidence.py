@@ -652,11 +652,15 @@ def _add_quality_evidence_commands(sub: argparse._SubParsersAction[argparse.Argu
 
     agent_debug = commands.add_parser(
         "agent-debug",
-        help="Cite tool errors, identical retries, unnotified background processes and compactions in one Hermes session.",
+        help=(
+            "Cite tool errors, identical retries, unnotified background processes, compactions and turns that "
+            "ended without a reply in one Hermes session."
+        ),
         description=(
             "Read one Hermes session from state.db (mode=ro) and report agent_debug_report/v1: tool results "
             "whose typed fields record an error, the same tool retried with identical arguments after an "
-            "error, background processes started without notify_on_complete, and compaction boundaries. "
+            "error, background processes started without notify_on_complete, compaction boundaries, and turns "
+            "that ended with an empty assistant row right after a tool result. "
             "Each finding cites session, message and tool-call ids, tool name, error class and timestamps; "
             "no prompt or tool output is quoted. A finding is an observed record, not a diagnosis, and not "
             "execution, review, CI, or merge evidence."

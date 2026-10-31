@@ -515,6 +515,102 @@ class HypothesisTests(unittest.TestCase):
         )
 
 
+def _silent_end_rows() -> list[tuple]:
+    """The fixture session, with a compaction before a later failure, two unwatched
+    background processes, and one turn that ends with no reply after an interrupted command.
+
+    Turn 4 starts two background servers without notify_on_complete, the
+    correlation that led the incident this kind was added for; turn 5's
+    command is interrupted (exit 130) and the assistant row after it is empty
+    with no tool calls, and the next user row comes after it: the turn ended
+    without a reply.
+    """
+    serve = json.dumps({"exit_code": 0, "pid": 4242, "notify_on_complete": False})
+    interrupted = json.dumps({"output": f"[Command interrupted] {PRIVATE_PATH}", "exit_code": 130, "error": None})
+    return _session_rows() + [
+        (16, SESSION, "user", f"{RAW_PROMPT} serve", None, None, T0 + 13, None, 0),
+        (17, SESSION, "assistant", "", None, None, T0 + 14, _calls("c5", "terminal", {"command": "serve a"}), 0),
+        (18, SESSION, "tool", serve, "c5", "terminal", T0 + 15, None, 0),
+        (19, SESSION, "assistant", "", None, None, T0 + 16, _calls("c6", "terminal", {"command": "serve b"}), 0),
+        (20, SESSION, "tool", serve, "c6", "terminal", T0 + 17, None, 0),
+        (21, SESSION, "assistant", "started", None, None, T0 + 18, None, 0),
+        (22, SESSION, "user", f"{RAW_PROMPT} wait", None, None, T0 + 19, None, 0),
+        (23, SESSION, "assistant", "", None, None, T0 + 20, _calls("c7", "terminal", {"command": "sleep"}), 0),
+        (24, SESSION, "tool", interrupted, "c7", "terminal", T0 + 21, None, 0),
+        (25, SESSION, "assistant", "", None, None, T0 + 22, None, 0),
+        (26, SESSION, "user", f"{RAW_PROMPT} merge", None, None, T0 + 23, None, 0),
+    ]
+
+
+class SilentTurnEndHypothesisTests(unittest.TestCase):
+    def _incident(self, observable: str, rows: list[tuple]) -> tuple[dict, dict]:
+        with TemporaryDirectory() as tmp:
+            home = Path(tmp) / ".hermes"
+            _write_db(home, rows=rows)
+            report = build_agent_debug_report(home, SESSION)
+        return report, build_agent_debug_incident(report, observable=observable)
+
+    def test_a_silent_turn_end_leads_over_correlations_with_more_evidence(self) -> None:
+        report, incident = self._incident("unspecified", _silent_end_rows())
+        hypothesis = incident["agent_failure_pattern_hypothesis"]
+        summary = {item["pattern"]: (item["hypothesis_id"], item["status"], item["evidence_for"]) for item in hypothesis["hypotheses"]}
+        self.assertEqual(summary["unwatched_background_work"][1:], (
+            "supported", ["finding:background_without_notify:18", "finding:background_without_notify:20"],
+        ))
+        self.assertEqual(summary["turn_ended_without_reply"][1:], ("supported", ["finding:silent_turn_end:24"]))
+        # Two correlates for background work, one silent end: by count alone
+        # background work would lead; the silent end is the symptom itself.
+        self.assertEqual(hypothesis["leading_hypothesis"], summary["turn_ended_without_reply"][0])
+        self.assertEqual(hypothesis["resolution"], "unresolved")
+        lead = next(item for item in hypothesis["hypotheses"] if item["pattern"] == "turn_ended_without_reply")
+        self.assertEqual(lead["discriminator"], "the host's turn exit reason for the cited turn (agent.log `Turn ended: reason=`)")
+        recovery = incident["contained_recovery_action"]
+        self.assertEqual(recovery["action"], "read_host_turn_exit_reason")
+        self.assertEqual(recovery["targets"], ["finding:silent_turn_end:24"])
+        self.assertIn("agent.log `Turn ended: reason=`", recovery["step"])
+        self.assertTrue(recovery["step"].startswith("Change nothing in the run yet"))
+        silent = next(item for item in report["findings"] if item["kind"] == "silent_turn_end")
+        self.assertEqual(
+            (silent["citation"]["message_ids"], silent["citation"]["tool_call_ids"], silent["citation"]["exit_code"]),
+            ([24, 25], ["c7"], 130),
+        )
+        self.assertEqual(agent_debug_incident_errors(report, incident), [])
+
+    def test_tool_stall_weighs_a_silent_turn_end_and_its_absence_rules_it_out(self) -> None:
+        _, stalled = self._incident("tool_stall", _silent_end_rows())
+        patterns = [item["pattern"] for item in stalled["agent_failure_pattern_hypothesis"]["hypotheses"]]
+        self.assertEqual(
+            patterns, ["unwatched_background_work", "tool_error_retry_loop", "turn_ended_without_reply", "outside_recorded_evidence"]
+        )
+        self.assertEqual(stalled["agent_failure_pattern_hypothesis"]["leading_hypothesis"], "H3")
+        _, quiet = self._incident("tool_stall", _session_rows())
+        silent = quiet["agent_failure_pattern_hypothesis"]["hypotheses"][2]
+        self.assertEqual(
+            (silent["pattern"], silent["status"], silent["evidence_against"]),
+            ("turn_ended_without_reply", "ruled_out", ["absence:silent_turn_end"]),
+        )
+
+    def test_a_leading_hypothesis_that_passes_over_a_silent_turn_end_is_refused(self) -> None:
+        _, incident = self._incident("unspecified", _silent_end_rows())
+        capture = incident["agent_failure_capture"]
+        forged = copy.deepcopy(incident["agent_failure_pattern_hypothesis"])
+        background = next(item for item in forged["hypotheses"] if item["pattern"] == "unwatched_background_work")
+        forged["leading_hypothesis"] = background["hypothesis_id"]
+        self.assertEqual(
+            agent_failure_pattern_hypothesis_errors(forged, capture),
+            ["leading_hypothesis must be a supported hypothesis with direct evidence of the symptom"],
+        )
+
+    def test_without_tool_calls_the_silent_end_is_unchecked_and_never_ruled_out(self) -> None:
+        with TemporaryDirectory() as tmp:
+            home = Path(tmp) / ".hermes"
+            _write_db(home, rows=_silent_end_rows(), full_schema=False)
+            report = build_agent_debug_report(home, SESSION)
+        incident = build_agent_debug_incident(report, observable="tool_stall")
+        silent = incident["agent_failure_pattern_hypothesis"]["hypotheses"][2]
+        self.assertEqual((silent["status"], silent["unavailable_evidence"]), ("unresolved", ["unavailable:silent_turn_end"]))
+
+
 class ReceiptBindingTests(unittest.TestCase):
     def _report(self) -> dict:
         with TemporaryDirectory() as tmp:

@@ -1,11 +1,11 @@
 {
-  "catalog_revision": "3e009f024541c4a918926f6f8ca613ddfadf5f4c4f904fb8968cda11943092b3",
+  "catalog_revision": "0090f8d63d70a441e424acb45fc50e866808898a7c9c116b95f73ce7470383f4",
   "files": {
     "omh-accessibility-audit/SKILL.md": "eb5011ae3f74d84dbe66bf2dcea9533c08ca407b246680b0bd686122f09b27fe",
     "omh-accessibility-audit/references/a11y-rules.md": "cd7e0404576923cfd3bcec9e055b1de7a78f3fc55971fd033598aac1043e4469",
     "omh-adversarial-consensus/SKILL.md": "55d6a0dc147eb32506107fc6909655e3d5f540810f3a8526e8c1c918c1069067",
     "omh-adversarial-consensus/references/consensus-protocol.md": "e2337062d98214abc440d3909d7c076db284c817dc45c9b67a292003a6b51a89",
-    "omh-agent-debug/SKILL.md": "974065830e0f67b98f10828266491a612e292054739421eb09e51f99cac369b3",
+    "omh-agent-debug/SKILL.md": "bcf8fc9ae02c454ae24da359642e1c73b44f1a52f5ea31c5d59b9b5b6e144de9",
     "omh-agent-instructions/SKILL.md": "cc2c2fb5d1c9cef2db90deccbdeb149abda32994db9bbad129267ecda20a5876",
     "omh-agent-instructions/references/instruction-file-method.md": "135882a420601481ccfd3e5ad91c2337b47d34512342699ad615aa3934845757",
     "omh-agent-ops-review/SKILL.md": "499c25a7febe2e5c7d5df3b0f7dba4209a758ae6fe7523501429037a554bf494",

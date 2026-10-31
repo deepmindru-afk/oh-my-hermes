@@ -7,6 +7,11 @@ real wait when the turn armed a background process that exits when CI does. A
 turn that says it is waiting and then ends has stopped, and CI passing changes
 nothing because nothing is listening (#1721).
 
+The same stall has a second entrance: the turn a FAILED watcher opens. The
+CI check or merge watcher the session armed exits non-zero, its notice opens a
+turn, the turn reports the failure, and it ends with nothing armed again. See
+`FAILED WAIT` below; that half reads the notice the host wrote, at turn start.
+
 Measured on the reporter's own session history: of 48 turn endings that
 mentioned CI or a deploy and a wait, one had armed a background waiter and was
 woken by it. The longest idle gap was 168 minutes, on a turn whose verification
@@ -231,6 +236,47 @@ APPROVAL_GATE_CAUSE: Final = "remote_wait_approval"
 ARMS_WATCHERS_LATCH: Final = "remote_wait_arms_watchers"
 
 # ---------------------------------------------------------------------------
+# FAILED WAIT: the turn a failed background process opened.
+#
+# The unarmed-wait directive above covers the turn that STARTS remote work.
+# The other way a session stalls is the turn that a watcher's failure opens:
+# the CI check or merge watcher the session armed exits non-zero, the host's
+# completion notice opens a turn, the model reports the failure, and the turn
+# ends with nothing armed. Nothing will wake that session again, and the
+# authorized work it was carrying (fix, push, re-watch, merge) waits for a
+# person to notice. Measured on the owner's Discord history over 45 days: 50
+# turns opened by a failed-process notice, 20 of which ended with no watcher,
+# background delegation or follow-up job armed, and the next message after
+# those arrived up to 24 hours later.
+#
+# Both triggers are records again. "A failed process opened this turn" is the
+# row's `display_kind` (the host types its notices) plus the notice header the
+# host formats itself (`tools/process_registry_notifications.py::
+# format_process_notification` and the gateway's coalesced batch in
+# `gateway/run_notifications.py`), never the model's prose. "Nothing is armed
+# at the end" is the process record plus what this turn's own tool results
+# showed being armed: a notifying background spawn, a background
+# `delegate_task` dispatch, or a scheduled follow-up job.
+#
+# A process the host or the session killed (`SIGTERM`, `terminated by ...`,
+# `reason=killed`) is not a failure here: superseded watchers are killed
+# routinely, and a kill says nothing about the work. The residual: a notice
+# whose OUTPUT carries a line that looks like a notice header at a block
+# boundary is read as one, which costs one directive and never a missed one.
+FAILED_WAIT_CAUSE: Final = "remote_wait_failed_notice"
+# Set by this turn's own tool results, so the end-of-turn sentence for a
+# failed wait can tell a turn that re-armed from one that did not. Unlike
+# `ARMS_WATCHERS_LATCH` it is per turn: the session that armed the watcher
+# which just failed has, by definition, armed watchers before.
+ARMED_THIS_TURN_CAUSE: Final = "remote_wait_armed_this_turn"
+# Results that arm a wake without a terminal spawn: a background delegation
+# (its completion re-enters the session) and a scheduled job (the merge
+# follow-up job that carries the work on).
+DELEGATE_TOOL: Final = "delegate_task"
+CRON_TOOL: Final = "cronjob_manage"
+CRON_ARMING_ACTIONS: Final[frozenset[str]] = frozenset({"create", "run", "update", "resume"})
+
+# ---------------------------------------------------------------------------
 # SPAWN OBSERVATION: why the record alone cannot answer "is anything armed".
 #
 # The host writes the process checkpoint inside `_track_started`, which runs
@@ -383,6 +429,41 @@ HONEST_STOP_TEXTS: Final[dict[str, str]] = {
 }
 HONEST_STOP_TEXT: Final = HONEST_STOP_TEXTS["en"]
 
+# The turn-start directive for a turn a failed process opened. Rides the
+# fenced `pre_llm_call` context, so the model reads it before its first call,
+# while both exits are still reachable. Conditional like the unarmed-wait
+# text: a failure the person has to decide on is a legitimate stop, and the
+# directive asks only that the stop be said.
+FAILED_WAIT_TEXT: Final = (
+    "[OMH failed wait] Background process {process} exited with code {code}, its notice "
+    "opened this turn, and nothing else is armed to wake this session after it. If the "
+    "work it watched is still this session's to finish (a fix, a push, a re-run), do it "
+    "in this turn and arm the next wait (terminal, background=true, notify=true). "
+    "Otherwise end by saying plainly that the session has stopped and what the person "
+    "has to decide."
+)
+# The end-of-turn sentence for that turn when it re-armed nothing. Same rules
+# as `HONEST_STOP_TEXTS`: the reply's language, no OMH vocabulary, appended.
+# It does not mention remote work this turn started, because it started none.
+FAILED_WAIT_STOP_TEXTS: Final[dict[str, str]] = {
+    "en": "Nothing is set to wake this session again, so send a message to pick it back up.",
+    "ko": "이 세션을 다시 깨울 작업이 걸려 있지 않습니다. 이어서 하려면 메시지를 보내 주세요.",
+    "ja": "このセッションを再び起こす処理は設定されていません。続けるには、メッセージを送ってください。",
+    "zh": "没有任务会再次唤醒此会话。如需继续，请发送一条消息。",
+}
+
+# The host's notice header for one finished process, wherever a block starts:
+# `[IMPORTANT: Background process <id> <status> (exit code <n>[, SIGTERM]).`
+_NOTICE_HEAD = re.compile(
+    r"\[IMPORTANT: Background process (\S+) ([^\n(]*?) \(exit code (-?\d+)(, SIGTERM)?\)\."
+)
+# A sender prefix a messaging gateway puts before the notice (`[name] `). Only
+# at the very start, and never the notice's own opening bracket.
+_SENDER_PREFIX = re.compile(r"^\[(?!IMPORTANT:)[^\]\n]*\] ")
+# The gateway's coalesced batch: an opener, then one line per process.
+_BATCH_OPENER: Final = "background processes completed for this session."
+_BATCH_LINE = re.compile(r"(?m)^- (\S+): exit_code=(-?\d+), reason=(\S+)$")
+
 # When a reply outside code is written in a non-Latin script rather than
 # quoting one. A script counts only through a run of at least
 # `REPLY_SCRIPT_MIN_RUN` of its characters in a row, so "CI 대기 중" is Korean
@@ -514,7 +595,13 @@ def _annotate(
     hermes_home: str,
     omh_home: str = "",
 ) -> str | None:
-    if str(tool_name or "") != TERMINAL_TOOL:
+    tool = str(tool_name or "")
+    if tool in (DELEGATE_TOOL, CRON_TOOL):
+        # Read, never changed: these results only tell the failed-wait stop
+        # that this turn armed a wake another way.
+        _observe_waking_dispatch(tool, args, result, session_id=session_id, turn_id=turn_id)
+        return None
+    if tool != TERMINAL_TOOL:
         _declines["tool_not_terminal"] += 1
         return None
     session = str(session_id or "").strip()
@@ -545,6 +632,7 @@ def _annotate(
     if spawned is not None:
         if spawned:
             latch_engagement(session, ARMS_WATCHERS_LATCH)
+            record_turn_cause(session_id=session, turn_id=turn, cause=ARMED_THIS_TURN_CAUSE)
         _declines["background_spawn_observed"] += 1
         return None
 
@@ -682,6 +770,8 @@ def _honest_stop(
         # right answer for suppressing a repeat and the wrong one here.
         _declines["end_of_turn_unkeyed"] += 1
         return None
+    if turn_cause_fired(session_id=session, turn_id=turn, cause=FAILED_WAIT_CAUSE):
+        return _failed_wait_stop(response_text, session=session, turn=turn, hermes_home=hermes_home)
     if not turn_cause_fired(session_id=session, turn_id=turn, cause=UNARMED_WAIT_CAUSE):
         _declines["end_of_turn_no_unarmed_wait"] += 1
         return None
@@ -696,6 +786,150 @@ def _honest_stop(
         _declines["end_of_turn_waiter_armed"] += 1
         return None
     return f"{response_text}\n\n{HONEST_STOP_TEXTS[reply_language(response_text)]}"
+
+
+def _failed_wait_stop(response_text: str, *, session: str, turn: str, hermes_home: str) -> str | None:
+    """The end of a turn a failed process opened: the sentence, unless it re-armed.
+
+    `ARMS_WATCHERS_LATCH` is deliberately not consulted: the session that
+    armed the watcher which just failed has armed watchers before, and that
+    says nothing about whether anything will wake it after THIS turn. What
+    counts is this turn's own arming, observed from its tool results, or a
+    notifying process still live in the record.
+    """
+    if turn_cause_fired(session_id=session, turn_id=turn, cause=ARMED_THIS_TURN_CAUSE):
+        _declines["failed_wait_rearmed"] += 1
+        return None
+    armed = armed_waiter_present(session_id=session, hermes_home=hermes_home)
+    if armed is None:
+        _declines["end_of_turn_record_unreadable"] += 1
+        return None
+    if armed:
+        _declines["end_of_turn_waiter_armed"] += 1
+        return None
+    return f"{response_text}\n\n{FAILED_WAIT_STOP_TEXTS[reply_language(response_text)]}"
+
+
+def failed_wait_context(
+    *,
+    user_message: object,
+    display_kind: object,
+    session_id: object,
+    turn_id: object,
+    hermes_home: str = "",
+    delegated: bool = False,
+) -> str:
+    """The turn-start directive for a turn a failed process opened, or ``""``.
+
+    Called from ``pre_llm_call``, once per turn. Both halves are records: the
+    host's typing of the row that opened the turn (``display_kind``, which a
+    person's own message never carries) and the notice header the host wrote
+    into it. The cause is latched for the turn here, so the end-of-turn half
+    knows this turn owes either a re-armed wait or a plain stop. Fail-open:
+    any failure is counted and nothing is said.
+    """
+    try:
+        return _failed_wait_context(
+            user_message=user_message,
+            display_kind=display_kind,
+            session_id=session_id,
+            turn_id=turn_id,
+            hermes_home=hermes_home,
+            delegated=delegated,
+        )
+    except Exception as exc:  # noqa: BLE001 - `pre_llm_call` runs inside the
+        # host's own swallow (`agent/turn_context.py::_collect_pre_llm_call_context`
+        # logs and drops a raise), so a raise here would also drop every other
+        # OMH line of the turn. Recorded by type; the turn gets no directive.
+        _declines[f"error:{type(exc).__name__}"] += 1
+        return ""
+
+
+def _failed_wait_context(
+    *,
+    user_message: object,
+    display_kind: object,
+    session_id: object,
+    turn_id: object,
+    hermes_home: str,
+    delegated: bool,
+) -> str:
+    kind = display_kind.strip() if isinstance(display_kind, str) else ""
+    if not kind or kind == "steer":
+        # A person's row. The host types every notice row it writes; what a
+        # person types cannot open this directive whatever it says.
+        return ""
+    if delegated:
+        _declines["delegated_session"] += 1
+        return ""
+    session, turn = _tracked_key(session_id), _tracked_key(turn_id)
+    if not session or not turn:
+        _declines["failed_wait_unkeyed"] += 1
+        return ""
+    failed = failed_processes(user_message)
+    if not failed:
+        return ""
+    armed = armed_waiter_present(session_id=session, hermes_home=hermes_home)
+    if armed is None:
+        _declines["process_record_unreadable"] += 1
+        return ""
+    if armed:
+        _declines["failed_wait_other_waiter_live"] += 1
+        return ""
+    record_turn_cause(session_id=session, turn_id=turn, cause=FAILED_WAIT_CAUSE)
+    process, code = failed[0]
+    return FAILED_WAIT_TEXT.format(process=process, code=code)
+
+
+def failed_processes(message: object) -> list[tuple[str, int]]:
+    """``(process id, exit code)`` for each process a notice reports as failed.
+
+    Read from the host's own notice shapes only: the single-process header at
+    the start of a block, and the gateway's coalesced batch lines. A zero exit
+    is not a failure, and neither is a kill (`SIGTERM`, `terminated by ...`,
+    `reason=killed`): a superseded watcher is killed on purpose.
+    """
+    if not isinstance(message, str) or "[IMPORTANT:" not in message:
+        return []
+    failed: list[tuple[str, int]] = []
+    for block in message.split("\n\n"):
+        head = _NOTICE_HEAD.match(_SENDER_PREFIX.sub("", block, count=1))
+        if head is None:
+            continue
+        process, status, code, sigterm = head.group(1), head.group(2), int(head.group(3)), head.group(4)
+        if code != 0 and not sigterm and not status.startswith("terminated by"):
+            failed.append((process, code))
+    if _BATCH_OPENER in message:
+        for process, code, reason in _BATCH_LINE.findall(message):
+            if int(code) != 0 and reason != "killed":
+                failed.append((process, int(code)))
+    return failed
+
+
+def _observe_waking_dispatch(
+    tool: str, args: object, result: object, *, session_id: str, turn_id: str
+) -> None:
+    """Record that this turn armed a wake through a delegation or a scheduled job.
+
+    The host's own result says so: a background ``delegate_task`` returns
+    ``status: dispatched`` with ``mode: background``, and a ``cronjob_manage``
+    create, run, update or resume returns ``success: true``. Only the turn
+    latch is touched, so the failed-wait stop can tell a turn that carried the
+    work on from one that did not; nothing else here reads it.
+    """
+    session, turn = _tracked_key(session_id), _tracked_key(turn_id)
+    if not session or not turn:
+        return
+    parsed = _parsed_result(result)
+    if parsed is None:
+        return
+    if tool == DELEGATE_TOOL:
+        arms = parsed.get("status") == "dispatched" and parsed.get("mode") == "background"
+    else:
+        action = str(args.get("action") or "") if isinstance(args, dict) else ""
+        arms = parsed.get("success") is True and action in CRON_ARMING_ACTIONS
+    if arms:
+        record_turn_cause(session_id=session, turn_id=turn, cause=ARMED_THIS_TURN_CAUSE)
 
 
 def _observe_background_spawn(session: str, result: object) -> bool | None:

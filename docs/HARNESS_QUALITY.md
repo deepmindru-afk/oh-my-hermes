@@ -489,6 +489,7 @@ source is never written; a diagnosis creates no file anywhere.
 | `identical_retry_after_error` | the next call of the same tool after a `tool_error` whose arguments, from the assistant row's `tool_calls`, have the same sha256 over canonical JSON |
 | `background_without_notify` | a tool result that records a started process (an integer `pid`) with `notify_on_complete` not true |
 | `compaction_boundary` | a message row marked `_compressed_summary` |
+| `silent_turn_end` | an assistant row with empty or whitespace content and no tool calls, right after a tool row and right before the next user row (or the end of the session): the turn ended without a reply to its last tool result. It cites the tool row and the assistant row, the tool row's call and tool, and that result's error class and exit code when it has one (exit 130 is an interrupted command). Unavailable without `tool_calls` |
 
 Every finding carries a citation with a closed key set: the session id, one
 message id (or record line) and timestamp per row the finding spans, the
@@ -522,6 +523,14 @@ it is.
 | `agent_failure_capture/v1` | the identity the case is bound to (session, source, selection, turn range, source snapshot, report digest), the observed finding ids, every piece of `unavailable` evidence (an unchecked kind, oversized rows, rows past the limit, and host runtime state, which a record never holds), and the receipts admitted or refused |
 | `agent_failure_pattern_hypothesis/v1` | at least two competing hypotheses from a closed pattern table, each `observed: false`, with typed `evidence_for` and `evidence_against` (`finding:<id>` or `absence:<kind>`), the evidence it could not see, a confidence, and the observation that would decide it |
 | `contained_recovery_action/v1` | the smallest reversible step for the leading hypothesis, `requires_approval: true`, `executed: false`, and the actions diagnosis did not take |
+
+When a silent turn end is found, `turn_ended_without_reply` is supported and
+leads the incident, ahead of a pattern with more evidence for it: a silent end
+is the symptom itself observed, while the others are correlations with it.
+Its discriminator is the host's turn exit reason for the cited turn (the
+agent.log `Turn ended: reason=` line), which the record does not hold, and
+its recovery action, `read_host_turn_exit_reason`, changes nothing until that
+line has been read.
 
 A hypothesis is ruled out only by an observed absence in a complete reading.
 `outside_recorded_evidence` -- the cause lies in provider, model, or runtime
@@ -612,6 +621,7 @@ Findings
 Unavailable
   identical_retry_after_error: messages.tool_calls column not present
   compaction_boundary: messages._compressed_summary column not present
+  silent_turn_end: messages.tool_calls column not present
 Budget
   rows read 12 of at most 20000    bytes read 483 (at most 262144 per row)
   complete yes
@@ -619,7 +629,7 @@ Boundary
   An agent debug report cites rows one session record persisted, read without writing to it, and quotes no prompt, reply, argument, or tool output. A finding is an observed record, not a diagnosis: it does not show why the agent acted as it did, that a retry was wrong, that a compaction lost what mattered, or that any recovery worked, and it is not execution, review, CI, or merge evidence. A kind listed as unavailable was not checked, and rows listed as oversized or past the row budget were not read.
 Incident (observable context_loss)
   receipts admitted 0    refused 0
-  unavailable: identical_retry_after_error, compaction_boundary, host_runtime
+  unavailable: identical_retry_after_error, compaction_boundary, silent_turn_end, host_runtime
 Hypotheses (unresolved)
   H1 context_loss_after_compaction: unresolved, confidence low
     for (none)
@@ -650,7 +660,7 @@ the package carries ids, digests, counts, timestamps, the source and receipt
 file names, closed-vocabulary values, and OMH's own fixed wording only. It
 re-reads every cited reference from the source and refuses one that is
 missing, foreign (now in another session), stale (its timestamp changed), or
-mismatched (not the cited tool call or summary), and calls every reference
+mismatched (not the cited tool call, summary, or assistant row), and calls every reference
 stale when the source moved under the report's snapshot: the record file's
 size or modification time changed, or the session in state.db gained or lost
 rows. It drops the absolute source path and the session selector the user

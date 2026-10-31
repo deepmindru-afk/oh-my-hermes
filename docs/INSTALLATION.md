@@ -366,11 +366,11 @@ back:
 ```text
 omh · Fix the login bug
 
-  resume: omh --resume 20261025_101530_ab12cd
+  omh --resume 20261025_101530_ab12cd
 ```
 
 The first line is the session's title (`untitled session` when Hermes has
-not named it). After a blank line, `resume:` reopens it by its whole id,
+not named it). After a blank line, the `omh --resume` command reopens it by its whole id,
 which always resolves to this session, and a blank line closes the card so
 your shell prompt does not sit right under the command. With a profile it carries `-p <profile>`, since a profile
 has its own `state.db`. A session in which nothing was said gets one line instead, `omh:
