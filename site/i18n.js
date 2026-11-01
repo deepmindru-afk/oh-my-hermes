@@ -36,10 +36,10 @@ window.OMH_I18N = {
       zh: "文档"
     },
     "hero.badge": {
-      en: "For Hermes Agent · v4.0.3",
-      ko: "Hermes Agent 전용 · v4.0.3",
-      ja: "Hermes Agent のための · v4.0.3",
-      zh: "为 Hermes Agent 打造 · v4.0.3"
+      en: "For Hermes Agent · v4.0.4",
+      ko: "Hermes Agent 전용 · v4.0.4",
+      ja: "Hermes Agent のための · v4.0.4",
+      zh: "为 Hermes Agent 打造 · v4.0.4"
     },
     "hero.tagline": {
       en: "All-in-one package for Hermes Agent. Install once, then just type <code>dag-ulw</code>.",
