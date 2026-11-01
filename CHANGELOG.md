@@ -4,6 +4,11 @@ All notable changes will be documented here.
 
 ## Unreleased
 
+- **omher.app pages carry X's full share-card tag set.** Every indexable site page now
+  carries `twitter:site`, `twitter:creator`, `twitter:image:alt` and
+  `og:image:type` beside the existing share card, and `test_site_seo` pins
+  them so a home-page redesign cannot drop the share block unnoticed.
+
 ## 4.0.4 - 2026-11-01
 
 - **Name your own identity: a prompt and a model chain.** Write
