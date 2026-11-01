@@ -7560,7 +7560,7 @@ def awareness_primer_context() -> str:
             # `memory` tool directly and omh_memory zero times.
             (
                 "Expand on need: omh_context, omh_capabilities, omh_status/omh_hud. "
-                "Durable facts: omh_memory(action='capture'), not Hermes memory."
+                "Durable facts: omh_remember or omh_memory(capture), not Hermes."
             ),
         ]
     )

@@ -4,6 +4,14 @@ All notable changes will be documented here.
 
 ## Unreleased
 
+- **In a chat with many loaded tools, Hermes can save a stated preference or
+  decision to OMH memory without searching for a tool first. On Discord, a
+  fact saved in one conversation thread can be recalled in the next thread
+  Hermes starts in the same channel.** The memory provider exposes the small
+  `omh_remember` save/recall tool outside Hermes' deferred plugin-tool catalog,
+  using the existing admission and session-lens gates. Discord threads Hermes
+  auto-created from channel messages use their parent channel's memory scope;
+  other threads keep their own.
 - **omher.app pages carry X's full share-card tag set.** Every indexable site page now
   carries `twitter:site`, `twitter:creator`, `twitter:image:alt` and
   `og:image:type` beside the existing share card, and `test_site_seo` pins
