@@ -4,18 +4,77 @@ All notable changes will be documented here.
 
 ## Unreleased
 
+## 4.0.4 - 2026-11-01
+
 - **Name your own identity: a prompt and a model chain.** Write
   `~/.omh/routing/identities.json` (`omh_identity_profiles/v1`) with one or
-  more named identities, then select one by putting `[omh-identity:name]` in a
-  request for its prompt, or `--identity name` on `omh coding model-route`,
-  `run` and `delegate` (an `identity` field on `fanout prepare` units, an
-  `identity` argument on `omh_delegate_route`) for its model chain. An
-  explicit `--model` still wins; the identity chain beats category, role,
-  depth and scale. Nothing is inferred and nothing carries to the next
-  session, and with no file routes are unchanged. Schema and limits are in the
-  Installation guide.
+  more named identities, then select one by putting `[omh-identity:name]` in
+  a request for its prompt, or `--identity name` on
+  `omh coding model-route`, `run` and `delegate` (an `identity` field on
+  `fanout prepare` units, an `identity` argument on `omh_delegate_route`)
+  for its model chain. An explicit `--model` still wins; the identity chain
+  beats category, role, depth and scale. Nothing is inferred and nothing
+  carries to the next session, and with no file routes are unchanged. Schema
+  and limits are in the Installation guide. Contributed by @yqm-307 (#2459,
+  carried by #2462; requested in #2458).
 
-![Sprite Forge patch notes](https://raw.githubusercontent.com/rlaope/oh-my-hermes/main/assets/omh-sprite-forge-patch-notes.png)
+- **On Windows, OMH uses the Hermes home Hermes uses (#2453 by @k1lgor,
+  carried by #2463).** With no `HERMES_HOME` set, `omh`, `omh doctor`,
+  `omh setup` and `omh release hermes-smoke` took Hermes' home to be
+  `~/.hermes`, while Hermes itself defaults to `%LOCALAPPDATA%\hermes` on
+  Windows. `omh` exported that empty home to the terminal it launched, so
+  Hermes opened it and refused every session with `storage_unavailable`.
+  They now resolve Hermes' own platform default, `%LOCALAPPDATA%\hermes`
+  with `HERMES_DATA_DIR_SUFFIX` honoured. POSIX and an explicit
+  `HERMES_HOME` are unchanged.
+
+- **`omh_context` returns a compact view.** With Hermes' `tool_search` off,
+  a model could call the plugin tool first and carry its result through
+  every later model call of the session, and two of its sections were what
+  `omh_capabilities` action=summary already returns. The result now drops
+  `capability_families` and `workflow_context_cards`, trims each
+  generic-tool checkpoint route to its family, workflow, next action,
+  fallback action and not-evidence list, and adds `view: "compact"` with an
+  `expand` line naming `omh_capabilities` for what was dropped. Replayed on
+  209 recorded calls, the mean result went from 40,162 to 18,909 characters.
+  `omh context brief`, the wrapper contract and the hooks still build the
+  full brief.
+
+- **A coding request that mentions OMH no longer gets the workflow-learning
+  hint.** "Use OMH to fix the failing test in billing.py" or "OMH, 로그인 API에
+  대한 통합 테스트 작성해줘" carried the
+  `intent=meta_discussion; selected=workflow-learning` route hint on every
+  model call, and a CI-workflow edit through OMH dispatched
+  workflow-learning; they now route as the coding work they are, and a
+  throwaway test message ("I'm testing OMH right now, ignore this message")
+  gets no hint either. A report on OMH's own routing ("OMH picked
+  deep-interview when I only wanted a quick fix; why?") still reaches
+  workflow-learning, on the hint and the chat route. Everyday meta words now
+  match as whole words, so "pytest", "terminal", "changelog", 로그인 and 블로그 no
+  longer count as `test`, `term`, `log` or 로그, and the product name alone is
+  no longer routing context. On the bench prompt the injected OMH text fell
+  from 2,612 to 1,761 characters a message.
+
+- **Opt-in language-server tools: `lsp_definition`, `lsp_references` and
+  `lsp_rename`.** With `OMH_LSP_TOOLS=1` or the profile setting
+  `plugins.entries.omh.settings.lsp_tools`, the `omh-lsp` toolset drives the
+  language servers Hermes already runs for its post-write diagnostics. A
+  symbol matches as a whole identifier only; `lsp_rename` writes only if the
+  file still holds the bytes it read (`stale_file` otherwise) and answers
+  `already_renamed` on a line that already holds the new name. Python with
+  pyright only, and off by default. On an 8-model A/B of 9 rename tasks per
+  model, the rename pass rate went from 47/72 with plain patching to 61/72,
+  the gain on aliases, re-exports and shadowed names
+  ([measurement](benchmarks/live-model-tools/v1/README.md)).
+
+- **Opt-in `impact_check` names the callers an edit broke.** With
+  `OMH_IMPACT_CHECK` or `plugins.entries.omh.settings.impact_check` on, a
+  turn's first edit to an existing Python file records the errors in the
+  workspace files that import it, and at the turn's first stop OMH asks the
+  language server Hermes runs about them again; if any gained an error, the
+  turn continues with at most 15 lines of `path:line: message`. It says
+  nothing otherwise and is off by default. `lsp_diagnostics(path|glob)`
+  joins the opt-in `omh-lsp` toolset, so the model can re-check those files.
 
 - **A rename's stale export is named before the turn ends.** When a turn
   leaves a Python module exporting a name it no longer defines, OMH names the
@@ -36,21 +95,17 @@ All notable changes will be documented here.
   no longer arms the clear or the rewind, cancels nothing and interrupts no
   turn. In NORMAL a letter is a command, never text:
   `h l 0 ^ $ w b e j k gg G`, `i a I A o O`, `x X dd D C cc S s r`, `d c y`
-  with a motion, `p P`, `u` and Ctrl+R, with counts, and Esc there does
-  what it always did, so Esc Esc still clears or rewinds; during a turn,
-  Esc on an empty composer arms the interrupt and a second Esc sends it.
-  Enter sends from either mode, and in NORMAL always sends, a `\` before
-  the caret included. Paste chips and image tokens
-  are one character to every command, `p` puts them back with their text
-  or image, and the info line says `INSERT` or `NORMAL`. Questions Hermes
-  asks, masked input, the tell row, pickers and the agent list keep their
-  own keys. The supported set and how it differs from Hermes' own Vi mode
-  are in the Installation guide. With the setting off or absent nothing
-  changes. Requested by Dan Rio (#2434).
-
-- **The exit card drops its `resume:` label.** Leaving the OMH TUI prints
-  the session's title and, after a blank line, `omh --resume <id>` alone,
-  ready to copy.
+  with a motion, `p P`, `u` and Ctrl+R, with counts, and Esc there does what
+  it always did, so Esc Esc still clears or rewinds; during a turn, Esc on
+  an empty composer arms the interrupt and a second Esc sends it. Enter
+  sends from either mode, and in NORMAL always sends, a `\` before the caret
+  included. Paste chips and image tokens are one character to every command,
+  `p` puts them back with their text or image, and the info line says
+  `INSERT` or `NORMAL`. Questions Hermes asks, masked input, the tell row,
+  pickers and the agent list keep their own keys. The supported set and how
+  it differs from Hermes' own Vi mode are in the Installation guide. With
+  the setting off or absent nothing changes. Requested by @DanRioDev
+  (#2434).
 
 - **`agent-debug` sees a turn that ended without a reply.** A new finding,
   `silent_turn_end`, cites a turn whose last tool result was followed by an
@@ -63,12 +118,6 @@ All notable changes will be documented here.
   `Turn ended: reason=` line for that timestamp before changing anything.
   Both state.db and `--session-record` are read; without `tool_calls` the kind
   is listed unavailable.
-- **The `/theme` picker scrolls on a short terminal.** Where the slot held
-  fewer rows than there are launch looks, the arrows still reached the
-  looks past it, but they were never drawn (on a 16-row terminal, ember; on a 24-row one, kanagawa-wave).
-  The list now scrolls so the highlighted look always shows, moving only
-  when the highlight would leave it, and a click lands on the look drawn in
-  that row.
 
 - **A Kanagawa Wave theme and launch look.** `omh theme use kanagawa`
   selects an indigo palette with warm ivory text and muted blue and violet
@@ -77,7 +126,8 @@ All notable changes will be documented here.
   terminal's own shows through. `/theme kanagawa-wave` selects the matching
   launch look: a rule above and below on a dark sumi-ink ground (Kanagawa
   Lotus on a light terminal), with an ocean swell for its living wallpaper.
-  Contributed by Dan Rio (#2436).
+  Contributed by @DanRioDev (#2436, carried by #2441).
+
 - **A failed CI or merge watcher no longer leaves the session silently
   stopped.** When a watcher you armed exits non-zero, its notice opens a turn;
   that turn now starts with a short directive: if the work it watched is still
@@ -98,11 +148,6 @@ All notable changes will be documented here.
   it. Hermes reads a steer only between steps, so one sent during a long tool
   call waits there until that call ends. A turn you stop before taking it in
   says `not read — the turn stopped first`.
-
-- **`OMH` in the info line's badge is a pale silver blue.** It was the
-  faint grey of the brackets around it; it now reads in `#C3D2E3` beside the
-  launch look's `Native`, moved toward black on a light background as far as
-  body-text contrast takes.
 
 - **A coding turn ends with one consistency check, when the edit has a copy
   or a reference elsewhere.** When a turn in the coding posture edited source
@@ -174,22 +219,6 @@ All notable changes will be documented here.
   command runs the cleanup, so this holds from the update after the one
   that installs it.
 
-- **The background-process row moves onto the info line, and the working
-  row keeps its blank row on a tall terminal.** The row that names a
-  process Hermes runs in the background stood above the composer's top
-  rule; it is now on the info line under the composer, after the badge and
-  the branch (`[⚚ OMH Native]  ✳ background  terminal(<command>)  8s`), with
-  its colours, its ticking clock, who will be told when it ends, `+N more`
-  and the finished state whose Enter reports the result. The title, model,
-  context and effort stay on the right. As the line narrows the title goes
-  first, then the row shortens and goes, and only then do the model, the
-  context and the effort shorten. During a long turn on a tall terminal,
-  `✻ Working…` read glued to the last tool row, since a turn's rows cut
-  short gave up the blank row over the working row first. That blank row
-  now stays, and the oldest row goes instead, while six rows still show
-  above it; on a shorter terminal it still gives way first, so it never
-  costs one of the few rows.
-
 - **The info line shows the context as a gauge with its token counts.**
   The bare `ctx 37%` under the composer is now
   `ctx ━━━━──────── 37% 74k/200k`: twelve cells, the filled ones and the
@@ -199,58 +228,6 @@ All notable changes will be documented here.
   line the token counts go first, then the gauge, leaving `ctx 37%`, before
   the context goes. Under `NO_COLOR` the filled and the empty cells still
   tell how full it is.
-
-- **A `/compact` that is still running shows it is.** Hermes can take a
-  minute or more to summarize the older turns, and until its report came
-  the screen showed only the started notice and nothing moved, so a
-  compression that was working read as a stuck one. While a `/compress` (or
-  `/compact`) is out and no turn runs, the working row now shows a spinner
-  and `Compressing…` with the time it has taken so far, and it goes away
-  when the report or the unanswered notice lands. It offers no Esc, since
-  Esc between turns sends no interrupt and so does not stop a compression.
-  The working glow does not start for it, and a prompt typed meanwhile
-  still goes out as before.
-
-- **The default look keeps the terminal's own background.** Spectrum set
-  its navy ground with OSC 11, and Otty took a set background only on the
-  cells written after it, so the launch card showed holes of the terminal's
-  own black. The default look, which draws no picture, now takes the
-  terminal's background as its ground; the other looks keep theirs.
-
-- **The working glow is smaller.** The light that goes round the screen
-  while a turn runs read too big and hid most of the top row's text as it
-  passed. Its trail is half as long (a seventh of the way round, from a
-  third), so it covers half as much of that row at a time, and the top and
-  bottom rows are half a row thick, without the faint tint they laid under
-  the light's inner half.
-
-- **The default look, spectrum, keeps its background colour and draws no
-  picture.** Its pixel aura is gone: the wallpaper still sets spectrum's
-  ground, and the other looks keep their scenes. An idle screen on
-  spectrum no longer wakes four times a second to paint nothing.
-
-- **The living wallpaper is pixel art, in the brand's pixel-aura style.**
-  The scenes drew their motifs in characters (`%t;:`, rings of `O`), which
-  read as broken text. Every scene is now drawn in half blocks, two square
-  pixels to a cell (`▀` in the top pixel's colour over the bottom one's,
-  `▄`, and a space on the colour where both match, since a block glyph
-  leaves the terminal's line spacing as a stripe), in the language of the
-  `oh-my-hermes` pixel-aura short: a mosaic of solid square tiles, dense in
-  the middle and scattering out to single tiles, with four-point `+`
-  sparkles that grow and fade. spectrum is the pixel aura itself, in the
-  short's violet, pink, cyan, mint and periwinkle; the other looks keep
-  their motif in the same language, from small bitmaps kept as data: a clean
-  crescent moon in a pixel halo with soft tile clouds, pastel jellyfish with
-  pulsing bells, a sun in a breathing glow, blossom clusters with falling
-  petals, ribbons of scattered tiles, a flickering flame in a warm glow with
-  rising embers, and a cloud raining into a rippling puddle. The motifs sit
-  low on the right, where the launch card and a working session's rows leave
-  the screen blank, and a big screen (140×40 or more) draws the sprites' art
-  pixels two pixels square. The rules are unchanged: blank cells only, never
-  in the scrollback, at most a sixth of the screen lit, no pixel past 3:1
-  against the ground; colours keep their hue under that cap (mixed from a
-  dark shade rather than into the ground) and a motif's shades are spread
-  within it instead of collapsing onto it.
 
 - **Korean typed from Termius keeps its spaces where they were typed.**
   Termius sends every syllable a Korean (or other) input method commits as
@@ -273,19 +250,26 @@ All notable changes will be documented here.
   get the null device as stdin; the workspace preflight's git blob, the one
   call that passes input, still goes through its own pipe.
 
-- **A game now passes visual QA only when it boots, answers input and keeps
-  running, and a scene is looked at after every change that affects what
-  renders.** While building, `frontend` captures the affected surface (for a
-  3D or canvas scene the default camera and each declared preset) and reads
-  the capture before the next change; a change not looked at is not done,
-  and the final 1440/768/375 loop still runs. `visual-qa` gains
-  `references/playable-check.md`: a game or interactive scene passes when
-  the booted first frame is not blank or one flat colour, the frame after
-  the declared input differs where the input should move something, idle
-  frames seconds apart differ (background-only animation does not count),
-  and the console shows zero errors across boot and input. A missing capture
-  is BLOCK, reading code never passes, and a run with no WebGL context is
-  recorded as `environment: no_webgl` instead of being judged a blank frame.
+- **A browser-game request reaches `frontend`, which looks at the scene
+  after every change and passes the game only when it boots, answers input
+  and keeps running.** A request to build or polish a browser game
+  ("three.js로 간단한 3D 게임 만들어줘", "make the game feel juicier") went to an
+  interview, a clarifying question or a fallback; it now dispatches
+  `frontend`. A native engine (Unity, Unreal, Godot, Roblox), a how-to
+  question and topic uses such as game theory, a trailer or tonight's score
+  stand that down, and a direct code fix ("fix the collision bug in my
+  game") keeps the delivery lane. While building, `frontend` captures the
+  affected surface (for a 3D or canvas scene the default camera and each
+  declared preset) and reads the capture before the next change; a change
+  not looked at is not done, and the final 1440/768/375 loop still runs.
+  `visual-qa` gains `references/playable-check.md`: a game or interactive
+  scene passes when the booted first frame is not blank or one flat colour,
+  the frame after the declared input differs where the input should move
+  something, idle frames seconds apart differ (background-only animation
+  does not count), and the console shows zero errors across boot and input.
+  A missing capture is BLOCK, reading code never passes, and a run with no
+  WebGL context is recorded as `environment: no_webgl` instead of being
+  judged a blank frame.
 
 - **A Kimi main session now gets a short execution calibration of its own.**
   The new `omh.main-calibration` system-prompt section renders once at session
@@ -297,89 +281,54 @@ All notable changes will be documented here.
   "subagent"`) get nothing from it and keep `omh.child-calibration`; every
   other family renders nothing until an A/B shows it needs a block.
 
-- **The OMH TUI's background-process row shows for a local session.** A
-  local session's process is recorded under its route,
-  `agent:<namespace>:local:dm:<stored id>`, which the row never matched,
-  so it never appeared. It now matches that key or the bare stored id, and
-  no prefix or suffix of either. With `compression.in_place: false` the
-  row and an unreported end now survive the rotation to a new stored id.
-  The row's spinner steps once a second, like its clock, so an idle session
-  with a process draws 1 frame a second, not 6, and none under the pager.
-  A messaging session resumed in the TUI (a bot profile's Telegram chat)
-  shows the processes its own turns and its subagents started, matched on
-  the route Hermes records on the session's row and on the spawning
-  session's id; after a `/new` on the same chat, neither conversation
-  shows the other's.
-
 - **A steer sent while a reply streams no longer erases that reply.** When
   Hermes read the steer before a second model call, the OMH TUI replaced the
   whole streamed text with the last call's at turn end. Once you steer, what
   streamed now stays as it was, and only what the final adds past it (a
-  footer) is added. The `↪ steer queued by Hermes` row shows after the reply,
-  not between the two calls: Hermes sends nothing that marks where one call
-  ends, so the TUI cannot place it there reliably. A long one-paragraph
-  reply now wraps only its last rows each frame, so a frame no longer costs
-  more as the paragraph grows; agent names drop a goal's trailing colon
-  (`Interrupted child alpha.`); and `/title X` shows the title bold instead
-  of `**X**`.
+  footer) is added. A long one-paragraph reply now wraps only its last rows
+  each frame, so a frame no longer costs more as the paragraph grows; agent
+  names drop a goal's trailing colon (`Interrupted child alpha.`); and
+  `/title X` shows the title bold instead of `**X**`.
 
-- **An approval no longer folds away the `cd` or the assignment that aims a
-  risky command, and it marks a download piped into a shell and a
-  world-writable `chmod`.** `cd ~ && …; rm -rf ./*` and `T=/; …; rm -rf
-  "$T"/*` used to show only the `▲ rm` row with the `cd` or `T=/` inside
-  `+ N other commands`; a directory change (`cd`, `pushd`, `popd`) or a
-  variable assignment (`T=/`, `printf -v`, `${T:=/}`) now stays listed
-  whenever a listed command comes after it, and `echo`-like noise still
-  folds. When rows run short and Hermes named a risk OMH found, the
-  spacing and the rule go first, then the rows fold step by step, the
-  last one before each risky command going last, then every row that is
-  not risky: a `▲` row is never cut while another command's row shows,
-  and at the same number of `▲` rows no command that may change something
-  is hidden where the slot used to show it. When Hermes named none,
-  nothing folds and the slot lists and cuts from the end as before, risky
-  rows too. A quoted here-document body (`<<'EOF'`) inside `$(…)`, such
-  as a commit or PR body, is read as text; an unquoted one's `$(…)` and
-  backticks are read for what they run, a `<<` inside `$((…))` is a
-  shift, and a here-string (`<<<`) or a nested subshell (`((cd a; rm -rf
-  b); ls)`) hides nothing after it. A download run as a script
-  (`curl … | sh`, `bash <(curl …)`,
-  `eval "$(curl …)"`, `sh -c "$(wget -qO- …)"`, and inside a `-c` script,
-  a substitution or after `then`), decoded text piped into a shell
-  (`base64 -d | sh`, `xxd -r`, `echo | tr`, `openssl … -d`), `find
-  -delete` or `-exec rm`, and `chmod` with a mode that lets others write
-  (`777`, `666`, `o+w`, `a+w`) now get their own `▲` row, the cases
-  Hermes' approval table flags; `echo "$(curl …)"`, `x=$(curl …)`,
-  `diff <(curl a) <(curl b)` and `find … -print` do not.
-
-- **Each OMH TUI launch look now has a living wallpaper: its own background
-  colour and a scene that keeps moving.** While the TUI runs it sets the
-  terminal's background to the look's colour with OSC 11 and puts the
-  terminal's own back on every way out: on exit, after a crash or a signal,
-  while the job is stopped with Ctrl+Z, and as soon as the wallpaper is
-  turned off. Each scene has one or two motifs drawn big in dense
-  characters, with light particles round them: moonlit is deep navy with a
-  large crescent moon whose glow pulses, drifting clouds and twinkling
-  stars; sakura dusky plum with a blossoming branch and falling petals;
-  aurora deep teal with tall waving curtains of light; ember dark brown-red
-  with a flickering campfire and rising sparks; gold a large sun with
-  turning rays; violet large drifting bokeh; graphite rain over a rippling
-  puddle; spectrum a prism fanning a beam into five hues. A light terminal
+- **Every OMH TUI launch look but the default has a living wallpaper: its
+  own background colour and a pixel-art scene that keeps moving.** While the
+  TUI runs, a look with a scene sets the terminal's background to the look's
+  colour with OSC 11 and puts the terminal's own back on every way out: on
+  exit, after a crash or a signal, while the job is stopped with Ctrl+Z, and
+  as soon as the wallpaper is turned off. The default look, spectrum, draws
+  no scene and keeps the terminal's own background. Every scene is drawn in
+  half blocks, two square pixels to a cell (`▀` in the top pixel's colour
+  over the bottom one's, `▄`, and a space on the colour where both match),
+  in the language of the `oh-my-hermes` pixel-aura short: a mosaic of solid
+  square tiles, dense in the middle and scattering out to single tiles, with
+  four-point `+` sparkles that grow and fade. Each look keeps its motif in
+  that language: moonlit a clean crescent moon in a pixel halo with soft
+  tile clouds on deep navy; sakura blossom clusters with falling petals on
+  dusky plum; aurora ribbons of scattered tiles on deep teal; ember a
+  flickering flame in a warm glow with rising embers on dark brown-red;
+  violet pastel jellyfish with pulsing bells; gold a sun in a breathing
+  glow; graphite a cloud raining into a rippling puddle; and kanagawa-wave
+  an ocean swell. The motifs sit low on the right, where the launch card and
+  a working session's rows leave the screen blank, and a big screen (140×40
+  or more) draws the sprites' art pixels two pixels square. A light terminal
   gets each look's pale ground. The theme is measured against the ground,
   and every word and mark also keeps its floor against the terminal's own
   background, where the session's rows stay after exit; a look changed
   mid-session prints the session again on its ground. At most a sixth of the
-  screen is lit and no cell passes 3:1 against the ground; the scene is
-  drawn on blank cells only, never over text, a band or into the scrollback:
-  blank rows whole and the tail of a row with text two cells past it, the
-  transcript's rows too, so the motifs on the screen's right side stay in
-  view over a full session (a selection across rows then copies those
-  glyphs; `/wallpaper off` keeps it clean), repaints only the cells that
-  changed every 0.25 s, pauses while the composer holds text, and stands
-  still with reduced motion. It shows at truecolor on a terminal that
-  answered the background query, not under `NO_COLOR`, and not where `/theme
-  light|dark` names the other side from the terminal's own. It is on by
-  default; `/wallpaper on|off` (alone, it switches) and `omh theme wallpaper
-  on|off` save the choice as `wallpaper` in the theme record, and
+  screen is lit and no pixel passes 3:1 against the ground; colours keep
+  their hue under that cap (mixed from a dark shade rather than into the
+  ground) and a motif's shades are spread within it instead of collapsing
+  onto it. The scene is drawn on blank cells only, never over text, a band
+  or into the scrollback: blank rows whole and the tail of a row with text
+  two cells past it, the transcript's rows too, so the motifs stay in view
+  over a full session (a selection across rows then copies those glyphs;
+  `/wallpaper off` keeps it clean). It repaints only the cells that changed
+  every 0.25 s, pauses while the composer holds text, and stands still with
+  reduced motion. It shows at truecolor on a terminal that answered the
+  background query, not under `NO_COLOR`, and not where `/theme light|dark`
+  names the other side from the terminal's own. It is on by default;
+  `/wallpaper on|off` (alone, it switches) and `omh theme wallpaper on|off`
+  save the choice as `wallpaper` in the theme record, and
   `OMH_TUI_WALLPAPER=0` holds it off in one terminal. The `/theme` picker
   shows each look's colours on its ground.
 
@@ -406,50 +355,46 @@ All notable changes will be documented here.
   prints the rows it measured instead of rendering the kept blocks twice (a long session's settled resize
   about 270 -> 205 ms); and the bot board's module loads when the board opens, not with the TUI.
 
-- **The OMH TUI has eight launch looks, and a look now tints the chrome.**
-  `/theme` adds `sakura` (pastel pink, sky blue and cream), `moonlit`
-  (moonlight yellow and silver over navy), `aurora` (emerald and teal into
-  violet) and `ember` (amber through orange to crimson) to `spectrum`,
-  `violet`, `gold` and `graphite`, each with a set for dark and one for
-  light backgrounds. Every look, the four earlier ones too, now also paints
-  the composer's rules and the frames drawn like them in its card-edge
-  colour, and a tool call's rail and the working row's spinner in its label
-  colour, each lifted to 3:1 against the background; a failed or denied
-  call's rail stays red. Body text, the grey details, the reply's rail and
-  the state colours keep the theme's, and `spectrum` stays the default with
-  its logo unchanged. The picker, `/theme <look>`, Tab completion and the
-  saved `launch` key take the new names; an unknown saved name still warns
-  and falls back to `spectrum`.
-
-- **The working glow no longer blanks the screen's top row.** While a turn
-  ran, the OMH TUI painted the whole top row as the light's track, so that
-  row's text (the logo's first line on the launch screen, or the oldest
-  row of a short session) was hidden for the whole turn. The row's own text
-  is now painted again under the light, and only the cells the light
-  reaches cover it.
-
-- **`/glow off` turns the OMH TUI's working glow off, and it now shows in a
-  short session too.** `/glow on|off` (alone, it switches) is saved beside
-  the theme under the OMH home, so it holds in every later session;
-  `omh theme glow on|off` saves the same choice from the shell, and
-  `omh theme glow` shows it. `OMH_TUI_GLOW=0` still holds it off in one
-  terminal. The light used to be
-  drawn only once the session filled the screen; it now goes round a
-  session of any length, over the blank rows under it. A prompt's band no
-  longer runs into the right margin the glow keeps: it ends one column in,
-  as it starts one column in on the left.
+- **The OMH TUI has four more launch looks, and a look now tints the
+  chrome.** `/theme` adds `sakura` (pastel pink, sky blue and cream),
+  `moonlit` (moonlight yellow and silver over navy), `aurora` (emerald and
+  teal into violet) and `ember` (amber through orange to crimson) to
+  `spectrum`, `violet`, `gold` and `graphite`, each with a set for dark and
+  one for light backgrounds. Every look, the four earlier ones too, now also
+  paints the composer's rules and the frames drawn like them in its
+  card-edge colour, and a tool call's rail and the working row's spinner in
+  its label colour, each lifted to 3:1 against the background; a failed or
+  denied call's rail stays red. Body text, the grey details, the reply's
+  rail and the state colours keep the theme's, and `spectrum` stays the
+  default with its logo unchanged. The picker, `/theme <look>`, Tab
+  completion and the saved `launch` key take the new names; an unknown saved
+  name still warns and falls back to `spectrum`. (A ninth, `kanagawa-wave`,
+  is described above.) On a terminal too short to list every look, the
+  `/theme` picker scrolls so the highlighted look always shows, moving only
+  when the highlight would leave it, and a click lands on the look drawn in
+  that row.
 
 - **A light goes round the OMH TUI's screen while a turn runs.** It runs
   along the terminal's whole edge, clockwise, once every four seconds, with
-  a round head and a trail in the launch look's logo colours that fades
-  out; nothing else of the edge is drawn, and it is gone when the turn
-  ends. It moves by the clock and repaints the edge every 0.05 s, so it
-  glides round corners instead of stepping. It needs the truecolor depth
-  with motion on; `OMH_TUI_GLOW=0` turns it off. To keep the edge free, the
-  TUI draws its rows one column in from each side and keeps the screen's
-  last row blank, whether a turn runs or not, so nothing moves as the light
-  comes and goes. The light is taken off before anything scrolls, so none
-  of it reaches the scrollback.
+  a round head and a trail in the launch look's logo colours that fades out
+  over a seventh of the way round, half a row thick along the top and bottom
+  rows; nothing else of the edge is drawn. It goes round a session of any
+  length, over the blank rows under a short one, and is gone when the turn
+  ends. The top row's own text stays painted under it, and only the cells
+  the light reaches cover it. It moves by the clock and repaints the edge
+  every 0.05 s, so it glides round corners instead of stepping. It needs the
+  truecolor depth with motion on. `/glow on|off` (alone, it switches) is
+  saved beside the theme under the OMH home, so it holds in every later
+  session; `omh theme glow on|off` saves the same choice from the shell,
+  `omh theme glow` shows it, and `OMH_TUI_GLOW=0` holds it off in one
+  terminal. `/glow on` says when something still holds it off:
+  `OMH_TUI_GLOW=0`, reduced motion, a colour depth below truecolor, or a
+  screen smaller than 20×8. To keep the edge free, the TUI draws its rows
+  one column in from each side, a prompt's band included, and keeps the
+  screen's last row blank, whether a turn runs or not, so nothing moves as
+  the light comes and goes; `/glow off` gives that margin and row back. The
+  light is taken off before anything scrolls, so none of it reaches the
+  scrollback.
 
 - **Gemini 4 Argon replaces Gemini 3.1 Pro in the shipped chains.** Google
   made Argon generally available on 2026-10-13. Every slot 3.1 Pro held now
@@ -491,6 +436,7 @@ All notable changes will be documented here.
   now reads `swarm`, Gemini 4 Argon at medium `google-search`, Kimi K3.1 Pro
   at high `x-search` and at xhigh `review`, and GPT-6.1 Sol at xhigh and
   Grok 4.7 at high, which had no label, read `review` and `x-search`.
+
 - **The pager copies on drag, without the transcript's left bar.** In a
   pager (Ctrl+O, `/history`, `/logs`, `/dag`, an
   agent's log, the bot board) the TUI now takes the mouse: the wheel scrolls three lines,
@@ -504,6 +450,7 @@ All notable changes will be documented here.
   which that selection copies: a painted full cell that copied as a space
   read too heavy. Under `NO_COLOR` your prompt's rail is the light `│`, so
   it is told apart from a reply's.
+
 - **Fourteen more models cost out at their vendors' list prices.** OMH
   already recognized Grok 4.7, 4.6, 4.5 and 4.3, DeepSeek V4 Pro, Gemini
   3.8 Flash, 3.6 Flash and 3.5 Flash-Lite, GLM-5.3-FlashX, Qwen3.8-Max and
@@ -519,6 +466,7 @@ All notable changes will be documented here.
   No shipped chain named any of them until Grok 4.7 joined `x-search` (above). GLM-5.2 was costed at the GLM-4.x rate
   (0.6/2.2) and now uses its own 1.4/4.4. Its Ultrafast serving moves from a
   halved figure to the same base rate, as no separate tier rate is published.
+
 - **The route hint stops saying the same thing twice.** Route hint text is
   about 18% of the OMH text a model reads per session, and part of it repeated
   other text in the same block: a hint's `adjacent_workflows=` line that equals
@@ -529,6 +477,7 @@ All notable changes will be documented here.
   from 106,957 to 98,121 characters (8.3%), and no hint grew. Selection, the payload, `first_response_shape=` and
   `not_evidence_yet=` do not change, and the per-turn ratchets drop with the
   render (`pre_llm_call` 5786 -> 5632, fallback 7338 -> 7184).
+
 - **A long turn in the OMH TUI no longer ends with blank rows over the
   composer.** Once a turn's output scrolled the prompt off the screen, the
   `↳ you:` reminder and the blank row over it took two rows on the bottom
@@ -542,6 +491,7 @@ All notable changes will be documented here.
   composer or the plan, as between any two blocks. The composer rises by
   those rows, at most three, left blank under the footer, and the next turn's
   output takes it back to the bottom rows.
+
 - **The answer-first plan line stops repeating its whole rule.** While a
   plan is open, every turn a person opens carried the 445-character
   `TODO_ANSWER_FIRST_RULE`, and Hermes keeps each turn's injection in history
@@ -553,6 +503,7 @@ All notable changes will be documented here.
   person's turn after 20 quiet plan turns, counted unchecked agreement or
   deferral in 1 of 119 turns with the short line, 2 of 120 with the full rule
   and 4 of 48 with the pre-#1705 drive.
+
 - **A routed session carries the route hint's boundary sentence once.** Every
   `[OMH Route Hint]` closed on the same 197-character `Boundary:` line, and
   Hermes replays each hint, so a session routed on several turns held one copy
@@ -560,6 +511,9 @@ All notable changes will be documented here.
   hint now drops the line when the host-injected part of history already
   carries it; a first hint, an unreadable history, or a person quoting the
   line keeps it, and the route fingerprint is still taken from the whole hint.
+
+![Sprite Forge patch notes](https://raw.githubusercontent.com/rlaope/oh-my-hermes/main/assets/omh-sprite-forge-patch-notes.png)
+
 - **Character sprite sheets become aligned game frames (`sprite-forge`).**
   An image model draws a character sheet whose frames differ in scale and
   foot position, so the character swells and bobs in game. The new
@@ -572,46 +526,69 @@ All notable changes will be documented here.
   redrawn rather than patched. Without Pillow, `--help` still works and any
   processing request exits nonzero with no output. OMH generates no images;
   the host's own image tool draws the sheet. (#2335)
+
 - **`visual-qa` checks motion in animated and simulated output.** A new
   `references/motion-continuity.md` checks spawn position against the
   declared origin, per-frame displacement against the declared speed, force
   direction against observed motion and monotonic HP bars, and it replays
   the deploy, travel and engage flow independently instead of reading it
   off cost or clear numbers. (#2335)
+
 - **`show-reel` captures reels from a running game.** `references/game-capture.md`
   keeps events, sound cues and titles in one `timeline.json`, pins the game
   build, holds a reel whose gameplay event has no sound cue, and records a
   real voice's source URL, hash and excerpt; impersonating a real voice is
   refused. (#2335)
+
 - **`deliverable-package` tracks `archived` and `published`.** A file is
   archived only with its hash, version and catalog row read back, published
   only when the destination's own URL resolves to the same hash, and the
   final file is the one the person approved, never the newest mtime. (#2335)
+
 - **An approval in the OMH TUI shows every risky command, not just the one
   Hermes named.** Hermes names a command line by the first dangerous pattern
   it matches, and the slot printed the line as one wrapped block. One real
   request chained 14 commands and read as "recursive delete", while the same
   block force-removed a worktree, force-deleted two branches and deleted a
-  remote branch. The slot now splits the line at its top-level `&&`, `||`, `;`
-  and line breaks, keeping a here-document with its command and reading no
-  comment. Each command is listed on a row of its own, and each one that runs
-  `rm` recursively or on a path from `/`, deletes or force-pushes a remote
-  branch, force-deletes a local branch, force-removes a worktree, hard-resets
-  or force-cleans is marked `▲`, with the home directory written `~` where the
-  shell would read it so. Only when the list does not fit, and Hermes' own
-  description names a risk the slot marked, do the commands that change
-  nothing (`cd`, `echo`, `ls`, `grep`, read-only `git` and `gh` and the like,
-  writing no file, with no assignment in front and no risk inside quotes) fold
-  into one `+ N other commands (cd, git, …) · ctrl+o shows all` row; every
-  other command stays listed. Hermes knows far more dangerous patterns than
-  the slot, so when it flagged one the slot does not know, nothing folds and a
-  long list is cut from its end with the usual Ctrl+O marker. Risks Hermes did
-  not name get a `✦ OMH also sees:` row under its header. Quoted text and the
-  arguments of `echo` or `grep` never match. Each choice now has an icon and a
-  tone: `✗ deny`, `✓ allow`, `★ always allow`, `✎ tell Hermes`. The
+  remote branch. The slot now splits the line at its top-level `&&`, `||`,
+  `;` and line breaks, keeping a here-document with its command and reading
+  no comment. Each command is listed on a row of its own, and each one that
+  runs `rm` recursively or on a path from `/`, deletes or force-pushes a
+  remote branch, force-deletes a local branch, force-removes a worktree,
+  hard-resets or force-cleans is marked `▲`, with the home directory written
+  `~` where the shell would read it so. So are the cases Hermes' approval
+  table flags of a download run as a script (`curl … | sh`,
+  `bash <(curl …)`, `eval "$(curl …)"`, `sh -c "$(wget -qO- …)"`, and inside
+  a `-c` script, a substitution or after `then`), decoded text piped into a
+  shell (`base64 -d | sh`, `xxd -r`, `echo | tr`, `openssl … -d`),
+  `find -delete` or `-exec rm`, and `chmod` with a mode that lets others
+  write (`777`, `666`, `o+w`, `a+w`); `echo "$(curl …)"`, `x=$(curl …)`,
+  `diff <(curl a) <(curl b)` and `find … -print` are not. A quoted
+  here-document body (`<<'EOF'`) inside `$(…)`, such as a commit or PR body,
+  is read as text; an unquoted one's `$(…)` and backticks are read for what
+  they run, a `<<` inside `$((…))` is a shift, and a here-string (`<<<`) or
+  a nested subshell (`((cd a; rm -rf b); ls)`) hides nothing after it.
+
+  When rows run short and Hermes' own description names a risk the slot
+  marked, the spacing and the rule go first, then the rows fold step by step
+  into one `+ N other commands (echo, git, …) · ctrl+o shows all` row: first
+  the commands that change nothing (`echo`, `ls`, `grep`, read-only `git`
+  and `gh` and the like, writing no file, with no assignment in front and no
+  risk inside quotes; a `cd` with nothing listed after it folds with
+  them), then directory changes (`cd`, `pushd`, `popd`) and
+  variable assignments (`T=/`, `printf -v`, `${T:=/}`), the last one before
+  each risky command going last, then every row that is not risky. A `▲` row
+  is never cut while another command's row shows. Hermes knows far more
+  dangerous patterns than the slot, so when it flagged one the slot does not
+  know, or named none, nothing folds and a long list is cut from its end
+  with the usual Ctrl+O marker, risky rows too. Risks Hermes did not name
+  get a `✦ OMH also sees:` row under its header. Quoted text and the
+  arguments of `echo` or `grep` never match. Each choice now has an icon and
+  a tone: `✗ deny`, `✓ allow`, `★ always allow`, `✎ tell Hermes`. The
   highlighted one is bold on a band of its tone. Ctrl+O still pages the
   command whole, as Hermes sent it. Deny stays first and selected, and the
   keys do not change.
+
 - **The OMH TUI says when OMH caught a model mistake.** OMH's catches
   reached only the model, so an install looked like it did nothing. Now the
   moment one happens the transcript gets one row, `✦ OMH` stepped through
@@ -627,23 +604,37 @@ All notable changes will be documented here.
   (`omh_catch_log/v1`): a kind from a closed set and small integers, never
   model text, arguments or paths; the HUD payload carries the reading
   session's newest few as `catches`.
-- **The OMH TUI shows a session's background processes, and offers Enter
-  when one ends unreported.** A `terminal` command Hermes ran in the
-  background with `notify_on_complete` off ended without waking the
+
+- **The OMH TUI shows a session's background processes on the info line, and
+  offers Enter when one ends unreported.** A `terminal` command Hermes ran
+  in the background with `notify_on_complete` off ended without waking the
   session, and nothing on screen said work was still running. While this
-  session owns one, a row above the composer says
-  `background  terminal(<command>)  1h 07m 13s` and, once the turn is over,
-  who will be told: `🔔 will ping you when done`, `🔔 will ping you on a
-  match` (watch patterns), or `🔕 Hermes won't be pinged · OMH is watching
-  it`. When a process in that last state ends after the turn, the row turns
-  green, `✓ … finished 0:12 ago` (`+N more` when others ended too), the bell
-  rings once, and Enter on an empty composer sends one prompt asking the
-  session to check the results; nothing is sent on its own. The TUI reads
-  Hermes' `processes.json` read-only, matches rows on the session's own key,
-  and asks a host process by pid and recorded start time whether it still
-  runs. A process it cannot ask that way (a sandbox, or off POSIX) says
-  `🔕 won't ping you · ask Hermes for the result` instead, shows only while
-  its row is listed, and is never called finished.
+  session owns one, the info line under the composer says, after the badge
+  and the branch, `✳ background  terminal(<command>)  1h 07m 13s` and, once
+  the turn is over, who will be told: `🔔 will ping you when done`,
+  `🔔 will ping you on a match` (watch patterns), or
+  `🔕 Hermes won't be pinged · OMH is watching it`. When a process in that
+  last state ends after the turn, the row turns green,
+  `✓ … finished 0:12 ago` (`+N more` when others ended too), the bell rings
+  once, and Enter on an empty composer sends one prompt asking the session
+  to check the results; nothing is sent on its own. As the line narrows the
+  title goes first, then the row shortens and goes, and only then do the
+  model, the context and the effort shorten. The TUI reads Hermes'
+  `processes.json` read-only and matches a process on the session's own key,
+  its stored id or its local route `agent:<namespace>:local:dm:<stored id>`,
+  never a prefix or suffix of either; with `compression.in_place: false` the
+  row and an unreported end survive the rotation to a new stored id. A
+  messaging session resumed in the TUI (a bot profile's Telegram chat) shows
+  the processes its own turns and its subagents started, matched on the
+  route Hermes records on the session's row and on the spawning session's
+  id; after a `/new` on the same chat, neither conversation shows the
+  other's. It asks a host process by pid and recorded start time whether it
+  still runs. A process it cannot ask that way (a sandbox, or off POSIX)
+  says `🔕 won't ping you · ask Hermes for the result` instead, shows only
+  while its row is listed, and is never called finished. The row's spinner
+  steps once a second, like its clock, so an idle session with a process
+  redraws once a second, and not at all under the pager.
+
 - **A generation's own skills pack is never registered, and a home left on
   one is moved to the pointer.** 4.0.3 stopped `omh setup` from registering
   the running generation's pack (`generations/<id>/skills`) beside the shared
@@ -657,6 +648,7 @@ All notable changes will be documented here.
   collected; only the installer-managed command, which retires the pack in
   the same write, counts it as a registration. A relative entry, which
   Hermes anchors at its own home, never matches.
+
 - **A skills entry spelled through `${VAR}` is matched the way Hermes reads
   it.** Hermes expands `${VAR}` and `~` in `skills.external_dirs` before it
   resolves an entry, but setup, update and `omh doctor` expanded only `~`,
@@ -674,6 +666,7 @@ All notable changes will be documented here.
   readiness` and the installed-skill weight advisory expand entries the same
   way and read a relative one under the home that names it, so uninstall
   keeps a store a home names as `../omh/skills`.
+
 - **Setup, update and doctor read every skills entry from the home that
   names it.** The registration migration, the generation-pack retirement,
   the two-directories finding and the registered check now read a relative
@@ -688,13 +681,30 @@ All notable changes will be documented here.
   --registration-only` removes every spelling setup retires (`${VAR}`, `~`,
   relative to the home, or through a symlink). Nothing is retired or
   removed that Hermes does not read through that home.
+
 - **`/compress` works in the OMH TUI, and `/compact` runs it.** Hermes'
   shared gateway (Hermes v0.22) refuses `/compress` as a typed command, so
   the TUI said Hermes could not run it in a TUI session. The gateway child
   now runs it, and `/branch`, `/retry`, `/undo`, `/stop`, `/bg`, `/btw`,
   `/rollback`, `/reload`, `/reload-mcp`, `/tools`, bare `/plugins` and
   `/config`, through the gateway call Hermes' own TUI uses. `/topup` goes to
-  Hermes, and the commands only Hermes' classic CLI runs leave completion.
+  Hermes only on a shared gateway, and the commands only Hermes' classic CLI
+  runs leave completion. While a compression is out and no turn runs, the
+  working row shows a spinner and `Compressing…` with the time it has taken
+  so far, until the report or the unanswered notice lands; it offers no Esc,
+  since Esc between turns does not stop a compression. The TUI waits 660 s
+  for it, Hermes' own budget, and past that says the compression may still
+  land rather than inviting a second one. Hermes answers a connection's
+  calls one at a time, so every call sent meanwhile (a command, a prompt, an
+  interrupt) waits for the compression's time left plus its own budget, at
+  most 780 s, and a typed command says Hermes runs it once the compression
+  ends; a call that still goes unanswered says how long it really waited. A
+  command Hermes refuses while it compresses says so. `/stop` reports an
+  interrupt only when it stopped a turn, and stops the session's processes
+  even when its read fails. A `/bg` or `/btw` answer for a session left
+  meanwhile names that session, and leaving a session with one still running
+  says it will not show.
+
 - **The OMH TUI no longer shows a blank screen when you switch to its
   terminal and back.** A resize signal (a tab shown again, a split laid out
   again) redraws the session from memory, and the erase that starts that
@@ -702,64 +712,54 @@ All notable changes will be documented here.
   the screen went blank for a moment. The erase now goes out in the same
   synchronized update as the frame drawn after it, so a terminal that holds
   the update (DEC 2026) swaps the old screen for the new one in one step.
-- **The TUI's menus lose their bands, a sent prompt gains one, and the
-  bottom line names the branch.** The completion menu, the session, model,
-  rewind and launch-look pickers, the agent list, the delegation view and the
-  bot board's sessions draw no fill: the highlighted row is a `❯` and a bold
-  name in the skill hue, other commands keep that hue and their descriptions
-  are muted. A prompt you sent runs on a band to the right edge, tinted by
-  the launch look. The one line under the composer starts with
-  `[⚚ OMH Native]` and shows the session directory's git branch with its
-  changed and untracked counts, read off the screen's thread, first on its
-  right. The working row, the
-  plan and the composer get a blank row between them where the terminal has
-  one to spare.
-- **A long `/compress` is waited for, and side answers are not lost
-  silently.** The TUI waits 660 s for `/compress`, Hermes' own budget,
-  instead of 120 s, and past that says the compression may still land
-  rather than inviting a second one. A command Hermes refuses while it
-  compresses says so. `/stop` reports an interrupt only when it stopped a
-  turn, and stops the session's processes even when its read fails. A `/bg`
-  or `/btw` answer for a session left meanwhile names that session, and
-  leaving a session with one still running says it will not show.
-  `/topup` goes to Hermes only on a shared gateway.
+
+- **The TUI's menus lose their bands, and a sent prompt gains one.** The
+  completion menu, the session, model, rewind and launch-look pickers, the
+  agent list, the delegation view and the bot board's sessions draw no fill:
+  the highlighted row is a `❯` and a bold name in the skill hue, other
+  commands keep that hue and their descriptions are muted. A prompt you sent
+  runs on a band to the right edge, tinted by the launch look. The working
+  row, the plan and the composer get a blank row between them where the
+  terminal has one to spare. During a long turn the blank row over the
+  working row stays, and the oldest row goes instead, while six rows still
+  show above it; on a shorter terminal it gives way first, so it never costs
+  one of the few rows.
+
 - **The live region reads more calmly while a turn runs.** A mid-turn
   `↳ you:` row and a steer run on your sent prompt's band, with a blank row
   over the sticky prompt. Hermes' background review is one dim row naming
   each skill once. The plan's done rows are quiet and fold into `✓ N done`
   before a row still to do is cut, and Ctrl+P folds the plan to its header
-  and current item (the header names the key). The working row keeps
-  Hermes' spinner verb and shows a status such as `🧠 OMH — recalled 4
-  memories` after its facts, dim. Each reply opens with `⚚ Hermes · <model>`.
-- **A command typed during a long `/compress` keeps its answer, and Ctrl+P
-  matches its hint.** Hermes' shared gateway answers a connection's calls one
-  at a time, so while a `/compress` this TUI sent runs, every call sent
-  meanwhile waits for it; the TUI gave each 120 s, so past that `/undo`'s
-  draft or `/retry`'s resend was dropped while Hermes still ran it. Every
-  call sent then (a command, its `command.dispatch` fallback, a prompt, an
-  interrupt) now waits for the compression's time left plus its own budget,
-  at most 780 s, and a typed command says Hermes runs it once the compression
-  ends. On a terminal too short for the plan, Ctrl+P no longer sets a fold
-  the screen cannot show, so the header never offers `ctrl+p expand` for a
-  plan the key cannot expand. A redraw due while a pager is open (a catalog,
-  rewind or resume answer) waits until the pager closes, so the session is
-  no longer left twice in scrollback.
-- **A promo or demo video asked for in a shared channel reaches
-  `show-reel` when the channel's backfill is only greetings and thanks.**
-  On Discord, Hermes puts the messages others posted since the bot's last
-  turn before `[New message]`, and any such backfill made a closed request
-  ("Make a demo video for the app") ask instead. The request now routes as
-  it would without the backfill when the backfill is the Discord adapter's
-  own shape -- the `[Recent channel messages]` header, the `[unverified]`
-  notice exactly when a sender is tagged, and `[<name>] <text>` lines with
-  a one- or two-word name -- and every message is acknowledgement-only
-  chatter: greetings, thanks, acks, times of day and "all", "everyone"
-  or "folks" ("morning all", "thank you", "ok, nice!"), with no noun,
-  verb, number, question mark, link, code or emoji and no pronoun but the
-  "you" of "thank you". Any other
-  backfill, a reply pointer or an attachment note still makes it ask. A
-  closed request beside a character that folding removes entirely
-  (U+2017, U+203E, a bare combining mark) is no longer admitted.
+  and current item (the header names the key, and offers `ctrl+p expand`
+  only where expanding would show more). The working row keeps Hermes'
+  spinner verb and shows a status such as `🧠 OMH — recalled 4 memories`
+  after its facts, dim. Each reply opens with `⚚ Hermes · <model>`.
+
+- **A redraw due while a pager is open no longer leaves the session twice in
+  scrollback.** A catalog, rewind or resume answer that redraws the session
+  while a pager is open used to erase the pager's screen, and leaving the
+  pager printed the session again under the main screen's rows. The redraw
+  now waits until the pager is left.
+
+- **A promo or demo video asked for in a shared channel reaches `show-reel`
+  only when the channel's backfill is greetings and thanks.** On Discord,
+  Hermes puts the messages others posted since the bot's last turn before
+  `[New message]`, and a closed request ("Make a demo video for the app")
+  was admitted whatever that backfill said, even one describing the fault
+  the video would record. It now routes as it would without the backfill
+  only when the backfill is the Discord adapter's own shape -- the
+  `[Recent channel messages]` header, the `[unverified]` notice exactly when
+  a sender is tagged, and `[<name>] <text>` lines with a one- or two-word
+  name -- and every message is acknowledgement-only chatter: greetings,
+  thanks, acks, times of day and "all", "everyone" or "folks" ("morning
+  all", "thank you", "ok, nice!"), with no noun, verb, number, question
+  mark, link, code or emoji and no pronoun but the "you" of "thank you". Any
+  other backfill makes it ask, as a reply pointer or an attachment note
+  already did. A closed request beside a symbol or modifier character
+  (Unicode So or Sk, such as `˜`) or a character that folding removes
+  entirely (U+2017, U+203E, a bare combining mark) is no longer admitted
+  either.
+
 - **An image you attach in the OMH TUI is an `[Image #N]` token in the text,
   as in Claude Code.** Ctrl+V, a dropped file and `/image` put the token at
   the caret, in place of the `📎 shot.png  Backspace removes` row above the
@@ -775,6 +775,7 @@ All notable changes will be documented here.
   flight, goes with its own images. A `!` line or a command that sends no
   prompt gives its tokens back to the composer, with a notice. Typing the
   label yourself attaches nothing.
+
 - **A queued prompt can be sent into the running turn now, and one line sits
   under the composer.** As in Claude Code, a muted row under the queued
   prompts says `ctrl+enter to send now · ↑ to edit` while a turn runs; on an
@@ -783,35 +784,43 @@ All notable changes will be documented here.
   prompt keeps its place and shows no row. Where the terminal has not shown
   that it tells Ctrl+Enter from Enter, the row names Ctrl+J, which every
   terminal sends apart from Enter; with text typed, Ctrl+J still adds a line
-  and Ctrl+Enter steers that text, as before. A sent-now steer Hermes refuses
-  goes back to the head of the queue as it was, and one it took but had not
-  read when the turn is stopped is queued again, with a notice. The info line
-  no longer says `/steer <text> steers`; `/steer <text>` still works and
-  stays in `/help` and the `?` list. The branch row is gone: the info line
-  starts with `[⚚ OMH Native]` and the branch, then the mode and the keys
-  that matter, with the title, model, context and effort on the right, and
-  the row goes back to the transcript. Between turns it no longer says
-  `? for shortcuts`: the launch card names `? every shortcut`, and `?` still
-  opens the list. As the line narrows the right side's fields go first, then
-  the branch's name is cut, then the badge shortens to `[⚚ OMH]` and `⚚`;
-  the mode's label and a question's or picker's keys keep their words. The
-  start-up query now asks every terminal for its kitty keyboard flags
-  (`CSI ? u`): one that answers gets them pushed, Otty with its
-  `kitty-keyboard` setting on among them, and names Ctrl+Enter from the
-  first frame; a terminal the environment does not name (over SSH) must also
-  name itself through XTVERSION as one known to read them, never Ghostty. The
-  push is undone on every exit but `kill -9`. A steer or a second
-  `/compress` that waited behind a compression and went unanswered now says
-  how long it really waited, not 120 s or 660 s.
-- **The exit card is the session's title and how to resume it.** Leaving
-  the OMH TUI printed five lines: the title, a line of id, turns, messages
-  and duration, a line of tokens and model, `omh --resume <id>` and
-  `omh -c "<title>"`. It now prints the title (`untitled session` when
-  there is none) and, after a blank line, `resume: omh --resume <id>` with
-  the whole id, plus `-p <profile>` for a profile launch, then a blank
-  line so the shell prompt does not sit right under it. The
-  `-c "<title>"` line is gone with the counts, since the id always opens
-  this session and a title can be shadowed by a newer `<title> #N`.
+  and Ctrl+Enter steers that text, as before. A sent-now steer Hermes
+  refuses goes back to the head of the queue as it was, or to the composer
+  with a notice when the next queued prompt has already started. One Hermes
+  took counts as read at the first tool that finishes after it, since Hermes
+  joins it to that batch even when the batch is interrupted; one it had not
+  read when the turn is stopped is queued again, with a notice. A prompt
+  held for the default-model check is never replaced: the queue waits behind
+  it. The info line no longer says `/steer <text> steers`; `/steer <text>`
+  still works and stays in `/help` and the `?` list. The info line starts
+  with `[⚚ OMH Native]` and the session directory's git branch with its
+  changed and untracked counts (`branch:<name> | !N ?M`), then the mode and
+  the keys that matter, with the title, model, context and effort on the
+  right. The badge's `OMH` is a pale silver blue (`#C3D2E3`, moved toward
+  black on a light background as far as body-text contrast takes) beside the
+  launch look's `Native`. Between turns it no longer says `? for shortcuts`:
+  the launch card names `? every shortcut`, and `?` still opens the list. As
+  the line narrows the right side's fields go first, then the branch's name
+  is cut, then the badge shortens to `[⚚ OMH]` and `⚚`; the mode's label and
+  a question's or picker's keys keep their words. The start-up query now
+  asks every terminal for its kitty keyboard flags (`CSI ? u`): one that
+  answers gets them pushed, Otty with its `kitty-keyboard` setting on among
+  them, and names Ctrl+Enter from the first frame; a terminal the
+  environment does not name (over SSH) must also name itself through
+  XTVERSION as one known to read them, never Ghostty. The push is undone on
+  every exit but `kill -9`.
+
+- **The exit card is the session's title and how to resume it.** Leaving the
+  OMH TUI printed five lines: the title, a line of id, turns, messages and
+  duration, a line of tokens and model, `omh --resume <id>` and
+  `omh -c "<title>"`. It now prints the title (`untitled session` when there
+  is none) and, after a blank line, `omh --resume <id>` alone, ready to
+  copy, with the whole id and `-p <profile>` for a profile launch
+  (`omh -p work --resume <id>`), then a blank line so the shell prompt does
+  not sit right under it. The counts and the `-c "<title>"` line are gone,
+  since the id always opens this session and a title can be shadowed by a
+  newer `<title> #N`.
+
 - **The `/sessions` picker reads as a table, and `/resume` is `/sessions`.**
   The session you are in heads the list under `Current` (named `this
   session` until it has a title), and the rest sit under a muted heading for
@@ -830,18 +839,7 @@ All notable changes will be documented here.
   `session.list`, over the whole store, then among the listed sessions
   ignoring case. The one session with it opens; several (titles that
   differ only in case) or none open the picker filtered by the title.
-- **A prompt sent now is put back only when Hermes really dropped it.** The
-  OMH TUI counted a sent-now steer as read only after a tool finished and the
-  turn took a further step, so Esc in between could put back a steer Hermes
-  had already joined to the stopped tool batch, and resending it doubled it.
-  It now counts as read at the first tool that finishes after Hermes took
-  it, since Hermes finalizes even an interrupted batch. A sent-now steer
-  Hermes refuses after its turn ended and the next queued prompt started
-  goes back to the composer with a notice, instead of running after that
-  later prompt; this includes a refusal that arrives while that prompt
-  waits on the default-model check, which before took its place and lost
-  it. A prompt held for that check is never replaced: the queue waits
-  behind it.
+
 - **`omh uninstall` removes an OMH home under `/var` or `/tmp` on macOS
   again (#2359, reported and fixed by @Kenmege).** The uninstall guard that
   keeps a home configured through a symlink walked every ancestor of the
@@ -853,16 +851,14 @@ All notable changes will be documented here.
   anywhere below it, or one a user owns, still refuses, and Windows never
   takes the exemption. The same rule applies to the menu-bar refresh that
   `omh update` skips for a linked home.
+
 - **Delegated agents no longer stop on a repository convention the brief
   overrides.** The goal echo-back told an agent to stop whenever its brief
   conflicted with anything, so a brief saying "do not create a branch" met
   `AGENTS.md`'s "branch first" and the agent declined without making a
   change. The brief now outranks repository workflow rules, and only a
   brief that contradicts itself is stopped on.
-- **product-ab prices cached input once.** Hermes' usage file counts cache
-  reads inside `input_tokens` on the Codex route, and the lane priced them
-  again as cache reads, so one task read $35.77 instead of $4.98. The control
-  model moves from the retired `gpt-5.6-sol` to `gpt-6.1-sol`.
+
 - **An image pasted or dropped right before Enter goes with that prompt.**
   The OMH TUI used to send the text and leave the image in the next draft
   when Enter beat Hermes' answer to the paste. Now the prompt waits for the
@@ -871,6 +867,7 @@ All notable changes will be documented here.
   three. A one-line text paste sent at once joins its prompt the same way.
   Esc, or Ctrl+C, gives the held prompt back. A paste Hermes never answers
   holds the prompt only until it expires.
+
 - **`omh doctor` and the probe read the skill pack you actually run, on a
   migrated install too (#2358, reported by @yqm-307; #2378, reported by
   @mazzy89).** A managed install serves its skills from a generation behind
@@ -896,11 +893,6 @@ All notable changes will be documented here.
   `local_modifications` and `guidance_projection` with the reason, while
   every other check still runs. The advice still never moves doctor's
   status or exit code.
-- **product-ab gives the OMH arm the same reach as the Hermes arm.** The OMH
-  arm's unit was scoped to `src/` and `tests/` while the Hermes arm's prompt
-  set no limit, so a task whose fix regenerates `docs/WORKFLOWS.md` or a
-  skill body was one only the Hermes arm was allowed to finish. The unit
-  scope is now the whole checkout.
 
 - **show-reel now checks a film's motion the way an editor would, and has a
   kinetic-type lane.** `motion_check.py` reads every frame at the film's own
@@ -921,6 +913,26 @@ All notable changes will be documented here.
   kinetic gate, and stays out of explainer and evidence films. The method
   notes were informed by Scenario's Kinetic Film exploration; OMH wrote its
   own wording and code.
+
+- **`show-reel` makes any video from a text idea, not only a product film.**
+  Explainers, motion graphics and kinetic type, logo and title intros, 3D
+  scenes, data-viz animation, music visuals and short or vertical cuts now
+  reach it without naming it, in English, Korean and Japanese ("make a 10
+  second logo intro animation for our podcast", "DNS 설명하는 30초 영상 만들어줘",
+  "DNSを説明する動画を作って"). An idea lane runs on defaults, each recorded as an
+  assumption, keeps every render step and skips the source and rights
+  registers and the three-concept comparison; `references/genres.md` holds
+  the genre recipes. It renders with what the machine already has, in this
+  order: HyperFrames when its CLI is installed, the show-reel toolkit, a
+  frame renderer already installed, else HOLD with the exact install command
+  and one consent ask. It never installs anything itself, and delivery is an
+  ffprobe-measured MP4 or an honest HOLD, never a storyboard or an HTML file
+  alone. Admission takes closed shapes only: a bare "animation", a logo or
+  animation on an app surface (a splash, a loading screen, an icon), loop
+  phrasing, a topic of two or more words before 설명, and some one-word
+  fault topics (서버다운, サーバーダウン, from a fixed list) do not get in. A recording that already
+  exists (summarize, transcribe, caption, trim) goes to
+  `media-input-operator`.
 
 - **A delegated child no longer dies on a model its inherited provider does
   not have.** A route written with no provider runs on the session's own, and
@@ -1008,6 +1020,54 @@ All notable changes will be documented here.
   in the result's `limits` and the default kept. OMH still starts no timer,
   so the warning shows only when the parent calls the tool. Proposed by
   @yqm-307 in #2427.
+
+- **Category routing works under Hermes 0.22.5's delegation backends.**
+  Hermes 0.22.5 can pick a child's model through a `delegation.backend` of
+  `model_map` options or `profile_routes` profiles, and OMH wrote its
+  category route into `delegation.*` regardless, so it fought the backend or
+  reported a route Hermes never ran. OMH now reads the backend first. Under
+  `model_map` it writes no config: `omh_delegate_route set` answers
+  `option_selected` with one of your own option names for the category
+  (`no_matching_option` when none fits), and `omh_dag` puts that `option` on
+  each task it hands out and steps to the next option on a fallback retry.
+  Under `profile_routes` it answers `not_applied` and picks no profile for
+  you. The delegation ledger records the route Hermes actually ran beside
+  the one OMH handed out, and the graph and HUD show `category@option` when
+  the two agree and flag a mismatch when they do not. Under `default`, and
+  on an older Hermes, nothing changes.
+
+- **A dag-ulw run under `hermes chat -q` stays inside the one-shot child
+  budget left (#2276, reported by @yqecea).** Hermes counts a one-shot run's
+  delegated children per process and refuses a whole `delegate_task` call
+  that would pass `delegation.oneshot_max_children`, so a wave larger than
+  what was left was refused whole and its nodes fell back to inline work.
+  `omh_dag` now counts the top-level children already started in the run, a
+  `delegate_task` outside the graph included. `define` refuses a graph
+  larger than the budget left; `ready` and `settle` hand out no more tasks
+  than remain and list the rest in `held_for_slots`; once the budget is
+  spent, the held nodes come back as `for_parent` with their handoff paths,
+  for the parent to do and settle itself. `repair` and `extend` refuse
+  `oneshot_budget_exceeded` before touching the record. In a one-shot
+  session `slots.oneshot` shows `{limit, spent, remaining}`; interactive and
+  gateway sessions are unchanged.
+
+- **The website moved to https://omher.app/.** The old
+  `rlaope.github.io/oh-my-hermes/` address redirects there, and the package
+  homepages (PyPI, npm, Homebrew), the README in every language and the
+  Installation guide link to it.
+
+- **A redesigned home page that search engines and link previews can read.**
+  The home page is rebuilt around Kami: a hero with the Kami logo, the pixel
+  wordmark and the install tabs, a strip of the providers `omh model setup`
+  covers, a scroll-driven `/dag-ulw` run, every skill name falling as rain,
+  a Kami you can poke and pull, and the community links. The language
+  switch, every install command, the agent prompt, the shipped model chains
+  and the `ulw-*` list carry over. Every indexable page now has a canonical
+  URL, Open Graph and Twitter card tags with one 1200×630 share card, and a
+  title naming its topic; the site gains `robots.txt`, `sitemap.xml`, a
+  favicon set, a web manifest and a styled 404 page, and the home's JSON-LD
+  names the project, `omher` included, beside an IndexNow key for the search
+  engines that read it.
 
 ## 4.0.3 - 2026-10-27
 
