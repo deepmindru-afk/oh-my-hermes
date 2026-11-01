@@ -1556,6 +1556,26 @@ class ModelRouteCliTests(unittest.TestCase):
             self.assertNotIn("gpt-5.6", stdout)
             self.assertNotIn("claude-code", stdout)
 
+    def test_cli_refuses_an_identity_the_document_does_not_hold(self) -> None:
+        # A typo in --identity used to answer `model_unrouted` on the
+        # executor default with exit 0: the run went to a model nobody chose.
+        with TemporaryDirectory() as tmp:
+            routing = Path(tmp) / ".omh" / "routing"
+            routing.mkdir(parents=True)
+            (routing / "identities.json").write_text(json.dumps({
+                "schema_version": "omh_identity_profiles/v1",
+                "identities": {"script-coding": {
+                    "prompt": "p", "model_chain": [{"model_id": "gpt-6-sol", "reasoning_effort": "low"}]}},
+            }), encoding="utf-8")
+            base = self._base(tmp) + ["coding", "model-route", "--executor", "codex", "--identity"]
+            status, stdout, stderr = run_cli(base + ["script-coding"])
+            self.assertEqual(status, 0, stderr)
+            self.assertEqual(json.loads(stdout)["provenance"], "identity_chain_head")
+            status, stdout, stderr = run_cli(base + ["scirpt-coding"])
+            self.assertNotEqual(status, 0, stdout)
+            self.assertIn("scirpt-coding", stderr)
+            self.assertIn("available: script-coding", stderr)
+
     def test_model_route_without_executor_or_explain_errors(self) -> None:
         with TemporaryDirectory() as tmp:
             status, _stdout, stderr = run_cli(self._base(tmp) + ["coding", "model-route"])

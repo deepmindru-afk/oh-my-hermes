@@ -2471,8 +2471,10 @@ Select an identity explicitly, one of three ways:
 Precedence for the model, highest first: an explicit model or effort
 (`--model`, a unit `model`), then the identity's chain, then an explicit
 category, role, depth or scale, then the built-in chain or the executor's
-default. An identity that is unknown or has no valid chain is named in the
-route's `attempted` list and the lower sources apply unchanged. The
+default. An `--identity` or unit `identity` the document does not hold
+(a typo, or a profile dropped by validation) is refused with the available
+names, the same way `omh_delegate_route` answers `choice_required`; it never
+falls back to the executor's default model. The
 vocabulary stays separate: a *role* (`[omh-role:name]`, `docs/ROLES.md`) is a
 shipped specialist stance, a *category* is a work type with a model table,
 and an *identity* is your own prompt plus chain.

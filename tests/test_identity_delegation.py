@@ -299,6 +299,25 @@ class FanoutIdentityContractTest(unittest.TestCase):
         self.assertIn(("requested_identity", "unknown"), stages)
         self.assertNotIn("identity_id", route)
 
+    def test_unknown_identity_fails_freeze_instead_of_default_model(self):
+        # A typo would otherwise freeze a route on the executor default
+        # (`model_unrouted`), a model nobody chose, with exit 0.
+        config = {
+            "identities": {"script-coding": {"prompt": "p", "model_chain": ({"model_id": "m"},)}},
+            "fingerprint": {"digest": "d"},
+        }
+        with self.assertRaisesRegex(FanoutContractError, "scirpt-coding.*available: script-coding"):
+            build_fanout_contract(
+                "split",
+                [{"unit_id": "u", "owner": "codex", "file_scope": ["src/"], "identity": "scirpt-coding"}],
+                identity_config=config,
+            )
+        with self.assertRaisesRegex(FanoutContractError, "available: \\(none\\)"):
+            build_fanout_contract(
+                "split",
+                [{"unit_id": "u", "owner": "codex", "file_scope": ["src/"], "identity": "ghost"}],
+            )
+
     def test_malformed_identity_name_fails_freeze(self):
         with self.assertRaises(FanoutContractError):
             build_fanout_contract(
@@ -528,6 +547,32 @@ class DelegateRouteIdentityDefaultBackendTest(unittest.TestCase):
         provenance = load_delegation_route_provenance(self.homes.omh)[-1]
         self.assertEqual(provenance["identity"], "lane")
         self.assertEqual(provenance["origin"], "fallback")
+
+    def test_identity_fallback_with_category_label_walks_identity_chain(self):
+        # `set` with both an identity and a category records both. The
+        # fallback must still continue the identity's chain; recovering the
+        # category first looked for the identity's model in the category
+        # chain and failed with "does not match category".
+        doc = {
+            "schema_version": "omh_identity_profiles/v1",
+            "identities": {
+                "lane": {
+                    "prompt": "p",
+                    "model_chain": [
+                        {"model_id": "lane-head", "reasoning_effort": "high"},
+                        {"model_id": "lane-next", "reasoning_effort": "high"},
+                    ],
+                },
+            },
+        }
+        self.homes.write_identities(doc)
+        routed = self._call(session="S", task="t1", action="set", identity="lane", category="architect")
+        self.assertEqual(routed["status"], "routed", routed)
+        result = self._call(session="S", task="t1", action="fallback")
+        self.assertEqual(result["status"], "fell_back", result)
+        self.assertEqual(result["identity"], "lane")
+        self.assertEqual(result["category"], "architect")
+        self.assertEqual(read_delegation_route(self.homes.hermes)["model"], "lane-next")
 
     def test_identity_fallback_never_crosses_into_mixture_category(self):
         # beta-head is unique to the beta identity; a fallback must not

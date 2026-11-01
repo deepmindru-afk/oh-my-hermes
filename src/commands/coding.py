@@ -302,7 +302,7 @@ def cmd_coding_delegate(args: argparse.Namespace) -> int:
             # model rather than to an empty route no snapshot could match.
             model_recommendation=resolved_hermes_model_recommendation(executor_target, paths),
             requested_identity=getattr(args, "identity", None) or "",
-            identity_config=_operator_identity_config(paths),
+            identity_config=_declared_identity_config(paths, getattr(args, "identity", None)),
             input_representation=input_representation,
             transformation=transformation,
             handoff_contract=_handoff_contract_declaration(args),
@@ -1405,7 +1405,7 @@ def cmd_coding_model_route(args: argparse.Namespace) -> int:
         requested_category=getattr(args, "category", None) or "",
         requested_identity=getattr(args, "identity", None) or "",
         category_config=category_config,
-        identity_config=_operator_identity_config(_paths(args)),
+        identity_config=_declared_identity_config(_paths(args), getattr(args, "identity", None)),
         local_catalog=local_catalog,
         active_models=active_models,
         recommendation_overrides=recommendation_overrides,
@@ -1619,6 +1619,24 @@ def _operator_identity_config(paths) -> dict[str, object] | None:
     config = read_identity_profiles_config(paths.omh_home, rejected_out=rejected)
     for note in rejected:
         print(f"omh: identities: ignored {note}", file=sys.stderr)
+    return config
+
+
+def _declared_identity_config(paths, identity: str | None) -> dict[str, object] | None:
+    """The identity document, refusing an `--identity` it does not hold.
+
+    Without this an unknown name (a typo, or a profile the loader dropped)
+    resolves to the executor's default model with exit 0, and the handoff
+    runs on a model nobody chose.
+    """
+    from ..coding.fanout import require_known_identity
+    from ..coding.fanout_contracts import FanoutContractError
+
+    config = _operator_identity_config(paths)
+    try:
+        require_known_identity(str(identity or ""), config, where="--identity")
+    except FanoutContractError as exc:
+        raise OmhError(str(exc)) from exc
     return config
 
 

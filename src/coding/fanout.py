@@ -79,6 +79,8 @@ def build_fanout_contract(
         raise FanoutContractError("fanout goal is required")
     normalized_units = [_normalized_unit(unit, index) for index, unit in enumerate(units)]
     validate_fanout_units(normalized_units)
+    for unit in normalized_units:
+        require_known_identity(str(unit.get("identity", "") or ""), identity_config, where=f"unit {unit['unit_id']}")
     validated_capability_snapshots = _validated_capability_snapshots(
         capability_snapshots,
         normalized_units,
@@ -211,6 +213,31 @@ def _frozen_safety_profile_revision() -> str:
     except ImportError:
         return ""
     return safety_profile_revision()
+
+
+def require_known_identity(
+    identity: str, identity_config: Mapping[str, object] | None, *, where: str = ""
+) -> None:
+    """Refuse a declared identity the validated document does not hold.
+
+    The resolver alone falls through to the executor default on an unknown
+    name, so a typo in `--identity` would freeze a contract that runs on a
+    model nobody chose. `omh_delegate_route` already answers
+    `choice_required` for the same input; the CLI and fanout freeze refuse it
+    the way an unknown `category` is refused.
+    """
+    name = str(identity or "").strip()
+    if not name:
+        return
+    raw = identity_config.get("identities") if isinstance(identity_config, Mapping) else None
+    known = sorted(raw) if isinstance(raw, Mapping) else []
+    if name in known:
+        return
+    prefix = f"{where} " if where else ""
+    raise FanoutContractError(
+        f"{prefix}identity {name!r} is not in the validated identities.json; "
+        f"available: {', '.join(known) or '(none)'}"
+    )
 
 
 def validate_fanout_units(units: Sequence[Mapping[str, object]]) -> None:

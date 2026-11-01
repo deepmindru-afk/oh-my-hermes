@@ -915,7 +915,12 @@ def omh_delegate_route_handler(args: dict[str, Any], **kwargs) -> str:
             return json.dumps(attach_public_observation(payload, observation), sort_keys=True)
         # With no category passed, the one this conversation routed the
         # position under decides; the alias must still be in that chain.
-        recorded = not category and position_category in chains
+        # An identity position decides its own lane before any recorded
+        # category does: a `set` that named both an identity and a category
+        # records both, and recovering the category first would send the
+        # fallback looking for the identity's model in the category chain.
+        identity_lane = not category and bool(position_identity or requested_identity)
+        recorded = not category and not identity_lane and position_category in chains
         if recorded:
             category = position_category
         # An identity position continues inside the identity's own chain --
@@ -930,8 +935,10 @@ def omh_delegate_route_handler(args: dict[str, Any], **kwargs) -> str:
         recorded_digest = ""
         chain: tuple[tuple[str, str], ...] = ()
         explicit_identity = bool(requested_identity) and requested_identity != position_identity
-        identity_fallback = not category and bool(position_identity or requested_identity)
+        identity_fallback = identity_lane
         if identity_fallback:
+            # The recorded category stays the lane label it was on `set`.
+            category = position_category if position_category in chains else ""
             recorded_identity = requested_identity or position_identity
             # An explicitly re-passed identity resolves fresh against the file
             # (the caller saw it), so only a position-carried identity checks
