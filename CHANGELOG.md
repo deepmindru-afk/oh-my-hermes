@@ -4,6 +4,17 @@ All notable changes will be documented here.
 
 ## Unreleased
 
+- **Name your own identity: a prompt and a model chain.** Write
+  `~/.omh/routing/identities.json` (`omh_identity_profiles/v1`) with one or
+  more named identities, then select one by putting `[omh-identity:name]` in a
+  request for its prompt, or `--identity name` on `omh coding model-route`,
+  `run` and `delegate` (an `identity` field on `fanout prepare` units, an
+  `identity` argument on `omh_delegate_route`) for its model chain. An
+  explicit `--model` still wins; the identity chain beats category, role,
+  depth and scale. Nothing is inferred and nothing carries to the next
+  session, and with no file routes are unchanged. Schema and limits are in the
+  Installation guide.
+
 ![Sprite Forge patch notes](https://raw.githubusercontent.com/rlaope/oh-my-hermes/main/assets/omh-sprite-forge-patch-notes.png)
 
 - **A rename's stale export is named before the turn ends.** When a turn
@@ -126,8 +137,11 @@ All notable changes will be documented here.
   a function body that changes behaviour without changing its signature,
   and a reference that exists only in prose such as docs. The search skips
   hidden, version-control, virtualenv, cache and `node_modules` directories,
-  and `build` or `dist` directories with no `__init__.py` (build output; a
-  package of that name is searched).
+  and build output: a `build` directory holding a `lib`, `lib.*`, `bdist.*`,
+  `temp.*` or `__editable__*` directory or no `.py` file in its first two
+  levels, or a `dist` directory with no top-level `.py` file. Any other
+  `build` or `dist`, such as a scripts directory or a namespace subpackage, is
+  searched.
 
   On the bench corpus the always-on check fixed a second copy of the changed
   logic far more often: 76 vs 38 of 90 runs, pooled over five measurements. It
