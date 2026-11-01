@@ -15,6 +15,7 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass
 from functools import lru_cache
 import re
+from types import MappingProxyType
 import unicodedata
 
 from .command_verb import gives_command, leads_with_code_edit, ordered_words
@@ -782,40 +783,42 @@ def _structural_cues(
 # bundle has no skill catalog to derive them from; `tests/test_display_names.py`
 # locks the table to `omh_skill_display_name()` and
 # `historical_skill_display_names()` over the same vocabulary.
-WORKFLOW_DISPLAY_NAMES = {
-    "omh-accessibility-audit": "accessibility-audit",
-    "omh-agent-debug": "agent-debug",
-    "omh-build-failure-triage": "build-failure-triage",
-    "omh-code-review": "code-review",
-    "omh-codegraph-refresh": "codegraph-refresh",
-    "omh-deep-interview": "deep-interview",
-    "ulw-deep-interview": "deep-interview",
-    "ulw-interview": "deep-interview",
-    "omh-failure-signal-audit": "failure-signal-audit",
-    "omh-instinct-ledger": "instinct-ledger",
-    "omh-loop": "loop",
-    "ulw-loop": "loop",
-    "omh-ralplan": "ralplan",
-    "ulw-plan": "ralplan",
-    "ulw-ralplan": "ralplan",
-    "omh-skill-health": "skill-health",
-    "omh-skill-scout": "skill-scout",
-    "omh-team": "team",
-    "ulw-team": "team",
-    "omh-ultragoal": "ultragoal",
-    "ulw-goal": "ultragoal",
-    "ulw-ultragoal": "ultragoal",
-    "omh-ultraprocess": "ultraprocess",
-    "ulw-process": "ultraprocess",
-    "ulw-ultraprocess": "ultraprocess",
-    "omh-ultraqa": "ultraqa",
-    "ulw-qa": "ultraqa",
-    "ulw-ultraqa": "ultraqa",
-    "omh-ultrawork": "ultrawork",
-    "ulw-ultrawork": "ultrawork",
-    "ulw-work": "ultrawork",
-    "omh-workflow-learning": "workflow-learning",
-}
+WORKFLOW_DISPLAY_NAMES = MappingProxyType(
+    {
+        "omh-accessibility-audit": "accessibility-audit",
+        "omh-agent-debug": "agent-debug",
+        "omh-build-failure-triage": "build-failure-triage",
+        "omh-code-review": "code-review",
+        "omh-codegraph-refresh": "codegraph-refresh",
+        "omh-deep-interview": "deep-interview",
+        "ulw-deep-interview": "deep-interview",
+        "ulw-interview": "deep-interview",
+        "omh-failure-signal-audit": "failure-signal-audit",
+        "omh-instinct-ledger": "instinct-ledger",
+        "omh-loop": "loop",
+        "ulw-loop": "loop",
+        "omh-ralplan": "ralplan",
+        "ulw-plan": "ralplan",
+        "ulw-ralplan": "ralplan",
+        "omh-skill-health": "skill-health",
+        "omh-skill-scout": "skill-scout",
+        "omh-team": "team",
+        "ulw-team": "team",
+        "omh-ultragoal": "ultragoal",
+        "ulw-goal": "ultragoal",
+        "ulw-ultragoal": "ultragoal",
+        "omh-ultraprocess": "ultraprocess",
+        "ulw-process": "ultraprocess",
+        "ulw-ultraprocess": "ultraprocess",
+        "omh-ultraqa": "ultraqa",
+        "ulw-qa": "ultraqa",
+        "ulw-ultraqa": "ultraqa",
+        "omh-ultrawork": "ultrawork",
+        "ulw-ultrawork": "ultrawork",
+        "ulw-work": "ultrawork",
+        "omh-workflow-learning": "workflow-learning",
+    }
+)
 
 
 def _normalize_workflow_mentions(message: str) -> str:
