@@ -23,6 +23,7 @@ from .invocation_cues import invoked_instruction
 from .name_report_cues import about_the_skill
 from .data_share_cues import DATA_SHARE_REVIEW_PHRASES, data_share_phrases_said, data_share_request_admitted
 from .pi_family_names import RUNTIME_HOME
+from .plain_question_cues import plain_question
 from .executor_cues import (
     CODING_DELIVERY_REQUEST_PHRASES as _CODING_DELIVERY_REQUEST_PHRASES,
     CODING_DELIVERY_REQUEST_TOKENS as _CODING_DELIVERY_REQUEST_TOKENS,
@@ -6288,6 +6289,7 @@ def _awareness_route_hint_cached(message: str, max_hints: int, context_removed: 
             and _jit_learn_route_hint_applies(matching_message, routing_normalized)
         )
         long_document_page_count_match = _long_document_request_signal(routing_normalized)
+        plain_knowledge_question = plain_question(matching_message)
         for rule in _prioritized_route_hint_rules(jit_learn_match):
             if len(hints) >= hint_limit:
                 break
@@ -6314,6 +6316,9 @@ def _awareness_route_hint_cached(message: str, max_hints: int, context_removed: 
             if rule["id"] == "long_document_reading" and not phrase_matches and long_document_page_count_match:
                 phrase_matches = ["guard:long_document_page_count"]
             if not phrase_matches and not token_matches:
+                continue
+            if plain_knowledge_question and not phrase_matches:
+                # A plain knowledge question carries no work, so a bare word match is not a route.
                 continue
             workflow = str(rule["workflow"])
             next_action = str(rule["next_action"])
