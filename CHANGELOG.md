@@ -4,6 +4,15 @@ All notable changes will be documented here.
 
 ## Unreleased
 
+- **In a chat with many loaded tools, Hermes can save a stated preference or
+  decision to OMH memory without searching for a tool first. On Discord, a
+  fact saved in one conversation thread can be recalled in the next thread
+  Hermes starts in the same channel.** The memory provider exposes the small
+  `omh_remember` save/recall tool outside Hermes' deferred plugin-tool catalog,
+  using the existing admission and session-lens gates. Discord threads Hermes
+  auto-created from channel messages use their parent channel's memory scope;
+  other threads keep their own.
+
 ## 4.0.4 - 2026-11-01
 
 - **Name your own identity: a prompt and a model chain.** Write
