@@ -28,6 +28,18 @@ class PlainQuestionRouteHintTest(unittest.TestCase):
     def test_work_request_keeps_ulw_work(self) -> None:
         self.assertIn("ulw-work", _workflows("merge this PR after review"))
 
+    def test_work_questions_keep_their_hint(self) -> None:
+        cases = (
+            ("Can you do market sizing for dental clinics in Korea?", "ulw-research"),
+            ("CI 통과했어?", "ulw-work"),
+            ("should we use rlvr or dpo for the math model", "model-finetuning"),
+            ("\nExplain TCP vs UDP briefly", "paper-learning"),
+            ("Explain TCP https://example.com", "paper-learning"),
+        )
+        for message, workflow in cases:
+            with self.subTest(message=message):
+                self.assertIn(workflow, _workflows(message))
+
     def test_direct_invocation_keeps_its_hint(self) -> None:
         self.assertIn("ulw-plan", _workflows("/ulw-plan add a retry to the uploader"))
 

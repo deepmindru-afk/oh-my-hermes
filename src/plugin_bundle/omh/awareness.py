@@ -6109,7 +6109,12 @@ def awareness_route_hint(message: str, *, max_hints: int = 2, context_removed: b
     """
     request = "" if host_command_turn(message) else person_request_text(message)
     context_removed = context_removed or host_context_removed(message)
-    return _copy_awareness_route_hint_payload(_awareness_route_hint_cached(request, max(max_hints, 0), context_removed))
+    # The predicate reads the raw message: person_request_text strips the
+    # newline and the executable projection masks the URL or fence that mark work.
+    plain = bool(request) and plain_question(message)
+    return _copy_awareness_route_hint_payload(
+        _awareness_route_hint_cached(request, max(max_hints, 0), context_removed, plain)
+    )
 
 
 def _copy_awareness_route_hint_payload(payload: dict[str, object]) -> dict[str, object]:
@@ -6196,7 +6201,9 @@ def _route_hint_with_action_labels(hint: dict[str, object]) -> dict[str, object]
 
 
 @lru_cache(maxsize=512)
-def _awareness_route_hint_cached(message: str, max_hints: int, context_removed: bool = False) -> dict[str, object]:
+def _awareness_route_hint_cached(
+    message: str, max_hints: int, context_removed: bool = False, plain_knowledge_question: bool = False
+) -> dict[str, object]:
     degraded: list[tuple[str, str]] = []
     matching_message = executable_routing_text(message)
     intent = classify_workflow_intent(matching_message)
@@ -6289,7 +6296,6 @@ def _awareness_route_hint_cached(message: str, max_hints: int, context_removed: 
             and _jit_learn_route_hint_applies(matching_message, routing_normalized)
         )
         long_document_page_count_match = _long_document_request_signal(routing_normalized)
-        plain_knowledge_question = plain_question(matching_message)
         for rule in _prioritized_route_hint_rules(jit_learn_match):
             if len(hints) >= hint_limit:
                 break

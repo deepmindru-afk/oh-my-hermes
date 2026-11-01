@@ -540,9 +540,9 @@ def skill_candidates_for_turn(
         isinstance(hint, dict) and hint.get("id") == _DIRECT_INVOCATION_HINT_ID for hint in hints
     ):
         return ()
-    text = executable_routing_text(message)
-    if plain_question(text):
+    if plain_question(message):
         return ()
+    text = executable_routing_text(message)
     candidates = () if _conversational(text) else skill_candidates(text, installed=installed)
     if not candidates:
         candidates = hangul_skill_candidates(text, installed=installed)
