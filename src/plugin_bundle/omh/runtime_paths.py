@@ -122,7 +122,7 @@ def profile_is_routed() -> bool:
         return False
     return (import_module("agent.secret_scope").is_multiplex_active()
             or default_hermes_home() != _canonical_path(
-                os.environ.get("HERMES_HOME") or _platform_default_hermes_home()))
+                os.environ.get("HERMES_HOME") or platform_default_hermes_home()))
 
 
 def tool_home_error(args) -> dict | None:
@@ -142,7 +142,7 @@ def tool_home_error(args) -> dict | None:
 def _profile_variable(name: str, home: Path):
     secrets = import_module("agent.secret_scope")
     scope = secrets.current_secret_scope()
-    launch_home = _canonical_path(os.environ.get("HERMES_HOME") or _platform_default_hermes_home())
+    launch_home = _canonical_path(os.environ.get("HERMES_HOME") or platform_default_hermes_home())
     if scope is None:
         if secrets.is_multiplex_active() or home != launch_home:
             raise RuntimeBindingError("OMH requires an owned profile variable binding")
@@ -216,9 +216,9 @@ def _unattributed_launch_read(host, secrets) -> bool:
             and secrets.current_secret_scope() is None)
 
 
-def _platform_default_hermes_home() -> Path:
+def platform_default_hermes_home() -> Path:
     """Hermes' own platform default, mirrored from
-    ``hermes_constants._platform_default_hermes_home``.
+    ``hermes_constants.platform_default_hermes_home``.
 
     Hermes does not default to ``~/.hermes`` on Windows: it uses
     ``%LOCALAPPDATA%\\hermes``. A standalone caller that assumed the POSIX shape
@@ -239,7 +239,7 @@ def default_hermes_home() -> Path:
         secrets = import_module("agent.secret_scope")
         if _unattributed_launch_read(host, secrets):
             raise UnattributableSessionError("OMH requires an active Hermes profile scope")
-    value = host.get_hermes_home() if host is not None else (os.environ.get("HERMES_HOME") or _platform_default_hermes_home())
+    value = host.get_hermes_home() if host is not None else (os.environ.get("HERMES_HOME") or platform_default_hermes_home())
     # Hermes already resolves its profile home. Do not expand it through an
     # environment lookup which could recursively select the launch profile.
     if not isinstance(value, (str, Path)) or not str(value).strip() or "\0" in str(value):
@@ -548,7 +548,7 @@ def resolve_homes(omh_home: str | Path | None = None, hermes_home: str | Path | 
     if configured is not _MISSING:
         return configured, home
     scope = secrets.current_secret_scope()
-    launch_home = _canonical_path(os.environ.get("HERMES_HOME") or _platform_default_hermes_home())
+    launch_home = _canonical_path(os.environ.get("HERMES_HOME") or platform_default_hermes_home())
     # Registration can carry only a home override. A foreign home with no
     # secret scope must not inherit env even when multiplex is not yet active.
     if home != launch_home and scope is None:

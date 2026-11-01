@@ -48,6 +48,22 @@ class RuntimePathsTests(unittest.TestCase):
                                                   "HERMES_HOME": str(root / "explicit")}):
                     self.assertEqual(runtime_paths.default_hermes_home(), (root / "explicit").resolve())
 
+    def test_release_smoke_target_follows_the_host_platform(self):
+        # `omh release hermes-smoke` binds every Hermes subprocess to this
+        # home. On Windows with no HERMES_HOME it named ~/.hermes, a second
+        # home the user's Hermes never reads.
+        from omh.maintenance import release
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            bare = {key: value for key, value in os.environ.items()
+                    if key not in ("HERMES_HOME", "HERMES_DATA_DIR_SUFFIX", "LOCALAPPDATA")}
+            with patch.dict("os.environ", bare, clear=True), \
+                    patch.object(runtime_paths.sys, "platform", "win32"), \
+                    patch.dict("os.environ", {"LOCALAPPDATA": str(root)}):
+                target = release._target_binding()
+            self.assertEqual(target["hermes_home"], str((root / "hermes").resolve()))
+            self.assertFalse(target["explicit_hermes_home"])
+
     def test_an_unrouted_profile_stays_unrouted_on_windows(self):
         # profile_is_routed() compares the resolved home against the launch
         # home. If only one side learned the platform default, every Windows

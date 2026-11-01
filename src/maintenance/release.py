@@ -36,7 +36,7 @@ from ..plugin_bundle.omh.awareness import (
     awareness_workflow_context_markdown,
 )
 # Re-exported under their old names; each limit and its history live in the bundle.
-from ..plugin_bundle.omh import turn_budget
+from ..plugin_bundle.omh import runtime_paths, turn_budget
 from ..plugin_bundle.omh.turn_budget import (
     AWARENESS_PRIMER_CONTEXT_CHAR_LIMIT as AWARENESS_PRIMER_CONTEXT_CHAR_LIMIT,
     AWARENESS_PRIMER_MARKDOWN_CHAR_LIMIT as AWARENESS_PRIMER_MARKDOWN_CHAR_LIMIT,
@@ -4998,7 +4998,10 @@ def run_installed_command_smoke(
 
 def _target_binding(*, omh_home: str | Path | None = None, hermes_home: str | Path | None = None) -> dict[str, object]:
     omh = expand_home(omh_home, "OMH_HOME", "~/.omh")
-    hermes = expand_home(hermes_home, "HERMES_HOME", "~/.hermes")
+    # Hermes' own platform default, not a POSIX literal: on Windows the live
+    # smoke would otherwise bind every Hermes subprocess to a second, empty
+    # home instead of %LOCALAPPDATA%\\hermes.
+    hermes = expand_home(hermes_home, "HERMES_HOME", str(runtime_paths.platform_default_hermes_home()))
     return {
         "omh_home": str(omh),
         "hermes_home": str(hermes),
