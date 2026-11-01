@@ -14,7 +14,7 @@ All notable changes will be documented here.
   URL or code) now gets neither a token-only hint nor a candidate line;
   phrase matches such as "explain this paper" keep theirs. On a 55-question
   English and Korean probe, suggestions went from 13 to 1, and none of the
-  1,098 dispatch cases in the routing corpus lost a hint (#PR).
+  1,098 dispatch cases in the routing corpus lost a hint (#2472).
 
 - **In a chat with many loaded tools, Hermes can save a stated preference or
   decision to OMH memory without searching for a tool first. On Discord, a
