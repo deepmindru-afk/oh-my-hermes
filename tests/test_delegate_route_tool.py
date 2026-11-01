@@ -25,6 +25,7 @@ from omh.plugin_bundle.omh.hermes_delegation import (
     append_delegation_route_provenance,
     load_delegation_route_provenance,
 )
+from omh.plugin_bundle.omh import runtime_paths
 from omh.plugin_bundle.omh.tools.delegate_route_tool import omh_delegate_route_handler
 from _module_patch import patch_modules
 
@@ -42,7 +43,12 @@ class DelegationRouteHomeTest(unittest.TestCase):
             "USERPROFILE": str(self.root),
             "HERMES_HOME": str(self.profile),
             "OMH_HOME": str(self.omh_home),
+            "LOCALAPPDATA": str(self.root / "AppData" / "Local"),
         }))
+        os.environ.pop("HERMES_DATA_DIR_SUFFIX", None)
+        # With HERMES_HOME unset the default is Hermes' platform default:
+        # ~/.hermes on POSIX, %LOCALAPPDATA%\hermes on Windows.
+        self.default_home = runtime_paths.platform_default_hermes_home()
         # Force the standalone boundary regardless of the developer's host.
         self.enterContext(patch_modules({"hermes_constants": None}))
 
