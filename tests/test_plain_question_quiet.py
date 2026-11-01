@@ -89,6 +89,25 @@ WORK = (
     "CI 통과했어?",
     "코덱스가 지금 뭐하고있는지 알려줘",
     "omh 업데이트했는데 뭔가 이상해, 설치 상태 좀 점검해줘",
+    # Re-verification counterexamples: a concept opener followed by a task.
+    "Explain the failing deployment and fix it",
+    "Explain the failing tests and fix them",
+    "Explain and fix the broken checkout flow",
+    "Explain the incident and draft a mitigation plan",
+    "Explain the quarterly revenue variance and draft a board memo",
+    "Explain the attached contract and flag legal risks",
+    "Explain this outage and write a postmortem",
+    "Explain the deployment failure and write a rollback plan",
+    "Explain the error and produce a patch",
+    "What should go in the launch announcement for Acme?",
+    "Describe the broken login flow and fix the regression",
+    "Explain the failing build and repair the configuration",
+    "Can you explain the crash and patch the regression?",
+    "Explain the customer complaint and draft a reply",
+    "Explain the production outage and create an incident report",
+    "Explain this deployment failure and recommend a fix",
+    "고객 불만 요약하고 답장 방법 알려줘",
+    "Explain how to fix the failing deployment",
 )
 
 

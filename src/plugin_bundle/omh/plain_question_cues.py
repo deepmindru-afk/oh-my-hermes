@@ -80,6 +80,17 @@ _AGENT_VOCABULARY = frozenset(
         "ulw", "dag", "plugin", "plugins", "gateway", "cron", "ci", "pr", "prs",
     }
 )
+# A task verb anywhere after the opener turns the question into work: "explain
+# the outage and write a postmortem", "explain how to fix the deployment",
+# "what should go in the launch announcement".
+_WORK_VERBS = frozenset(
+    {
+        "fix", "fixes", "fixing", "repair", "patch", "draft", "write", "rewrite", "produce", "create", "make",
+        "build", "generate", "implement", "flag", "reply", "respond", "recommend", "plan", "prepare", "review",
+        "audit", "debug", "deploy", "migrate", "refactor", "update", "summarize", "summarise", "triage",
+        "investigate", "diagnose", "resolve", "compare", "analyze", "analyse", "estimate", "propose", "should",
+    }
+)
 _DEICTICS = frozenset({"this", "these", "that", "those", "my", "our", "attached", "your", "its", "their"})
 _WORK_NOUNS = frozenset(
     {
@@ -98,7 +109,11 @@ _HANGUL_QUESTION_CUES = (
     "뭐야", "뭐예요", "뭐에요", "뭔가요", "뭐임", "무엇인가", "차이", "설명해줘", "설명해 줘", "알려줘", "방법",
 )
 # A status check or a task: "어디까지 됐어?", "지금 뭐하고 있는지 알려줘".
-_HANGUL_STATUS_CUES = ("지금", "됐", "했어", "했나", "찾아", "점검", "상태", "이상해", "고쳐", "만들어")
+_HANGUL_STATUS_CUES = (
+    "지금", "됐", "했어", "했나", "찾아", "점검", "상태", "이상해", "고쳐", "만들어",
+    # Task verbs: "고객 불만 요약하고 답장 방법 알려줘".
+    "요약", "작성", "답장", "수정", "정리", "써줘", "짜줘", "계획", "리뷰", "검토", "분석", "해결", "고치",
+)
 _HANGUL_WORK_NOUNS = (
     "논문", "파일", "코드", "레포", "리포", "로그", "에러", "오류", "프로젝트", "첨부", "스택",
     "서버", "빌드", "배포",
@@ -153,6 +168,8 @@ def _plain_english(lowered: str, all_words: list[str]) -> bool:
         if words[1:2] != ["way"]:
             return False
     elif words[0] not in _QUESTION_OPENERS:
+        return False
+    if any(word in _WORK_VERBS for word in words[1:]):
         return False
     for index, word in enumerate(words):
         if word in _DEICTICS and any(
