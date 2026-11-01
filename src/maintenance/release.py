@@ -36,7 +36,7 @@ from ..plugin_bundle.omh.awareness import (
     awareness_workflow_context_markdown,
 )
 # Re-exported under their old names; each limit and its history live in the bundle.
-from ..plugin_bundle.omh import turn_budget
+from ..plugin_bundle.omh import runtime_paths, turn_budget
 from ..plugin_bundle.omh.turn_budget import (
     AWARENESS_PRIMER_CONTEXT_CHAR_LIMIT as AWARENESS_PRIMER_CONTEXT_CHAR_LIMIT,
     AWARENESS_PRIMER_MARKDOWN_CHAR_LIMIT as AWARENESS_PRIMER_MARKDOWN_CHAR_LIMIT,
@@ -357,7 +357,13 @@ SKILL_INDEX_LINE_CHAR_LIMIT = 100
 # three above, so it costs schema bytes only when `lsp_tools` is on;
 # measured by per_turn_context's register() recorder against base 5cc1ed311.
 # No headroom.
-PLUGIN_TOOL_SCHEMA_CHAR_LIMIT = 72227
+# 72227 -> 72370: the `identity` argument on omh_delegate_route (+143, 5153 ->
+# 5296), the custom identity profile name. Its description is the shortest form
+# that still names the source and the choice_required answer for an unknown
+# name; the chain-head and model_map behavior is enforced in code. Measured by
+# per_turn_context.plugin_tool_schema_chars_by_tool() against base 812ec53.
+# No headroom.
+PLUGIN_TOOL_SCHEMA_CHAR_LIMIT = 72370
 # PRE_LLM_CALL_CONTEXT_CHAR_LIMIT, PRE_LLM_CALL_CONTEXT_FALLBACK_CHAR_LIMIT: moved with
 # their history to src/plugin_bundle/omh/turn_budget.py; imported at the top of this file.
 # 340000 -> 349637: three capability-skill sections were added by the domain
@@ -4992,7 +4998,10 @@ def run_installed_command_smoke(
 
 def _target_binding(*, omh_home: str | Path | None = None, hermes_home: str | Path | None = None) -> dict[str, object]:
     omh = expand_home(omh_home, "OMH_HOME", "~/.omh")
-    hermes = expand_home(hermes_home, "HERMES_HOME", "~/.hermes")
+    # Hermes' own platform default, not a POSIX literal: on Windows the live
+    # smoke would otherwise bind every Hermes subprocess to a second, empty
+    # home instead of %LOCALAPPDATA%\\hermes.
+    hermes = expand_home(hermes_home, "HERMES_HOME", str(runtime_paths.platform_default_hermes_home()))
     return {
         "omh_home": str(omh),
         "hermes_home": str(hermes),
